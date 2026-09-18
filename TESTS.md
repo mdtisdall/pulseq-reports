@@ -1593,12 +1593,464 @@ title are in the result.
 
 ### 2.15 Waveform data (`test_waveforms.py`)
 
-Phase 7 adds the entries.
+`test_waveforms.py` tests `waveforms.py`: the exact chart lanes
+(`file_lanes`), the minimum/maximum envelope (`file_envelope`), the point
+count without building the lanes (`point_count`), the block table rows
+(`block_rows`), and the two named views `first_adc_window` and
+`full_window`. The lane and block-table tests are adapted from vb-pulseq's
+`test_spin_echo_lanes`, `test_block_table`,
+`test_zero_phase_rf_and_zero_gradient_are_events` and its `report_at_tr`
+tests, moved to `tests/synthetic.py` sequences and to the module's own
+functions in place of vb's `sequence_data` dict; the PNS, page and
+timing-check parts of those vb tests belong to other cards and are dropped.
+The rest of the file is new coverage for a range that cuts a block, the
+envelope, `point_count`, and the two named views.
+
+#### `test_spin_echo_lanes`
+
+**Checks:** For a synthetic spin echo sequence, `file_lanes` gives Gx and Gy
+events within the system's gradient limit, an empty Gz lane (the sequence
+uses block pulses, so there is no slice-select gradient), one ADC window as
+long as the readout's own sample count times its dwell time, two RF phase
+segments (one for each pulse), and a first-ADC window that ends after that
+ADC window.
+
+**How:** The test builds `synthetic.spin_echo_sequence()` once (a module
+fixture, `spin_echo`) and calls `file_lanes` on it. For Gx and Gy, it checks
+that the lane is not empty and that no value is above the system's
+`max_grad` converted to mT/m. It checks that there is one ADC window whose
+length matches `NUM_SAMPLES * DWELL` in ms, that the RF phase lane has two
+segments, and that `first_adc_window`'s end is after the ADC window's end.
+
+**Assumptions:**
+
+- The synthetic spin echo sequence's block pulses have no slice-select
+  gradient, so Gz has no events (unlike vb-pulseq's own spin echo, which
+  used slice-selective pulses and so had Gz events too).
+
+#### `test_block_table`
+
+**Checks:** The block table lists the excitation first, has a refocusing
+pulse of its own with no gradient in the same block, two crusher blocks with
+a Gy trapezoid, and a readout block with a Gx trapezoid and the ADC's sample
+count.
+
+**How:** The test calls `block_rows` on the `spin_echo` fixture's sequence
+and reads the `events` text of each row. The first must be exactly
+"RF (excitation)". One row must be exactly "RF (refocusing)". Exactly two
+rows must be "Gy trap" (the two crushers). One row must have "Gx trap" and
+`f"ADC {NUM_SAMPLES} × "`.
+
+**Assumptions:**
+
+- Unlike vb-pulseq's spin echo, the synthetic sequence's refocusing pulse
+  and its crusher gradients are in separate blocks, so the refocusing row
+  has no gradient text and there is no trailing delay block to check.
+
+#### `test_zero_phase_rf_and_zero_gradient_are_events`
+
+**Checks:** An RF pulse with zero phase and a gradient with zero amplitude
+count as events in their lanes, and an axis with no gradient does not.
+
+**How:** The test plays a block pulse with a zero-amplitude trapezoid on x
+and calls `file_lanes`. The RF phase lane and the Gx lane must not be empty.
+The Gy lane must be empty.
+
+**Assumptions:**
+
+- A lane is empty when there is no event, not when the values are zero.
+
+#### `test_multi_tr_lanes_span_the_whole_sequence`
+
+**Checks:** For a synthetic multi-TR gradient echo sequence, the RF
+magnitude and gradient lanes each cover the whole file in one segment from 0
+to the end, and each of the ADC windows (one for each TR) falls inside its
+own TR.
+
+**How:** The test builds `synthetic.gre_sequence(num_trs=10, tr=20e-3)` and
+calls `file_lanes`. For RF magnitude, Gx, Gy and Gz, the one segment must
+start at 0 and end at the file's duration in ms. There must be one ADC
+window for each TR, and window k must start after `k * tr_ms` and end
+before `(k + 1) * tr_ms`, where `tr_ms` is the file duration divided by the
+number of TRs.
+
+**Assumptions:**
+
+- Every TR of `gre_sequence` has the same real duration, so dividing the
+  file's total duration by the TR count gives the true TR period even when
+  it differs from the nominal `tr` argument (for example when the blocks
+  do not leave room for a padding delay).
+- Adapted from vb-pulseq's `test_report_at_tr_plots_the_whole_sequence`,
+  with a synthetic gradient echo sequence in place of vb's spin echo, and
+  keeping only the parts about lanes and durations; the PNS, page and
+  timing-check parts belong to other cards.
+
+#### `test_multi_tr_excitations_start_every_tr`
+
+**Checks:** In the block table of a multi-TR file, the excitation blocks
+start at exact multiples of the real TR period.
+
+**How:** The test builds the same `gre_sequence(num_trs=10, tr=20e-3)` and
+calls `block_rows`. It takes the start time of each row whose `events` text
+starts with "RF (excitation)" and checks that the list equals
+`[0, tr_ms, 2 * tr_ms, ...]` within 1 µs, where `tr_ms` is the file
+duration divided by the number of TRs.
+
+**Assumptions:**
+
+- Adapted from vb-pulseq's `test_report_at_tr_excitations_start_every_tr`.
+
+#### `test_range_that_cuts_a_block_includes_it_whole_and_pads_at_its_own_edges`
+
+**Checks:** A range whose edges fall inside blocks still includes each such
+block whole, and the zero pad point at each end of a joined line lane is at
+the included block's own start or end, not at the range's requested edge.
+
+**How:** The test builds a synthetic spin echo sequence and, from
+`seq_utils.iter_blocks`, takes the RF refocusing block and the Gy crusher
+block right after it. It calls `file_lanes` with a range that starts inside
+the RF block and ends inside the crusher block. It checks that the RF
+magnitude lane's first point is at the RF block's own start (earlier than
+the range's requested start) with value 0, and that the Gy lane's last point
+is at the crusher block's own end (later than the range's requested end)
+with value 0.
+
+**Assumptions:** None.
+
+#### `test_point_count_matches_file_lanes_point_count`
+
+**Checks:** `point_count`, computed without building the lanes, equals the
+total number of points that `file_lanes` gives over all its lanes, both for
+the whole file and for a range: each line lane's segment points, plus 2 for
+each ADC window.
+
+**How:** The test builds a synthetic gradient echo sequence and, for
+`(start_s, end_s)` equal to `(None, None)` and to a quarter-to-60%-of-file
+range, computes the expected count directly from `file_lanes`'s own output
+(summing segment lengths of the line lanes and adding 2 for each ADC
+window) and compares it with `point_count`'s result.
+
+**Assumptions:** None.
+
+#### `test_envelope_bin_min_and_max_match_dense_interpolation`
+
+**Checks:** Each envelope bin's minimum and maximum match the true minimum
+and maximum of the exact waveform in that bin.
+
+**How:** The test builds a synthetic gradient echo sequence, computes
+`file_lanes` and `file_envelope` for the same 40 bins, and for each line
+lane and each bin, builds a dense `numpy.interp` of the exact lane's
+segment: 2000 evenly spaced samples across the bin, plus the segment's own
+vertex times that fall inside the bin (added explicitly, because a narrow
+spike such as a trapezoid with no flat top reaches its peak at a single
+instant that an evenly spaced grid alone can miss). It checks that the
+envelope's minimum and maximum for that bin match the dense sample's
+minimum and maximum within 2e-4.
+
+**Assumptions:**
+
+- Outside a segment's own time range, `numpy.interp`'s zero fill matches
+  `file_envelope`'s treatment of time that no event covers.
+
+#### `test_envelope_merges_adc_windows_closer_than_one_bin`
+
+**Checks:** ADC windows closer together than one bin's width merge into
+one envelope window that spans from the first window's start to the last
+window's end, and the ADC lane's `note` says so.
+
+**How:** The test builds a synthetic gradient echo sequence with three TRs
+and a short TR (8 ms), so that the gap between any two of its three ADC
+windows is smaller than the width of a single bin covering the whole file.
+It calls `file_envelope` with `bins=1` and checks that the ADC lane has one
+window, from the first exact window's start to the last exact window's end,
+and that its `note` mentions "merged".
+
+**Assumptions:** None.
+
+#### `test_envelope_drops_rf_phase_and_has_note_fields`
+
+**Checks:** `file_envelope` has no RF phase lane, its RF magnitude lane's
+note says that RF phase is not shown, its other line lanes' notes describe
+the bins without mentioning RF phase, and the ADC lane's note mentions that
+windows are merged.
+
+**How:** The test builds a synthetic gradient echo sequence and calls
+`file_envelope`. It checks that the lane ids are exactly `rf_mag`, `adc`,
+`gx`, `gy` and `gz` (no `rf_phase`), that the `rf_mag` lane's `note` mentions
+that RF phase is not shown, that each of `gx`, `gy` and `gz`'s `note`
+mentions "Minimum and maximum" but not RF phase, and that the `adc` lane's
+`note` mentions "merged".
+
+**Assumptions:** None.
+
+#### `test_first_adc_window_label_and_times`
+
+**Checks:** `first_adc_window` gives a window from 0 to 1.1 times the end of
+the first ADC window (or the file's own end, if that is shorter), with a
+label that names that end time.
+
+**How:** The test builds a synthetic gradient echo sequence with a short TR,
+reads the first exact ADC window's end from `file_lanes`, computes the
+expected end as `min(duration_ms, 1.1 * first_window_end_ms)` rounded the
+same way the function documents, and checks `first_adc_window`'s `file_index`,
+`start_s`, `end_s` and `label` against it.
+
+**Assumptions:** None.
+
+#### `test_first_adc_window_with_no_adc_is_the_whole_file`
+
+**Checks:** For a sequence with no ADC event, `first_adc_window` gives the
+whole file.
+
+**How:** The test builds a sequence with one delay block only and checks
+that `first_adc_window`'s end and label both use the file's own duration.
+
+**Assumptions:** None.
+
+#### `test_full_window_label_and_times`
+
+**Checks:** `full_window` gives a window from 0 to the end of the file, with
+a label that names the duration.
+
+**How:** The test builds a synthetic gradient echo sequence and checks
+`full_window`'s `file_index`, `start_s`, `end_s` and `label` against the
+file's own duration.
+
+**Assumptions:** None.
+
+#### `test_block_rows_with_max_rows_and_range`
+
+**Checks:** `max_rows` caps the number of rows that `block_rows` returns
+while `total` still counts every block, both over the whole file and over a
+range, and a range keeps only the blocks that overlap it.
+
+**How:** The test builds a synthetic gradient echo sequence with five TRs.
+It checks that `max_rows=3` returns the first three of the unlimited rows
+with the same `total`. It then picks a range equal to one TR (a fifth of
+the file) and checks that its `total` is less than the whole file's, and
+that `max_rows=2` over that range returns the first two of the range's own
+unlimited rows with the same `total`.
+
+**Assumptions:** None.
 
 ### 2.16 Sequence diagram card (`test_diagram_card.py`)
 
-Phase 7 adds the entries.
+`test_diagram_card.py` tests `cards/diagram.py`. `diagram_card` builds one
+button for each caller-given time window, sharing one lane set across the
+windows of a small file (parity with vb-pulseq) and giving a file over the
+point budget its own lane set (exact or an envelope) for each window. The
+last test is adapted from vb-pulseq's
+`test_report_has_zoom_controls_on_each_line_chart`, checking only the
+diagram card because phases 4 (gradient spectrum) and 5 (PNS) are not
+merged into this branch.
+
+#### `test_small_file_has_one_lane_set_with_the_file_extent`
+
+**Checks:** For a file within the point budget, `diagram_card`'s data has
+one lane set, not an envelope, with the extent of the whole file, and every
+window points to it with the given view.
+
+**How:** The test builds a synthetic spin echo sequence and calls
+`diagram_card` with its `first_adc_window` and `full_window`. It checks that
+`data["lane_sets"]` has one entry, that its `envelope` is `False` and its
+`extent_ms` is `[0.0, duration_ms]`, that every window's `lane_set` is 0, and
+that each window's `view_ms` matches the given `TimeWindow`'s start and end
+in ms.
+
+**Assumptions:** None.
+
+#### `test_over_budget_file_gets_one_lane_set_per_window`
+
+**Checks:** A file over `point_budget` gets an envelope lane set for a
+window equal to the whole file (extent the whole file), and an exact lane
+set for a short window within the budget (extent equal to that window).
+
+**How:** The test builds a synthetic multi-TR gradient echo sequence, picks
+a `point_budget` below the whole file's `point_count` but above one TR's
+`point_count`, and calls `diagram_card` with `full_window` and a one-TR
+`TimeWindow`. It checks that there are two lane sets, that the full window's
+lane set has `envelope=True` and the whole file's extent, and that the short
+window's lane set has `envelope=False` and the window's own extent.
+
+**Assumptions:** None.
+
+#### `test_two_files_prefix_button_text_with_the_file_name`
+
+**Checks:** With two files, each button's text starts with its file's name.
+
+**How:** The test builds two named sequences and one `full_window` for
+each, calls `diagram_card`, and checks that `"a.seq: Full sequence"` and
+`"b.seq: Full sequence"` both appear in `body_html`.
+
+**Assumptions:** None.
+
+#### `test_ids_start_with_the_given_card_id`
+
+**Checks:** With a non-default `card_id`, the card's own id and the ids of
+its SVG, chart and tooltip elements all start with it.
+
+**How:** The test calls `diagram_card` with `card_id="my-diagram"` and
+checks that `card.id` is `"my-diagram"` and that `body_html` has
+`id="my-diagram-diagram"`, `id="my-diagram-chart"` and
+`id="my-diagram-tip"`.
+
+**Assumptions:** None.
+
+#### `test_no_windows_raises`
+
+**Checks:** `diagram_card` raises `ValueError` when `windows` is empty.
+
+**How:** The test calls `diagram_card` with an empty list of windows and
+expects `ValueError`.
+
+**Assumptions:** None.
+
+#### `test_bad_file_index_raises`
+
+**Checks:** `diagram_card` raises `ValueError` when a window names a file
+index outside the given sequences.
+
+**How:** The test calls `diagram_card` with one sequence and a `TimeWindow`
+whose `file_index` is 1 and expects `ValueError`.
+
+**Assumptions:** None.
+
+#### `test_end_before_start_raises`
+
+**Checks:** `diagram_card` raises `ValueError` when a window's end is not
+after its start.
+
+**How:** The test calls `diagram_card` with a `TimeWindow` whose `end_s` is
+before its `start_s` and expects `ValueError`.
+
+**Assumptions:** None.
+
+#### `test_render_page_includes_diagram_script_once`
+
+**Checks:** `render_page` includes the diagram card script exactly once.
+
+**How:** The test builds a diagram card, renders it with `render_page`, and
+checks that the page has exactly one
+`PulseqReport.registerCard("diagram"` call.
+
+**Assumptions:** None.
+
+#### `test_diagram_card_has_zoom_controls_before_its_chart_and_the_help_sentence_once`
+
+**Checks:** The rendered page has the zoom button group directly before the
+diagram's `<div class="chart">`, and the zoom and pan help text exactly
+once.
+
+**How:** Adapted from vb-pulseq's
+`test_report_has_zoom_controls_on_each_line_chart`, checking only the
+diagram card because phases 4 and 5 are not merged into this branch. The
+test builds a diagram card and renders it. It checks that
+`markup._zoom_controls("diagram-diagram")` appears exactly once, that the
+text right after it (skipping one newline) starts with
+`<div class="chart"` and has `id="diagram-diagram"` within its first 400
+characters, and that the zoom and pan help sentence ("Click the chart to
+mark the centre for the zoom buttons. Drag across the chart to zoom to that
+range. Hold Shift and drag, or scroll sideways, to pan.") appears exactly
+once.
+
+**Assumptions:** None beyond the file's assumptions.
 
 ### 2.17 Block table card (`test_blocks_card.py`)
 
-Phase 7 adds the entries.
+`test_blocks_card.py` tests `cards/blocks.py`. `blocks_card` builds a
+collapsed "Blocks (table view)" card from `waveforms.block_rows`: the first
+`max_rows` blocks of each file when there are no windows (vb-pulseq's own
+note and table for one file, parity), or one table for each window when
+`windows` is given. Every expected table in this file is built with
+`markup._table`, the same helper the card itself uses, from the rows that
+`block_rows` gives directly, so a test also fixes the exact table that
+`_table` would render from those rows.
+
+#### `test_one_file_note_and_table_match_vb_parity_when_rows_are_cut`
+
+**Checks:** For one file with more blocks than `max_rows`, `body_html`
+equals vb-pulseq's own `__BLOCK_NOTE__` + "\n" + `__BLOCKS__` text (the "First
+N of M blocks." note followed directly by the table), and the card's other
+fields are correct.
+
+**How:** The test builds a synthetic gradient echo sequence with more
+blocks than a small `max_rows`, calls `blocks_card`, and separately calls
+`block_rows` with the same `max_rows` to get the expected rows and total. It
+builds the expected note text and the expected table with `markup._table`,
+and checks that `body_html` equals the note, a newline, and the table,
+exactly. It also checks `id`, `title`, `collapsed`, `data` and `script`.
+
+**Assumptions:** None.
+
+#### `test_no_note_when_all_rows_fit`
+
+**Checks:** When every block fits under `max_rows`, the card has no "First N
+of M blocks." note.
+
+**How:** The test builds a small sequence, calls `blocks_card` with the
+default `max_rows`, and checks that `body_html` equals a newline followed by
+the expected table (built with `markup._table`), and that the text "muted"
+(the note's CSS class) is absent.
+
+**Assumptions:** None.
+
+#### `test_two_files_have_an_h3_with_each_escaped_file_name`
+
+**Checks:** With more than one file and no windows, each file's table is
+headed by an `<h3>` with the file's own name, HTML-escaped, in the given
+order.
+
+**How:** The test builds two named sequences, one with a name that has an
+HTML special character, calls `blocks_card` with both, and checks that the
+escaped and the plain `<h3>` headings are both present and in the given
+order.
+
+**Assumptions:** None.
+
+#### `test_windows_give_one_table_each_headed_by_the_window_label`
+
+**Checks:** With `windows` given, the card has exactly one table for each
+window, headed by an `<h3>` with the window's label, holding the blocks that
+overlap it.
+
+**How:** The test builds a synthetic multi-TR sequence and one `TimeWindow`
+for each TR, calls `blocks_card` with them, and checks that `body_html` has
+exactly as many `<h3>` elements as windows, that each window's label
+appears in its own heading, and that the expected table for that window's
+own range (from `block_rows` and `markup._table`) appears in the body.
+
+**Assumptions:** None.
+
+#### `test_windows_with_two_files_prefix_the_heading_with_the_file_name`
+
+**Checks:** With `windows` and more than one file, each heading has the
+file's name before the window's label, in the same "name: label" format as
+`cards.diagram.diagram_card`'s buttons.
+
+**How:** The test builds two named sequences, one `TimeWindow` for each
+(naming its own `file_index`), calls `blocks_card` with both, and checks
+that both `"<h3>a.seq: TR 0</h3>"` and `"<h3>b.seq: TR 0</h3>"` are present.
+
+**Assumptions:** None.
+
+#### `test_windows_note_when_a_window_has_more_blocks_than_max_rows`
+
+**Checks:** A window whose own block count is over `max_rows` gets the
+"First N of M blocks." note, with that window's own total.
+
+**How:** The test builds a sequence and a window equal to the whole file, a
+small `max_rows`, and checks that `block_rows` for that window already has a
+total over `max_rows` before calling `blocks_card`. It then calls
+`blocks_card` with that window and `max_rows`, and checks that the note
+names the window's own total.
+
+**Assumptions:** None.
+
+#### `test_render_page_accepts_blocks_card`
+
+**Checks:** `render_page` accepts the card that `blocks_card` returns.
+
+**How:** The test builds a blocks card, renders it with `render_page`, and
+checks that `<summary>Blocks (table view)</summary>` is in the result.
+
+**Assumptions:** None.
