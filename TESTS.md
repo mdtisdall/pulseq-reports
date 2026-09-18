@@ -1010,11 +1010,155 @@ copy.
 
 ### 2.5 Timing card (`test_timing_card.py`)
 
-Phase 2 adds the entries.
+`test_timing_card.py` tests `cards/timing.py`. `timing_card` builds the
+timing check card from pypulseq's `check_timing` result for one or more
+sequences. For one sequence, the body is the same HTML as vb-pulseq's timing
+check. For more than one sequence, a status line names each file and an
+error table is placed under each file that fails.
+
+#### `test_timing_card_for_one_sequence_matches_timing_html`
+
+**Checks:** For one sequence, `timing_card`'s `body_html` equals the same
+HTML as vb-pulseq's timing check (parity), and the card's `id`, `title`,
+`data` and `script` fields are correct.
+
+**How:** The test builds a synthetic spin echo sequence (it passes the
+timing check), calls `timing_card` with one `NamedSequence`, and compares
+`body_html` to `timing._timing_html(timing.timing_errors(seq))` called
+directly. It also checks `id == "timing"`, `title == "Timing check"`,
+"Timing check passed" is in the body, and `data` and `script` are both None.
+
+**Assumptions:** The synthetic spin echo sequence passes pypulseq's timing
+check.
+
+#### `test_timing_card_lists_timing_errors_for_one_sequence`
+
+**Checks:** `timing_card` shows the failure text and the error type for a
+sequence with a timing violation.
+
+**How:** The test builds a sequence with one RF block whose delay is set to
+0 after construction, below the RF dead time (as in vb-pulseq's own
+bad-sequence test), confirms that `timing_errors` reports an `RF_DEAD_TIME`
+error, then checks that `timing_card`'s body has "Timing check failed" and
+"RF_DEAD_TIME".
+
+**Assumptions:** pypulseq's `check_timing` reports an `RF_DEAD_TIME` error
+for an RF block whose delay is below the system's RF dead time.
+
+#### `test_timing_card_for_two_sequences_names_each_file_and_only_the_failing_one_has_a_table`
+
+**Checks:** With two sequences, `timing_card` names each file in a status
+line, in the given order, and places the error table only under the file
+that fails.
+
+**How:** The test builds one `NamedSequence` with a valid sequence and one
+with the bad sequence from the previous test, calls `timing_card` with both,
+and checks that both file names appear (the good one first), that both a
+"passed" and a "failed" status line are present, that exactly one error
+table appears in the body, and that splitting the body on the second file's
+name puts "RF_DEAD_TIME" only in the part after it.
+
+**Assumptions:** None beyond the previous test's.
+
+#### `test_timing_card_escapes_file_names`
+
+**Checks:** A file name with HTML special characters is escaped in the
+body.
+
+**How:** The test calls `timing_card` with a `NamedSequence` named `"a<b>"`
+and checks that the raw text is absent from the body and the HTML-escaped
+form is present.
+
+**Assumptions:** None.
+
+#### `test_render_page_accepts_timing_card`
+
+**Checks:** `page.render_page` accepts a `Card` from `timing_card` and
+renders its title.
+
+**How:** The test builds a timing card for one sequence, renders it with
+`page.render_page`, and checks that `<h2>Timing check</h2>` is in the
+result.
+
+**Assumptions:** None beyond `test_page.py`'s coverage of `render_page`.
 
 ### 2.6 Definitions card (`test_definitions_card.py`)
 
-Phase 2 adds the entries.
+`test_definitions_card.py` tests `cards/definitions.py`. `definitions_card`
+builds the two-column definitions table from a sequence's `Definitions`,
+the same as vb-pulseq, for one sequence. For more than one sequence, it
+builds one row for each definition key found in any file (in first-seen
+order), with one column for each file; a file that lacks a key gets an
+empty cell. When no file has any definitions, the body is a muted "No
+definitions." paragraph instead of an empty table — a choice this phase
+makes, since vb-pulseq has no multi-file case to match.
+
+#### `test_definitions_card_for_one_sequence_matches_the_vb_table`
+
+**Checks:** For one sequence, `definitions_card`'s `body_html` equals
+vb-pulseq's two-column definitions table for the same sequence (parity),
+and the card's `id`, `title`, `data` and `script` fields are correct.
+
+**How:** The test builds a synthetic GRE sequence (it has definitions,
+including "TR"), computes the same table directly with `markup._table` from
+`seq.definitions.items()`, and compares it to `definitions_card`'s
+`body_html`. It also checks `id == "definitions"`, `title == "Definitions"`,
+and `data` and `script` are both None.
+
+**Assumptions:** None.
+
+#### `test_definitions_card_for_one_sequence_with_no_definitions_is_an_empty_table`
+
+**Checks:** A single sequence with no definitions gets the two-column table
+with an empty body, not the "No definitions." message (that message is
+only for the multi-file case).
+
+**How:** The test clears `seq.definitions` on a synthetic spin echo
+sequence and checks that the body equals
+`markup._table(["Definition", "Value"], [])`.
+
+**Assumptions:** pypulseq's `Sequence.definitions` is a plain dict that a
+test can clear directly.
+
+#### `test_definitions_card_for_two_sequences_unions_keys_in_first_seen_order`
+
+**Checks:** With two sequences, the table has one column for each file and
+one row for each definition key found in any file, in first-seen order,
+with an empty cell where a file lacks the key.
+
+**How:** The test builds two plain pypulseq sequences with different
+definitions set ("Name" and "TR" on the first, "TR" and "FOV" on the
+second, with "TR" set to a different value in each), calls
+`definitions_card` with both, and checks that the header row names both
+files, that the "Name" row is empty for the second file, the "FOV" row is
+empty for the first, the "TR" row shows each file's own value, and that
+"Name" and "TR" (first seen in the first file) appear before "FOV" (first
+seen in the second).
+
+**Assumptions:** None.
+
+#### `test_definitions_card_for_two_sequences_with_no_definitions_shows_a_muted_message`
+
+**Checks:** When no file has any definitions, `definitions_card` shows a
+muted "No definitions." message instead of an empty table.
+
+**How:** The test clears the definitions of two plain pypulseq sequences
+and checks that the body equals `<p class="muted">No definitions.</p>`
+exactly.
+
+**Assumptions:** This is a design decision the plan leaves to this phase
+(section 5, Phase 2, task 2.2); there is no vb-pulseq behavior to match.
+
+#### `test_render_page_accepts_definitions_card`
+
+**Checks:** `page.render_page` accepts a `Card` from `definitions_card` and
+renders its title.
+
+**How:** The test builds a definitions card for one sequence, renders it
+with `page.render_page`, and checks that `<h2>Definitions</h2>` is in the
+result.
+
+**Assumptions:** None beyond `test_page.py`'s coverage of `render_page`.
 
 ### 2.7 RF exposure (`test_rf_exposure.py`)
 
