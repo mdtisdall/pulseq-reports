@@ -1162,11 +1162,225 @@ result.
 
 ### 2.7 RF exposure (`test_rf_exposure.py`)
 
-Phase 3 adds the entries.
+`test_rf_exposure.py` tests `rf_exposure.py`: the RF exposure of a sequence,
+calculated from the RF amplitudes only — the number of pulses, the peak B1,
+∫B1² dt, B1+rms over the sequence, and the highest B1+rms in a window. With
+`periodic=True` (the default), the sequence is taken as one period that
+repeats. With `periodic=False`, the sequence plays once: the highest-window
+search does not wrap past the end, and a sequence shorter than the window
+uses the whole sequence as the window, recorded as the window's real length.
+
+The tests use a train of 1 ms, 90° block pulses on the synthetic system
+(`tests/synthetic.py`'s `SYSTEM`), each followed by a delay. One pulse has
+B1 = (1/4 cycle) / 1 ms, converted to µT, and ∫B1² dt = B1² × 1 ms.
+
+**Assumptions for the whole file:**
+
+- The values do not depend on the scanner, the transmit coil or the patient.
+  They are not SAR, and no test compares them with a SAR or B1+rms limit.
+- Each RF sample counts at its start time for the window calculation.
+
+#### `test_block_pulse_train`
+
+**Checks:** For two pulses in 20 s, the number of pulses, duration, peak B1,
+peak block, RF energy and B1+rms are correct.
+
+**How:** The test makes two pulses, followed by delays of 3 s and 17 s. It
+checks that there are 2 pulses, the duration is 20 s within 10 ms, the peak B1
+is the B1 of one pulse, the peak is in block 1, the energy is twice the energy
+of one pulse, B1+rms is √(energy / duration), and the window's real length is
+the full 10 s window.
+
+**Assumptions:**
+
+- The duration also includes the pulses and their dead times, so it is a
+  little more than 20 s. The 10 ms tolerance allows that.
+
+#### `test_highest_window`
+
+**Checks:** The highest 10 s window holds the right number of pulses, also
+when the window wraps into the next repetition.
+
+**How:** The test runs three cases with two pulses. For each, the B1+rms of
+the highest window must be √(pulses in the window × energy of one pulse /
+10 s):
+
+- delays 3 s and 17 s: both pulses are in one window;
+- delays 15 s and 5 s: the window from the second pulse wraps into the next
+  repetition and holds the first pulse again, so 2 pulses;
+- delays 11 s and 11 s: the pulses are more than 10 s apart both ways, so
+  1 pulse.
+
+**Assumptions:**
+
+- The sequence repeats with no gap between repetitions.
+
+#### `test_short_sequence_window`
+
+**Checks:** For a sequence shorter than the window, the highest window holds
+all the whole repetitions that fit, plus the pulse in the remaining part.
+
+**How:** The test makes one pulse followed by a 0.3 s delay. 33 whole
+repetitions fit in 10 s, and the remaining part (about 60 ms) can hold one
+more pulse. The window B1+rms must be √(34 × energy of one pulse / 10 s), and
+more than the B1+rms over the sequence.
+
+**Assumptions:** None.
+
+#### `test_no_rf`
+
+**Checks:** A sequence without RF has zero pulses, no peak block, zero energy
+and B1+rms, and a window whose real length is the full 10 s window.
+
+**How:** The test makes a sequence with only a delay block
+(`tests/synthetic.py`'s `empty_sequence`) and checks each value.
+
+**Assumptions:** None.
+
+#### `test_periodic_false_does_not_wrap`
+
+**Checks:** With `periodic=False`, the highest-window search does not wrap
+past the end of the sequence, so it finds fewer pulses than the periodic
+search does for the same sequence.
+
+**How:** The test makes two pulses with delays of 15 s and 5 s, the same
+pattern `test_highest_window` uses for its wrap case. With `periodic=True`,
+the highest 10 s window wraps into the next repetition and holds 2 pulses, as
+in `test_highest_window`. With `periodic=False`, the sequence plays once: the
+two pulses are 15 s apart in both directions within that one play, more than
+the 10 s window, so the highest window holds only 1 pulse. The test checks
+the B1+rms of the highest window against √(pulses in the window × energy of
+one pulse / 10 s) for both cases, and that the window's real length is the
+full 10 s in the `periodic=False` case.
+
+**Assumptions:**
+
+- The sequence's duration (about 20 s) is longer than the 10 s window, so the
+  window is not the whole sequence.
+
+#### `test_periodic_false_window_is_whole_sequence_when_shorter_than_window`
+
+**Checks:** With `periodic=False` and a sequence shorter than the window, the
+highest window is the whole sequence: its real length is the sequence
+duration, and its B1+rms equals the plain (non-windowed) B1+rms.
+
+**How:** The test makes one pulse followed by a 0.3 s delay, well under the
+10 s window. It checks that the duration is less than the window, that the
+window's real length equals the duration, that B1+rms equals √(energy of one
+pulse / duration), and that the highest-window B1+rms equals the plain
+B1+rms.
+
+**Assumptions:** None.
+
+#### `test_periodic_false_no_rf`
+
+**Checks:** With `periodic=False`, a sequence without RF has zero pulses,
+zero B1+rms in the highest window, and a window real length equal to the
+sequence's own (zero-RF) duration.
+
+**How:** The test makes a sequence with only a delay block
+(`tests/synthetic.py`'s `empty_sequence`), calls `rf_exposure` with
+`periodic=False`, and checks each value.
+
+**Assumptions:** None.
 
 ### 2.8 RF exposure card (`test_rf_exposure_card.py`)
 
-Phase 3 adds the entries.
+`test_rf_exposure_card.py` tests `cards/rf_exposure.py`. `rf_exposure_data`
+gives `rf_exposure.rf_exposure` as a JSON-ready dict, in ms and µT, plus the
+highest window's real length and whether the sequence is periodic.
+`rf_exposure_card` builds the "RF exposure" `Card`: for one sequence, the
+body is `_rf_exposure_html(rf_exposure_data(seq))`, a six-row table and its
+note. For more than one sequence, the body has one table for each file,
+named by its file name, then an "All files" table and note: peak B1 is the
+maximum over the files, and B1+rms and the highest-window value treat the
+files as played one after another with no gap, and, when `periodic=True`,
+that concatenation repeated.
+
+The tests use `tests/synthetic.py`'s `spin_echo_sequence`, `gre_sequence` and
+`empty_sequence`.
+
+**Assumptions for the whole file:**
+
+- The card has no chart: its `data` and `script` are both `None`.
+
+#### `test_rf_exposure_data_for_spin_echo`
+
+**Checks:** For the synthetic spin echo sequence, the RF exposure data has 2
+pulses, the peak B1 of the refocusing pulse in its own block, the sum of the
+two pulses' energies, the B1+rms from that energy and duration, a 10 s
+window (the default), and a highest-window B1+rms at least as large as the
+plain B1+rms.
+
+**How:** The test computes the excitation and refocusing pulses' B1 directly
+from their flip angle and 1 ms duration (µT = (flip / 2π) / duration / γ),
+independent of the library. It checks that the data has 2 pulses, the
+duration matches pypulseq's own `Sequence.duration()`, the peak B1 is the
+refocusing pulse's B1, the peak block is the block that pypulseq itself
+reports as carrying the refocusing pulse, the energy is the sum of the two
+pulses' ∫B1² dt, B1+rms is √(energy / duration), the window is 10 s and its
+real length is 10 s (the sequence is much shorter), and the highest-window
+B1+rms is at least the plain B1+rms (a window can include more than one
+repetition of the short sequence).
+
+**Assumptions:**
+
+- The refocusing pulse (180°) has a higher peak B1 than the excitation pulse
+  (90°), because both are 1 ms block pulses and B1 is proportional to the
+  flip angle.
+
+#### `test_report_has_rf_exposure_card`
+
+**Checks:** The rendered page has the RF exposure card, with its title and
+its six table rows, and the card itself has no chart data or script.
+
+**How:** The test builds the card for one named sequence, checks that its
+`data` and `script` are `None`, renders the page, cuts out the text from the
+card's id to the end of the result, and checks for the title "RF exposure"
+and the rows "RF pulses", "Peak B1 (µT)", "∫B1² dt over the sequence
+(µT²·ms)", "Sequence duration (ms)", "B1+rms, sequence repeated (µT)" and
+"B1+rms, highest 10 s window (µT)". This also checks that `render_page`
+accepts the card.
+
+**Assumptions:** None.
+
+#### `test_rf_exposure_card_without_rf`
+
+**Checks:** For a sequence without RF, the card's body is the "No RF
+pulses." note, on its own and inside a rendered page.
+
+**How:** The test builds the card for the synthetic sequence with only a
+delay block, checks that the body equals the note exactly, and that the note
+is in a rendered page.
+
+**Assumptions:** None.
+
+#### `test_rf_exposure_card_two_files`
+
+**Checks:** For two named sequences, the card has one table for each file,
+named by its file name, in file order, then an "All files" table whose peak
+B1 is the maximum of the two files' peak B1, and whose note says the
+sequence is repeated (because `periodic` defaults to `True`).
+
+**How:** The test builds the card for a spin echo and a GRE sequence, checks
+that both file names appear as headings before "All files", in that order,
+computes each file's own peak B1 with `rf_exposure_data`, checks that the
+"All files" table has the larger of the two as its peak B1, checks that
+"sequence repeated" is in the "All files" section, and renders the page to
+check that `render_page` accepts a multi-file card.
+
+**Assumptions:** None.
+
+#### `test_rf_exposure_card_two_files_not_periodic_omits_repeated_wording`
+
+**Checks:** With `periodic=False`, the "All files" section does not say the
+sequence is repeated, and says instead that the files play once.
+
+**How:** The test builds the two-file card with `periodic=False` and checks
+that "sequence repeated" is not in the "All files" section and that "files
+played once" is.
+
+**Assumptions:** None.
 
 ### 2.9 Gradient spectrum (`test_grad_spectrum.py`)
 
