@@ -1042,11 +1042,196 @@ Phase 5 adds the entries.
 
 ### 2.13 Gradient limits (`test_grad_limits.py`)
 
-Phase 6 adds the entries.
+`test_grad_limits.py` tests `grad_limits.py`: the peak amplitude, the peak slew
+rate and the RMS amplitude of a sequence's gradients, on each logical axis and
+as a three-axis vector, over the whole sequence or over a window. Every
+expected value is computed by hand from the parameters of the trapezoid or
+arbitrary gradient that the test builds, not by calling `gradient_limits`
+itself for the expected value.
+
+#### `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`
+
+**Checks:** For a single x trapezoid, `gradient_limits` gives the peak
+amplitude, the peak slew rate and the RMS amplitude that hand computation from
+the trapezoid's own rise time, flat time and amplitude predicts.
+
+**How:** The test builds one block with an x trapezoid of a given amplitude,
+rise time and flat time, and calls `gradient_limits` on it. It computes the
+expected peak as the amplitude in mT/m, the expected slew as the amplitude
+divided by the rise time in T/m/s, and the expected RMS from the energy of the
+two ramps (each `amplitude^2 * rise_time / 3`) plus the flat top
+(`amplitude^2 * flat_time`), divided by the block's duration and square
+rooted. It checks that the x axis result matches each expected value, that
+`reason` is None, and that the peak and the slew are attributed to the
+trapezoid's own block ID.
+
+**Assumptions:**
+
+- The trapezoid's `fall_time` equals its `rise_time`, which is
+  `pp.make_trapezoid`'s default when only `rise_time` is given.
+
+#### `test_same_trapezoid_on_x_and_y_gives_vector_peak_root_2_times_axis_peak`
+
+**Checks:** The same trapezoid, played on x and on y at the same time, gives a
+vector peak that is the axis peak times the square root of 2.
+
+**How:** The test builds one block with the same trapezoid on x and on y, and
+calls `gradient_limits`. Because Gx equals Gy at every point, `|G|` is
+`sqrt(2)` times `|Gx|` at every point, and so at the peak. It checks that the
+vector peak equals the x axis peak times `sqrt(2)`, and that the x and y axis
+peaks are equal.
+
+**Assumptions:** None.
+
+#### `test_window_that_cuts_a_ramp_gives_hand_computed_rms`
+
+**Checks:** A window that ends partway up a trapezoid's rising ramp gives an
+RMS amplitude equal to the value hand-computed from the piece that the window
+keeps, cut at the window edge.
+
+**How:** The test builds one block with an x trapezoid and a window from 0 to
+half the rise time. It computes the expected RMS from the one linear piece the
+window keeps, from `(0, 0)` to `(rise_time / 2, amplitude / 2)`, with
+`Delta t * (a^2 + a*b + b^2) / 3` divided by the window length. It checks that
+`range_s` equals the window and that the x axis RMS matches.
+
+**Assumptions:** None.
+
+#### `test_arbitrary_gradient_peak_is_the_largest_of_first_last_and_waveform`
+
+**Checks:** For an arbitrary gradient, the peak amplitude is the largest
+absolute value among the shape's `first`, `last` and interior waveform
+samples.
+
+**How:** The test builds an x arbitrary gradient from an asymmetric sine-lobe
+waveform, whose largest magnitude is not at the shape's first or last sample,
+and calls `gradient_limits`. It computes the expected peak as the largest of
+`abs(first)`, `abs(last)` and the largest absolute waveform sample, taken from
+the block's own gradient event, converted to mT/m. It checks that the x axis
+peak matches.
+
+**Assumptions:**
+
+- `seq_utils.gradient_points` adds `first` and `last` as extra points at the
+  ends of an arbitrary gradient's shape (checked by `test_gradient_points_arbitrary`
+  in `test_seq_utils.py`), so they can hold the largest magnitude even when
+  every interior waveform sample is smaller.
+
+#### `test_no_gradients_sets_reason`
+
+**Checks:** A sequence with no gradient events at all gives a set `reason`,
+and every numeric field is its zero value: 0.0 for an amplitude, slew or RMS
+field, and None for a block field.
+
+**How:** The test builds a sequence with one delay block and no gradients, and
+calls `gradient_limits`. It checks that `reason` is
+"no gradient events in the sequence", that the vector peak and its time are
+0.0, and that every axis's peak, slew and RMS are 0.0 with `peak_block` and
+`slew_block` both None.
+
+**Assumptions:** None.
+
+#### `test_default_limits_come_from_seq_system`
+
+**Checks:** With `limits=None`, the limits are `seq.system.max_grad` and
+`seq.system.max_slew`, converted to mT/m and T/m/s, with the label
+"pypulseq system limits".
+
+**How:** The test builds a sequence with one x trapezoid and calls
+`gradient_limits` with no `limits` argument. It checks that the result's
+`limits.label` is "pypulseq system limits", and that `max_grad_mt_per_m` and
+`max_slew_t_per_m_per_s` equal `seq.system.max_grad` and `seq.system.max_slew`
+converted with the gyromagnetic ratio, the same conversion the function itself
+documents.
+
+**Assumptions:**
+
+- `seq.system.max_grad` and `seq.system.max_slew` are always in Hz/m and
+  Hz/m/s, whatever unit was given to `pp.Opts`, because `pp.Opts` converts to
+  Hz/m (respectively Hz/m/s) before it stores the value. This is a fact about
+  pypulseq, not about the function under test, and is not itself checked here.
 
 ### 2.14 Gradient limits card (`test_gradient_limits_card.py`)
 
-Phase 6 adds the entries.
+`test_gradient_limits_card.py` tests `cards/gradient_limits.py`: the "Gradient
+limits" table (Gx, Gy, Gz and |G| rows, with the peak, its percent of the
+limit, the max slew, its percent, and the RMS), one row group for each file
+when there is more than one, and the extra RMS column when a window is given.
+Every expected numeric cell is computed by hand from the trapezoid the test
+builds, using the same formulas as `test_grad_limits.py`, and compared through
+`markup._table`, so a test also fixes the exact table that `_table` would
+render from those rows.
+
+#### `test_single_file_table_has_axis_rows_and_percents`
+
+**Checks:** For one file with a single x trapezoid, the card's table has no
+"File" column, and its Gx, Gy, Gz and |G| rows hold the hand-computed peak,
+percent of the limit, max slew, its percent, and RMS, with "—" for the
+max slew of |G| and its percent. The |G| RMS equals the Gx RMS, because only x
+has a gradient.
+
+**How:** The test builds one file with an x trapezoid, computes the expected
+peak, slew and RMS from the trapezoid's parameters (as in
+`test_trapezoid_peak_slew_and_rms_match_hand_computed_values`) and their
+percents of `SYSTEM.max_grad` and `SYSTEM.max_slew`, and builds the expected
+table HTML with `markup._table` from the hand-computed rows. It calls
+`gradient_limits_card` and checks that the card's `id`, `title`, `data` and
+`script`, and that its body starts with the expected table HTML.
+
+**Assumptions:** None.
+
+#### `test_two_files_have_one_row_group_each_with_file_names`
+
+**Checks:** With two files, the table has a leading "File" column, each
+file's name on the first of its four rows and blank on the other three, and a
+file name with an HTML special character is escaped.
+
+**How:** The test builds two files, each with a single x trapezoid of a
+different amplitude, computes the hand-computed rows for each as in the
+single-file test, and builds the expected table HTML with `markup._table`,
+with the first file's name (which contains `&`) on the first row of its group
+and the second file's name on the first row of its group. It checks that the
+card's body starts with the expected table HTML, and that the escaped form of
+the first file's name is in the body.
+
+**Assumptions:** None.
+
+#### `test_window_gives_rms_over_window_and_over_whole_file`
+
+**Checks:** With a window, the table has two RMS columns, "RMS over window"
+and "RMS over whole file", and the peak and the slew columns are over the
+window.
+
+**How:** The test builds one file with an x trapezoid and a window equal to
+the rising ramp. It computes the expected peak, slew and window RMS from the
+ramp alone (RMS from `amplitude^2 * rise_time / 3` divided by the window
+length), and the expected whole-file RMS as in the single-file test. It builds
+the expected table HTML with `markup._table` from these hand-computed rows,
+with both RMS columns, and checks that the card's body starts with it.
+
+**Assumptions:** None.
+
+#### `test_no_gradients_adds_a_reason_note`
+
+**Checks:** A file with no gradient events gets a muted note in the card that
+names the file and the reason.
+
+**How:** The test builds a file with a delay block only, calls
+`gradient_limits_card`, and checks that the body contains
+"empty.seq: no gradient events in the sequence.".
+
+**Assumptions:** None.
+
+#### `test_render_page_accepts_gradient_limits_card`
+
+**Checks:** `render_page` accepts the card that `gradient_limits_card`
+returns.
+
+**How:** The test builds a card from one file with a trapezoid, calls
+`render_page` with it, and checks that the card's section and its `<h2>`
+title are in the result.
+
+**Assumptions:** None.
 
 ### 2.15 Waveform data (`test_waveforms.py`)
 
