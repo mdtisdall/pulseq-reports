@@ -15,6 +15,9 @@ def _assets_with_demo_card(tmp_path: Path) -> Path:
     real_assets = resources.files("pulseq_reports").joinpath("assets")
     with resources.as_file(real_assets) as real_path:
         shutil.copytree(real_path, assets_dir)
+    # git does not keep an empty directory, so assets/cards/ is missing until a phase adds
+    # the first library card script.
+    (assets_dir / "cards").mkdir(exist_ok=True)
     (assets_dir / "cards" / "demo.js").write_text("// DEMO_CARD_MARKER\n", encoding="utf-8")
     return assets_dir
 
