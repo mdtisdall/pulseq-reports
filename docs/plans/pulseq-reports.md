@@ -3,7 +3,40 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: not started. The plan was written on 2026-09-18.
+Status: complete. The plan was written on 2026-09-18 and done on 2026-09-18.
+
+| Phase | Pull request |
+|---|---|
+| 0: setup | #1 |
+| 1: core | #2 |
+| 2: timing and definitions | #3 |
+| 3: RF exposure | #4 |
+| 4: gradient spectrum | #7 |
+| 5: PNS | #8 |
+| 6: gradient limits | #5 |
+| 7: diagram and block table | #9 |
+| 8: parity, usage, release | #10 |
+
+#6 added `TODO.md` (the diagram drawn from the event table in the browser).
+
+Decisions made during the work, which this plan did not have:
+
+1. Branches are `feature/<name>`, not `feat/<name>`: the dev-workflow worktree
+   script accepts only `feature/`, `fix/`, `docs/` and `chore/`.
+2. `scripts/check` skips the TESTS.md check when there is no `tests/`
+   directory (phase 0 had no tests).
+3. `render_page` puts each script in its own `<script>` element. A card script
+   comes from `assets/cards/<name>.js` when that file exists, else from
+   `extra_scripts`. `page.js` shows a note in a card whose script fails or is
+   not registered. `_substitute` makes one pass over the template.
+4. The gradient limits card shows the RMS of |G| (the square root of the sum
+   of the squared axis RMS values). It has no vector slew.
+5. A diagram window that is over the point budget, and is not the whole file,
+   gets an envelope of its own range.
+6. The accepted differences from vb-pulseq are in `scripts/vb_parity.py`
+   (`ACCEPTED`). The vb-pulseq spin-echo files have more points than the
+   default diagram point budget: vb-pulseq must pass `point_budget` to keep its
+   page when it moves to the library.
 
 ## 1. Goal
 

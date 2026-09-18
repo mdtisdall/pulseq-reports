@@ -7,8 +7,10 @@ project that uses it supplies its own sequences, selects the cards it wants
 (timing check, sequence diagram, gradient spectrum, RF exposure, PNS, gradient
 limits), and can add its own cards.
 
-The library is under development and has no release yet. The design and the
-work that remains are in [docs/plans/pulseq-reports.md](docs/plans/pulseq-reports.md).
+The first release is v0.1.0. For how to add the dependency, build a report and
+add your own card, see [docs/usage.md](docs/usage.md). The design is in
+[docs/plans/pulseq-reports.md](docs/plans/pulseq-reports.md), and the planned
+work is in [TODO.md](TODO.md).
 
 Python 3.12, uv, Node.js and the other tools come from the Nix devShell. To run
 all the checks that CI runs:
