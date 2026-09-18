@@ -1670,11 +1670,406 @@ renders the page, and checks that the literal registration call
 
 ### 2.11 PNS prediction (`test_pns.py`)
 
-Phase 5 adds the entries.
+`test_pns.py` tests `pns.py`: the PNS prediction, which runs pypulseq's SAFE
+model, and `peak_tr_window`, the start and end of the TR that holds the
+prediction's peak, counted from the sequence start in steps of the TR
+definition. Without a gradient `.asc` file, the prediction uses pypulseq's
+example hardware, which is not a real scanner.
+
+The real `.asc` files are confidential, so the tests write a test `.asc` file
+with the PNS parameters of pypulseq's example hardware, with the
+`write_gradient_asc` fixture at the top of this file. The stimulation limits
+and thresholds in it can be multiplied by a scale factor. The test file can
+also have the layout of a scanner file: a main file with an `ASCCONV` block,
+CRLF line ends and the name in `asCOMP[0].tName`, which includes a
+`_GSWD_SAFETY.asc` file with the PNS parameters under `GradPatSup.Phys.PNS`.
+
+Most of the tests use the synthetic spin echo sequence
+(`tests/synthetic.py`'s `spin_echo_sequence`). The `peak_tr_window` tests use
+a three-TR sequence built in this file (`_three_trs`): three 50 ms TRs, each a
+y trapezoid on the synthetic system and a delay, with a TR definition of
+50 ms. One of the three TRs (the "peak TR") has a 0.1 ms rise and fall time,
+against 0.4 ms for the others, so its faster slew rate gives it the highest
+PNS.
+
+**Assumptions for the whole file:**
+
+- pypulseq's SAFE model is correct. No test compares it with a published
+  result or with a scanner.
+- No test uses the parameters of a real scanner. A PNS value for the
+  synthetic sequences on the scanner is not tested.
+- A faster slew rate gives a higher PNS prediction. The SAFE model is driven
+  by the slew rate, so this is expected but not calculated in the tests.
+
+#### `test_example_hardware_for_spin_echo`
+
+**Checks:** For the synthetic spin echo sequence on the example hardware, the
+prediction is below the stimulation limit, is highest on y, has one curve for
+each axis, and has a peak time inside the sequence.
+
+**How:** The test runs the prediction without an `.asc` file. It checks that
+there is no reason, that the hardware is the example hardware, and that there
+is no `.asc` file name. It checks that the axes are x, y and z, and that the
+peak is more than 0 and less than 1 (100 % of the limit). The axis with the
+highest peak must be y, where the crushers are. Each axis curve must have the
+same length as the all-axes curve, and the all-axes curve must be at least
+each axis curve at every time. The peak time must be inside the time range.
+
+**Assumptions:**
+
+- The all-axes value is the root-sum-of-squares of the axes, so it is at least
+  each axis.
+- "Below the limit" is for the example hardware only.
+- The crushers (on y) give the synthetic sequence's highest per-axis PNS.
+  This was checked against a direct run of the prediction, not derived by
+  hand.
+
+#### `test_asc_file_with_the_example_parameters`
+
+**Checks:** An `.asc` file with the example hardware's parameters gives the
+same prediction as the example hardware, and the file's hardware name and
+file name.
+
+**How:** The test writes a test `.asc` file with scale factor 1 and runs the
+prediction with it. There must be no reason, the hardware name must be the
+name in the file, and the file name must be the name of the file. The
+all-axes curve must be equal to the example hardware curve within a relative
+10⁻⁹.
+
+**Assumptions:**
+
+- The test file has only the fields that pypulseq's `.asc` reader needs for
+  PNS. A real file has many more fields, in the same format.
+
+#### `test_asc_file_that_includes_the_pns_parameters`
+
+**Checks:** A main `.asc` file that includes the PNS parameters from a second
+file with `$INCLUDE` gives the same prediction as the example hardware, and
+the hardware name in `asCOMP[0].tName`.
+
+**How:** The test writes a test `.asc` file with the scanner layout and scale
+factor 1, and runs the prediction with the main file. There must be no reason,
+the hardware name must be the name in the main file, and the file name must be
+the name of the main file. The all-axes curve must be equal to the example
+hardware curve within a relative 10⁻⁹.
+
+**Assumptions:**
+
+- The layout is the layout of the `MP_GradSys_K2309_2250V_951A_XR_AS82.asc`
+  files from the XA60 IDEA installation: the `$INCLUDE` line names a file in
+  the same directory, without quotes. Other software versions are not tested.
+
+#### `test_asc_file_with_a_missing_include`
+
+**Checks:** When a file that `$INCLUDE` names is not there, reading the `.asc`
+file stops with an error that names both files.
+
+**How:** The test writes a test `.asc` file with the scanner layout, deletes
+the `_GSWD_SAFETY.asc` file, and reads the main file. It must raise
+`FileNotFoundError` with a message that has the main file name and the
+included file name.
+
+**Assumptions:** None.
+
+#### `test_included_fields_replace_fields_with_the_same_name`
+
+**Checks:** The fields of an included file are merged into the fields of the
+main file, and a field in both files gets the value of the included file.
+
+**How:** The test writes a main file with `a.b[0] = 1`, `a.b[1] = 2`,
+`c = "old"` and a `$INCLUDE` line, and an included file with `a.b[1] = 3` and
+`c = "new"`. The fields read must be `a.b[0] = 1`, `a.b[1] = 3` and
+`c = "new"`.
+
+**Assumptions:**
+
+- In the real files, the `$INCLUDE` line is the last field of the main file,
+  so the included values are the last values, as in the file order. A field
+  after a `$INCLUDE` line that is also in the included file is not tested.
+
+#### `test_hardware_name`
+
+**Checks:** The hardware name comes from `asCOMP[0].tName` (a scanner file) or
+`asCOMP.tName`, and is "unknown" without either.
+
+**How:** The test gives the name function the fields for each of the three
+cases and checks the name.
+
+**Assumptions:** None.
+
+#### `test_prediction_scales_with_the_stimulation_limit`
+
+**Checks:** A stimulation limit 10 times lower gives a prediction 10 times
+higher, above the limit.
+
+**How:** The test writes a test `.asc` file with scale factor 0.1 and runs the
+prediction. The peak must be 10 times the example hardware peak within a
+relative 10⁻⁹, and more than 1.
+
+**Assumptions:**
+
+- In the SAFE model, the prediction is inversely proportional to the
+  stimulation limit.
+
+#### `test_peak_time_is_the_first_sample_at_the_peak_within_rounding`
+
+**Checks:** The peak time is the first sample within a relative 10⁻⁶ of the
+peak, and a real, larger increase moves it.
+
+**How:** The test makes a prediction by hand with five samples. Sample 1 is
+0.5 × (1 − 10⁻¹²) and sample 3 is 0.5. The peak must be 0.5 and the peak time
+must be sample 1. The test then sets sample 3 to 0.5 × (1 + 10⁻³). The peak
+time must be sample 3.
+
+**Assumptions:**
+
+- Identical TRs give PNS values that differ only by rounding. The tolerance
+  puts the peak in the first of them.
+
+#### `test_no_gradients`
+
+**Checks:** A sequence without gradients has no prediction, with the reason
+"no gradients", a peak of 0 and no peak time.
+
+**How:** The test makes the synthetic sequence with only a delay block
+(`tests/synthetic.py`'s `empty_sequence`) and checks the reason, the hardware
+name, the peak and the peak time.
+
+**Assumptions:** None.
+
+#### `test_peak_tr_window_finds_the_tr_with_the_peak`
+
+**Checks:** For each position of the peak TR (first, second or third) in the
+three-TR sequence, `peak_tr_window` returns that whole TR, and the
+prediction's peak time is inside it.
+
+**How:** For peak TR k = 0, 1 and 2, the test builds `_three_trs(k)`, runs the
+prediction, and calls `peak_tr_window` with the peak time. The window must be
+50k s to 50(k + 1) ms (converted to seconds), and the peak time must be
+inside it.
+
+**Assumptions:**
+
+- TRs are counted from the start of the sequence, in steps of the TR
+  definition.
+
+#### `test_peak_tr_window_without_a_tr_definition_is_none`
+
+**Checks:** Without a TR definition, `peak_tr_window` returns None.
+
+**How:** The test builds the three-TR sequence, removes its TR definition,
+runs the prediction, and calls `peak_tr_window` with the peak time. The
+result must be None.
+
+**Assumptions:** None.
+
+#### `test_peak_tr_window_with_one_tr_is_none`
+
+**Checks:** When the sequence is not longer than one TR, `peak_tr_window`
+returns None.
+
+**How:** The test takes the synthetic spin echo sequence, whose duration is
+much less than a TR, and sets its TR definition to its own duration exactly.
+`peak_tr_window` with any peak time must return None.
+
+**Assumptions:** None.
+
+#### `test_peak_tr_window_without_a_peak_time_is_none`
+
+**Checks:** With no peak time (`None`), `peak_tr_window` returns None.
+
+**How:** The test builds the three-TR sequence and calls `peak_tr_window`
+with `peak_time_s=None`. The result must be None.
+
+**Assumptions:** None.
 
 ### 2.12 PNS card (`test_pns_card.py`)
 
-Phase 5 adds the entries.
+`test_pns_card.py` tests `cards/pns.py`. `pns_data` gives
+`pns.pns_prediction` as a JSON-ready dict, in ms and percent of the
+stimulation limit, with one lane for all axes and one for each of Gx, Gy and
+Gz, and the start and end (ms) of the TR that holds the peak
+(`pns.peak_tr_window`) when the sequence has a TR definition and more than
+one TR. `pns_card` builds the "PNS prediction" `Card`, with that data, the
+`_pns_html` body (the result, the table, the chart and its explanation, or a
+note that there is no prediction, with "full sequence" and "peak TR" view
+buttons when there is a TR to zoom to), and the `"pns"` script.
+
+Most of the tests use the synthetic spin echo sequence
+(`tests/synthetic.py`'s `spin_echo_sequence`) or the three-TR sequence built
+in this file (`_three_trs`, the same sequence as in `test_pns.py`: three
+50 ms TRs, one with a faster slew rate that gives it the highest PNS).
+
+**Assumptions for the whole file:**
+
+- The physics (the prediction itself and `peak_tr_window`) is `pns.py`'s,
+  tested in `test_pns.py`. These tests check only that the card wires that
+  physics into JSON data and HTML correctly.
+
+#### `test_pns_data_for_spin_echo`
+
+**Checks:** For the synthetic spin echo sequence, the PNS data uses the
+example hardware, has a peak between 0 % and 100 % that is at least each axis
+peak, has lanes for all axes, Gx, Gy and Gz in percent with a range of 0 % to
+110 % and not too many points, draws the peak, ends at the last sample, and
+has no TR zoom.
+
+**How:** The test makes the PNS data. It checks that there is no reason, that
+the example hardware is used with no `.asc` file, that the peak is more than
+0 % and less than 100 %, and that it is at least each axis peak. The lanes
+must be all axes, Gx, Gy and Gz. Each lane must be in percent, with a range of
+0 % to 110 %, and have more than 0 and at most 100000 points. The highest
+point of the all-axes lane must be the peak within 0.01 %, and its last point
+must be at the end time. There must be no TR zoom range.
+
+**Assumptions:**
+
+- The range is 110 % of the larger of 100 % and the peak. For a peak below
+  100 %, that is 0 % to 110 %.
+- With one TR and no TR definition, there is nothing to zoom to.
+
+#### `test_max_envelope_keeps_the_maximum_of_each_run`
+
+**Checks:** Reducing a curve to at most 4000 points keeps its maximum and its
+start time.
+
+**How:** The test makes a curve of 10001 zeros with one value of 3 at sample
+7777, and reduces it to at most 4000 points. The result must have at most
+4000 points, the same number of times and values, a maximum of 3, and a first
+time of 0.
+
+**Assumptions:**
+
+- Each point of the result is the maximum of a run of samples, at the time of
+  the run's first sample. So a short peak is kept, but its time can move by up
+  to one run.
+
+#### `test_pns_data_zooms_to_the_tr_with_the_highest_pns`
+
+**Checks:** For each position of the peak TR (first, second or third), the
+PNS data's TR zoom range is that whole TR, and the peak time is inside it.
+
+**How:** For peak TR k = 0, 1 and 2, the test makes the PNS data for
+`_three_trs(k)`. The zoom range must be 50k ms to 50(k + 1) ms, and the peak
+time must be inside it.
+
+**Assumptions:**
+
+- TRs are counted from the start of the sequence, in steps of the TR
+  definition.
+
+#### `test_pns_data_without_a_tr_definition_has_no_zoom`
+
+**Checks:** Without a TR definition, the PNS data has no TR zoom.
+
+**How:** The test makes the three-TR sequence, removes its TR definition, and
+makes the PNS data. There must be no zoom range.
+
+**Assumptions:** None.
+
+#### `test_pns_lanes_keep_every_sample_above_the_floor`
+
+**Checks:** A PNS lane keeps every raw sample whose value is above the zero
+floor, and still has fewer points than the raw sequence has samples.
+
+**How:** The test uses the three-TR sequence with the peak in the second TR.
+It runs the PNS prediction directly and makes the PNS data. For each lane, it
+takes the raw samples whose value is above the zero floor, rounded the same
+way as the lane's own points. Every one of those rounded samples must be
+among the lane's points, and the lane must have fewer points than the raw
+sequence has samples.
+
+**Assumptions:**
+
+- The test checks only that the above-floor samples survive and that the lane
+  has fewer points than the raw sequence. It does not check that the lane
+  keeps exactly the points that the reduction is meant to keep, such as the
+  neighbors of each above-floor sample or the ends of each zero run.
+  `test_active_samples_keep_the_ends_of_zero_runs` checks that for the
+  reduction function alone, with a short made-up curve.
+
+#### `test_active_samples_keep_the_ends_of_zero_runs`
+
+**Checks:** Reducing a PNS lane keeps the samples above the floor, their
+neighbors, and the first and last sample, and drops the inside of each run at
+or below the floor.
+
+**How:** The test uses 10 samples with values 0, 0, 0, 1, 2, 0, 0, 0, 0, 0
+and a floor of 0.01. The kept samples must be 0, 2, 3, 4, 5 and 9, with
+values 0, 0, 1, 2, 0 and 0.
+
+**Assumptions:**
+
+- A run at or below the floor is drawn as a straight line between its ends,
+  so dropping its inside does not change the chart.
+
+#### `test_report_has_peak_tr_buttons`
+
+**Checks:** For the three-TR sequence with the peak in the second TR, the
+card has a "Full sequence" button that is selected and a "TR with the highest
+PNS (50–100 ms)" button that is not, and the note on how TRs are counted.
+
+**How:** The test builds the card and checks its body for the full-sequence
+button, selected, the zoom button, not selected, and the text "counted from
+the sequence start in steps of the TR definition".
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_report_has_pns_card`
+
+**Checks:** For the synthetic spin echo sequence, the card has the id
+`"pns"`, the title "PNS prediction" and the script name `"pns"`; its body has
+the below-limit result, the example hardware warning, the hardware and peak
+rows, and the chart, and no zoom buttons (one TR, no TR definition); and
+`render_page` accepts it, with the title and the id that the script and the
+data element key on.
+
+**How:** The test builds the card and checks its `id`, `title` and `script`.
+It checks the body for the title, "is below the 100 % limit", "Example
+hardware, not a real scanner.", a cell with the example hardware name, the
+rows for the peak of all axes, Gx, Gy and Gz, and the chart element, and that
+the body has no PNS zoom buttons. It renders the page and checks for the
+section element with the card's id and script, and the title.
+
+**Assumptions:**
+
+- "Below the limit" is for the example hardware only.
+
+#### `test_report_without_gradients_has_no_pns_chart`
+
+**Checks:** For a sequence without gradients, the card says that there is no
+PNS prediction and has no PNS chart, on its own and inside a rendered page.
+
+**How:** The test builds the card for the synthetic sequence with only a
+delay block and renders the page. It checks for the note "No PNS prediction:
+no gradients." and that there is no PNS chart element.
+
+**Assumptions:** None.
+
+#### `test_card_ids_start_with_card_id`
+
+**Checks:** With a non-default `card_id`, every id in the card's body (the
+chart, the SVG, the tip and the zoom button group's `data-zoom-for`) starts
+with that `card_id`, so two PNS cards can be on one page.
+
+**How:** The test builds the card with `card_id="pns-b"` and checks that the
+card's own id is `"pns-b"`, its script is still `"pns"`, and that
+`"pns-b-diagram"`, `"pns-b-chart"` and `"pns-b-tip"` each appear as an
+element id, and `"pns-b-diagram"` appears as `data-zoom-for`. It then removes
+every occurrence of `"pns-b-diagram"` from the body and checks that
+`"pns-diagram"` (the default card id's chart id) does not appear, so no id
+from the default `card_id` leaked in.
+
+**Assumptions:** None.
+
+#### `test_render_page_includes_pns_script_once`
+
+**Checks:** `render_page` includes the `pns` card script exactly one time.
+
+**How:** The test builds the card, renders a page with it, and checks that
+the page's text has exactly one copy of `page.card_asset("pns")`.
+
+**Assumptions:** None.
 
 ### 2.13 Gradient limits (`test_grad_limits.py`)
 
