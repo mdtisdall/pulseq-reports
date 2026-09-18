@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# All the checks that CI runs, in one command. Run it in the devShell:
+#
+#   nix develop --command scripts/check
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# pytest writes the IDs of the tests that it collects to this file, and the
+# TESTS.md check reads them, so the tests are collected only one time.
+collected_tests="$(mktemp)"
+trap 'rm -f "$collected_tests"' EXIT
+
+echo "# uv sync"
+uv sync --frozen
+
+echo
+echo "# ruff"
+uv run ruff check .
+uv run ruff format --check .
+
+echo
+echo "# pytest"
+if [ -d tests ]; then
+  # The tests argument loads tests/conftest.py before pytest reads its options,
+  # so --collected-tests-file is known.
+  uv run pytest -q tests --collected-tests-file "$collected_tests"
+else
+  echo "skip  pytest: no tests/ directory"
+fi
+
+echo
+echo "# TESTS.md"
+if [ -d tests ]; then
+  uv run python scripts/check_tests_md.py --collected "$collected_tests"
+else
+  # With no tests there is nothing to document. TESTS.md comes with the first
+  # tests (phase 1 of docs/plans/pulseq-reports.md).
+  echo "skip  TESTS.md: no tests/ directory"
+fi
+
+echo
+echo "# node"
+js_tests=(tests/js/test_*.js)
+if [ ! -e "${js_tests[0]}" ]; then
+  echo "skip  node: no JavaScript tests"
+else
+  node --test "${js_tests[@]}"
+fi
+
+echo
+echo "# shellcheck"
+shellcheck --severity=warning scripts/check .claude/hooks/block-main-writes.sh
+echo "ok    shellcheck"
