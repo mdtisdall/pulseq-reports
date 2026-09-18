@@ -1384,11 +1384,289 @@ played once" is.
 
 ### 2.9 Gradient spectrum (`test_grad_spectrum.py`)
 
-Phase 4 adds the entries.
+The spectrum is calculated as in pypulseq: 50 ms Hann windows with 50 %
+overlap, the magnitude spectrum of each window, and the maximum over windows.
+Here the gradients are sampled to the end of the sequence, with half a window
+of zeros added at each end. The RSS spectrum is the root-sum-of-squares of the
+three axes in each window, then the maximum over windows. The default
+resonance bands, of the MAGNETOM Prisma AS82 gradient coil, are 590 ± 50 Hz
+and 1140 ± 110 Hz. The gradients are sampled in chunks of `CHUNK_WINDOWS`
+windows, so the memory does not grow with the sequence length. `combine` gives
+the spectrum of several files.
+
+Several tests use a 1 mT/m sine on x, on the synthetic system. On a frequency
+bin, a Hann window gives an amplitude spectral density of
+(A/2) × Σw / √(fs × Σw²). With 5000 samples at 100 kHz, that is the expected
+peak for A = 1 mT/m.
+
+**Assumptions for the whole file:**
+
+- The resonance bands are published values for one Prisma gradient coil, not
+  read from a scanner's `.asc` file.
+- The test sine frequencies (300 Hz and 600 Hz) are exactly on frequency bins,
+  and each window holds a whole number of cycles. So there is no scalloping
+  loss, and the peak is the full value.
+- The tests do not compare the result with vb-pulseq. Parity with vb-pulseq
+  (rtol 1e-12, several chunk sizes) was checked outside CI when this module
+  moved from vb-pulseq.
+
+#### `test_prisma_as82_resonances`
+
+**Checks:** The default resonance bands are 540–640 Hz and 1030–1250 Hz.
+
+**How:** The test compares the low and high edge of each band in
+`PRISMA_AS82_RESONANCES` with these values.
+
+**Assumptions:** None.
+
+#### `test_spin_echo_spectrum`
+
+**Checks:** For the synthetic spin echo, the spectrum runs from 0 to 2 kHz,
+the x and y axes have a non-zero spectrum, the RSS is at least each axis at
+every frequency, and the largest RSS value in each band is inside that band.
+
+**How:** The test calculates the spectrum of the synthetic spin echo. It
+checks that there is no reason, that the frequencies start at 0 and end at
+2 kHz, and that there are x, y and z spectra. The x and y spectra must have a
+maximum above 0 (the synthetic spin echo has no z gradient). Each axis
+spectrum must have the same length as the frequencies, and the RSS must be at
+least that axis at every frequency. There must be a band peak for each
+resonance, at a frequency inside the band, with a value relative to the
+overall peak from 0 to 1.
+
+**Assumptions:**
+
+- The relative value can be 1 when the largest RSS value is inside a band.
+  The test does not check the size of the value in a band.
+
+#### `test_sine_in_the_first_band`
+
+**Checks:** A 600 Hz sine gives an RSS peak at 600 Hz with the expected
+amplitude, the first band holds the overall peak, and less than 5 % leaks into
+the second band.
+
+**How:** The test makes a 0.5 s, 1 mT/m, 600 Hz sine on x. The RSS peak must
+be at 600 Hz, with a value within 1 % of the expected peak. The first band's
+relative value must be 1. The second band's must be less than 0.05.
+
+**Assumptions:**
+
+- The windows that hold the abrupt start and end of the sine leak about 1 %
+  into the second band.
+
+#### `test_sine_outside_the_bands`
+
+**Checks:** A 300 Hz sine puts less than 5 % of the peak in each band.
+
+**How:** The test makes a 300 Hz sine and checks that both band values
+relative to the peak are less than 0.05.
+
+**Assumptions:**
+
+- The abrupt start and end of the sine leak about 2 % into the bands.
+
+#### `test_short_sequence_is_padded_to_one_window`
+
+**Checks:** A sequence shorter than one window still has a spectrum, with its
+peak at the sine frequency.
+
+**How:** The test makes a 20 ms, 600 Hz sine. There must be no reason, and the
+RSS peak must be within 20 Hz of 600 Hz.
+
+**Assumptions:**
+
+- A 20 ms sine has a wide spectral peak, so the tolerance is wider than one
+  frequency bin.
+
+#### `test_gradients_at_the_end_are_not_attenuated`
+
+**Checks:** A sine at the end of the sequence has its full amplitude in the
+spectrum.
+
+**How:** The test makes a sequence with 440 ms of no gradient and then 60 ms
+of a 600 Hz sine, so the last sample is at the end of the sequence. The RSS
+peak must be within 2 % of the expected peak.
+
+**Assumptions:**
+
+- The sine is 60 ms long, so at least one 50 ms window is fully inside it and
+  the full amplitude is expected. The test fails if the gradient samples near
+  the end of the sequence are lost, or are only at the edge of a window.
+
+#### `test_no_gradients`
+
+**Checks:** A sequence without gradients has no spectrum, with the reason
+"no gradients", and no band values.
+
+**How:** The test makes a sequence with only a block pulse and checks the
+reason and the band values.
+
+**Assumptions:** None.
+
+#### `test_chunks_give_the_same_spectrum_as_one_chunk`
+
+**Checks:** The spectrum does not depend on the chunk size.
+
+**How:** The test makes a synthetic GRE sequence of 30 TRs of 20 ms (600 ms,
+25 windows). It calculates the spectrum with `CHUNK_WINDOWS` set to 1,000,000
+(one chunk) and to 4 (7 chunks, the last one shorter). The frequencies must be
+equal, and each axis spectrum and the RSS must agree with a relative tolerance
+of 1e-12. The band peaks must be at the same frequencies.
+
+**Assumptions:**
+
+- The results are not always bit-for-bit equal, because scipy computes the
+  FFTs of a different number of windows in each call. The tolerance allows for
+  that rounding.
+
+#### `test_combine_is_the_maximum_over_the_files`
+
+**Checks:** The combined spectrum of two files is the element-wise maximum of
+each axis and of the RSS, with the band peaks recomputed from the combined
+RSS.
+
+**How:** The test calculates the spectra of a 200 ms, 600 Hz sine and a
+200 ms, 300 Hz sine and combines them. The frequencies must be those of the
+files, and each axis and the RSS must be equal to the element-wise maximum.
+The first band's peak must be at 600 Hz with the value of the 600 Hz file,
+and its relative value must be that value divided by the combined RSS
+maximum.
+
+**Assumptions:**
+
+- The windows that would cross from one file to the next are not in the
+  combined spectrum. The test does not check them.
+
+#### `test_combine_skips_files_without_gradients`
+
+**Checks:** `combine` skips a file without gradients, gives "no gradients"
+when no file has gradients, and raises for an empty list.
+
+**How:** The test combines a file with only a delay block and a 100 ms sine:
+the result must be the same as the sine's spectrum. It combines the file
+without gradients alone: the reason must be "no gradients". Combining an empty
+list must raise ValueError.
+
+**Assumptions:** None.
 
 ### 2.10 Gradient spectrum card (`test_spectrum_card.py`)
 
-Phase 4 adds the entries.
+`test_spectrum_card.py` tests `cards/spectrum.py`. `spectrum_data` gives the
+gradient spectrum of one sequence (`grad_spectrum.gradient_spectrum`) as
+JSON-ready data, in Hz and mT/m/√Hz; for the default resonances this is
+exactly the vb-pulseq `spectrum_data(seq)` data. `spectrum_card` builds the
+"Gradient spectrum" `Card`: for one sequence, the body is
+`_spectrum_html(spectrum_data(seq, resonances), scanner_label, card_id)` — the
+band table, the Linear/dB chart controls and the chart itself, or a note that
+there is no spectrum. For more than one sequence, the data is the combined
+spectrum (`grad_spectrum.combine`) of the files' own spectra, and the body
+has an added note that the chart is the maximum over the files. `data` is
+always the JSON-ready spectrum dict and `script` is always `"spectrum"`.
+
+The tests use `tests/synthetic.py`'s `spin_echo_sequence`, `gre_sequence` and
+`empty_sequence`.
+
+#### `test_spectrum_data_for_spin_echo`
+
+**Checks:** For the synthetic spin echo sequence, the spectrum data has the
+two default resonances, lanes for Gx, Gy, Gz and RSS with one shared value
+range from 0 Hz to the maximum frequency, and the two bands.
+
+**How:** The test makes the spectrum data. It checks that there is no reason,
+and that the resonances are 590 Hz (100 Hz wide) and 1140 Hz (220 Hz wide).
+The lanes must be Gx, Gy, Gz and RSS. Each lane must have the unit mT/m/√Hz,
+the same value range as the RSS lane, and one segment from 0 Hz to the
+maximum frequency. The bands must be 540–640 Hz and 1030–1250 Hz.
+
+**Assumptions:**
+
+- One value range for all lanes makes the axes comparable. The RSS is the
+  largest, so its range holds the others.
+
+#### `test_report_has_gradient_spectrum_card`
+
+**Checks:** The rendered page has the gradient spectrum card with the two
+band rows, the chart, the Linear and dB buttons with Linear selected, and
+the −80 dB note.
+
+**How:** The test builds the card for one named sequence, renders the page,
+cuts out the text from the card's id to the end of the result, and checks
+for the title, the cells "540–640" and "1030–1250", the diagram element, the
+two scale buttons with their pressed states, and "drawn at −80 dB".
+
+**Assumptions:** None.
+
+#### `test_report_without_gradients_has_no_spectrum_chart`
+
+**Checks:** For a sequence without gradients, the card's body is the "No
+gradient spectrum" note, on its own and inside a rendered page, and the page
+has no spectrum diagram element.
+
+**How:** The test builds the card for the synthetic sequence with only a
+delay block, checks that the body equals the note "No gradient spectrum: no
+gradients." exactly, and that the note is in a rendered page with no
+`gradient-spectrum-diagram` id.
+
+**Assumptions:** None.
+
+#### `test_custom_scanner_label_and_resonances_appear`
+
+**Checks:** A custom `scanner_label` and custom `resonances` change the
+table header, the aria-label wording, the note's band text and gradient
+coil wording, and the data's resonances and bands, in place of the default
+Prisma wording and values.
+
+**How:** The test builds the card with one custom resonance (700 Hz, 40 Hz
+wide) and the label "Acme Scanner". It checks that the table header, the
+aria-label phrase and the note's gradient-coil phrase all use "Acme
+Scanner", that the note states "700 ± 20 Hz", that the data's `resonances`
+list holds only the custom resonance, that the data's `bands` low/high
+values are 680–720 Hz, and that they equal `spectrum_data`'s own bands for
+the same sequence and resonances.
+
+**Assumptions:** None.
+
+#### `test_two_file_card_uses_combined_spectrum`
+
+**Checks:** For two named sequences, the card's data equals
+`_spectrum_data(combine(...))` of the two files' own spectra, and the body
+states that the chart is the maximum over the files and that windows
+crossing between files are not included.
+
+**How:** The test builds the card for a spin echo and a GRE sequence,
+computes the expected data directly from `gradient_spectrum` and `combine`,
+and checks that the card's `data` equals it exactly and that the two note
+phrases are in the body. It renders the page to check that `render_page`
+accepts a multi-file card.
+
+**Assumptions:** None.
+
+#### `test_custom_card_id_changes_element_ids`
+
+**Checks:** A non-default `card_id` changes the card id and every chart
+element id, which all start with `card_id`.
+
+**How:** The test builds the card with `card_id="spectrum-b"` and checks
+that `card.id` is `"spectrum-b"` and that the body has the ids
+`spectrum-b-chart`, `spectrum-b-diagram` and `spectrum-b-tip`, and the zoom
+button group's `data-zoom-for="spectrum-b-diagram"`.
+
+**Assumptions:** None.
+
+#### `test_render_page_includes_spectrum_script_once`
+
+**Checks:** `render_page` includes the `spectrum` card script once, even
+when two spectrum cards (with different `card_id`s) are on the page.
+
+**How:** The test builds two spectrum cards with different `card_id`s,
+renders the page, and checks that the literal registration call
+`PulseqReport.registerCard("spectrum"` appears exactly once in the result.
+
+**Assumptions:**
+
+- The literal `registerCard` call text is unique to
+  `assets/cards/spectrum.js` and does not appear elsewhere in the rendered
+  page.
 
 ### 2.11 PNS prediction (`test_pns.py`)
 
