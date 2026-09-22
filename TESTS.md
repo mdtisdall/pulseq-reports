@@ -2727,3 +2727,19 @@ names the window's own total.
 checks that `<summary>Blocks (table view)</summary>` is in the result.
 
 **Assumptions:** None.
+
+### 2.18 Diagram tables (`test_diagram_data.py`)
+
+Phase 1 of `docs/plans/diagram-event-table.md` adds the entries.
+
+### 2.19 Sequence lanes (`test_seq_lanes.js`)
+
+Phase 2 of `docs/plans/diagram-event-table.md` adds the entries.
+
+### 2.20 Sequence lanes against Python (`test_seq_lanes_golden.py`)
+
+Phase 4 of `docs/plans/diagram-event-table.md` adds the entries.
+
+### 2.21 Sequence extensions (`test_extensions.py`)
+
+Phase 6 of `docs/plans/diagram-event-table.md` adds the entries.
