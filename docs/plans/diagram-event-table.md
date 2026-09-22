@@ -218,7 +218,7 @@ yourself.
    in less than 50 ms. The browser makes a tree of minimum and maximum values
    over groups of 64 blocks. Then each bin costs O(log N), plus the blocks of
    two partial groups, plus a scan of at most 1024 durations to find the block
-   at each edge (section 4.4, item 4).
+   at each edge (section 4.4, item 5).
 6. **The lane is a polyline.** `file_lanes` makes each line lane (RF |B1|,
    Gx, Gy, Gz) one polyline: a zero point at time 0, all event points in play
    order, and a zero point at the end of the file. The chart draws straight
@@ -356,7 +356,7 @@ Each file has one owner phase at a time. Package root:
 | 0 | `TESTS.md` (only: add four placeholder sections, see task 0.1), this plan file (only if it is not on `main` yet) |
 | 1 | `seq_utils.py`, `waveforms.py` (only the helper changes of tasks 1.1 and 1.2; not the removals of phase 4), `diagram_data.py` (new), `tests/test_seq_utils.py`, `tests/test_diagram_data.py` (new), `TESTS.md` sections 2.1 and 2.18 |
 | 2 | `assets/seq_lanes.js` (new), `page.py`, `tests/js/test_seq_lanes.js` (new), `tests/test_page.py`, `TESTS.md` sections 2.3 and 2.19 |
-| 3 | `assets/lane_chart.js`, `assets/page.js` |
+| 3 | `assets/lane_chart.js`, `assets/page.js`, `assets/chart_math.js`, `tests/js/test_chart_math.js`, `TESTS.md` section 2.4 |
 | 4 | `cards/diagram.py`, `assets/cards/diagram.js`, `waveforms.py` (the removals), `tests/test_waveforms.py`, `tests/test_diagram_card.py`, `tests/test_seq_lanes_golden.py` (new), `tests/js/golden_seq_lanes.js` (new), `docs/usage.md`, `scripts/vb_parity.py`, `TESTS.md` sections 2.15, 2.16 and 2.20 |
 | 5 | `scripts/diagram_scale.py` (new), `TODO.md`, this plan file (status only), `README.md` (only if a sentence about the diagram is wrong) |
 | 6 | `extensions.py` (new), `cards/spectrum.py`, `cards/pns.py`, `cards/gradient_limits.py`, `tests/test_extensions.py` (new), `tests/data/` (new, only if task 6.4 needs a `.seq` file), `TESTS.md` section 2.21, `docs/usage.md` (only a short "Rotation extension" section) |
@@ -493,7 +493,7 @@ One global object `SeqLanes`, and `module.exports = SeqLanes` in Node, as in
 ```js
 SeqLanes.decode(format, tables, lanesMeta)  // tables: {name: TypedArray}; returns a model
 SeqLanes.blockStart(model, i)       // s
-SeqLanes.blockAt(model, t)          // index of the block that contains t (s)
+SeqLanes.blockAt(model, t)          // the block with start ≤ t < start + duration (s); see item 4
 SeqLanes.exactLanes(model, t0, t1)  // lanes (file_lanes JSON form) for [t0, t1] (s)
 SeqLanes.minMaxLanes(model, t0, t1, bins)
 SeqLanes.pointsIn(model, t0, t1)    // the number of event points in [t0, t1] (see item 3)
@@ -509,11 +509,15 @@ Behavior:
    t1, when they exist. The whole-file polyline includes the zero point at
    time 0 and the zero point at the end. For RF phase: one segment for each
    RF pulse that has a phase point in [t0, t1], with all the phase points of
-   that pulse. For the ADC lane: the windows that overlap [t0, t1]. Times in
+   that pulse. A pulse with no phase point (a pulse with zero amplitude) gives
+   no segment; `file_lanes` gives an empty segment for it, and the golden test
+   removes empty segments from the reference before the comparison. For the ADC lane: the windows that overlap [t0, t1]. Times in
    ms. The lane metadata comes from `lanesMeta`.
 2. **`minMaxLanes`.** The bin edges are `e_k = t0 + (t1 − t0) · k / bins`, for
-   `k = 0 ... bins`, computed with this formula. A point at time `t` is in
-   bin `k` when `e_k ≤ t < e_(k+1)`. A point at `t1` is in the last bin.
+   `k = 0 ... bins`, computed with this formula in seconds. The output times
+   are `e_k * 1000` and `(e_k + (e_(k+1) − e_k) / 2) * 1000`. The Python
+   reference of the golden test uses the same formulas. A point at time `t` is
+   in bin `k` when `e_k ≤ t < e_(k+1)`. A point at `t1` is in the last bin.
    - Line lanes: the minimum and the maximum in bin `k` are the minimum and
      the maximum of (the points in the bin) and (the polyline value at `e_k`
      and at `e_(k+1)`). The polyline value at an edge is linear
@@ -528,14 +532,22 @@ Behavior:
    - ADC: a bin is "on" when an ADC window overlaps `[e_k, e_(k+1))`. The lane
      has one window for each run of "on" bins, from the first edge to the last
      edge of the run.
-   - Each lane gets the key `"minmax": true`.
+   - Each lane gets the key `"minmax": true`. The chart's tooltip then shows
+     the minimum and the maximum of the bin at the cursor (task 3.1).
 3. **`lanesFor`.** `pointsIn` counts the RF magnitude, RF phase and gradient
    points of the blocks that overlap [t0, t1], and 2 for each ADC window. It
-   does not count the zero points or the neighbour points. If
+   does not count the zero points or the neighbour points. It uses the point
+   totals of the groups (section 4.5), so it costs O(log N + 64), not O(blocks
+   in the view). If
    `pointsIn(model, t0, t1) ≤ EXACT_POINT_LIMIT`, return `exactLanes`. Else
    return `minMaxLanes` with `bins`. `viewMs` is in ms; convert it to s with
    `/ 1000`.
-4. **Cost.** `decode` is O(N). `lanesFor` is O(bins · (log N + 64 + 1024))
+4. **`blockAt`.** It returns the index of the block with
+   `start ≤ t < start + duration`. Blocks of zero duration are never returned.
+   For `t` equal to the end of the file, it returns the last block with a
+   duration above zero. For `t` outside [0, end], it returns 0 or that last
+   block.
+5. **Cost.** `decode` is O(N). `lanesFor` is O(bins · (log N + 64 + 1024))
    for a min/max view, and O(log N + points) for an exact view. The block
    table of the model uses 6 to 11 B for each block when the event indexes fit
    in `uint8` or `uint16` (section 4.2). The memory budget is in section 2.6.
@@ -555,6 +567,9 @@ Behavior:
   (`blockAt`). Use the tree for the whole groups. Use the per-event minimum
   and maximum for whole blocks in the partial groups. Use the exact points
   only for the blocks that the bin edges cut. Add the two edge values.
+- The two zero points of a line lane (at time 0 and at the end of the file)
+  belong to no event. For the tree and for `exactLanes`, treat the first one
+  as a point of block 0 and the last one as a point of block N − 1.
 - An edge value on a lane needs the neighbouring points. They can be in a
   block far from the edge (a lane with no events for a long time). Find the
   previous and the next block with an event on that lane with the tree
@@ -631,7 +646,8 @@ the phase: S, with O review of the exactness. Review: O.
    `(delay, mag_offsets, mag, phase_offsets, phase)` with the current formulas
    (`mag_offsets = [0, rt..., rt[-1]]`, `phase_offsets = rt[keep]`). Change
    `_block_events` to use it: `start = t + delay`, times `start + offsets`.
-   Do not change any other function of `waveforms.py` in this phase.
+   Do not change any other function of `waveforms.py` in this task (task 1.2
+   changes `_value_lane`).
 4. Exactness check (a scratch script, not committed): for the synthetic
    sequences and one vb-pulseq sequence, `file_lanes`, `block_rows` and
    `gradient_points` give identical output (compare the JSON text, or use
@@ -657,7 +673,9 @@ def lane_meta(seq: pp.Sequence) -> list[dict]
 
 1. Do not call `get_block` for each block. Read `seq.block_events` and
    `seq.block_durations` directly, in play order (the order of
-   `seq.block_events`), with numpy where possible.
+   `seq.block_events`, a dict in insertion order), with numpy where possible.
+   Build one column at a time (for example with `np.fromiter` and a small
+   dtype). Do not build an (N, 7) `int64` array: at 10^7 blocks it is 560 MB.
 2. Make the dense indexes: for each kind (RF, gradient, ADC), the unique
    library IDs in first-seen order, and their dense index (1-based).
 3. Expand each unique event one time: call `seq.get_block` on the first block
@@ -667,8 +685,10 @@ def lane_meta(seq: pp.Sequence) -> list[dict]
    Python float operations), taken at each 1024th block.
 5. `lane_meta` must not call `file_lanes(seq)`: that builds the whole point
    list, which costs too much memory at 10^7 blocks. Compute each lane's peak
-   from the per-event values (the largest absolute value, and 0 for a lane with
-   no event), and "empty" from the event counts. Get the domain, ticks and tick
+   from the per-event values, rounded as `markup._points` rounds them
+   (`round(float(v), 4)`), because `_value_lane` takes its peak from the
+   rounded points: the largest absolute rounded value, and 0 for a lane with
+   no event. "Empty" comes from the event counts. Get the domain, ticks and tick
    labels from the same code as `waveforms._value_lane` and `_phase_lane`:
    move that code in `waveforms.py` into a helper that takes the peak, and make
    `_value_lane` call it (the output of `file_lanes` must not change). The
@@ -785,7 +805,13 @@ the phase: S, with O line-by-line review. Review: O.
    at the start of each render, with the current view and `bins = PLOT_W`,
    and draws the lanes that it returns. The number of lanes must stay the
    same. The option `lanes` is then the initial lanes.
-2. The tooltip (`setCursor`) uses the lanes of the last render.
+2. The tooltip (`setCursor`) uses the lanes of the last render. For a lane
+   with the key `minmax: true`, the tooltip shows the minimum and the maximum
+   of the bin at the cursor, as "min – max unit" (for example "−12.3 – 4.56
+   mT/m"), not the interpolated value of the zigzag polyline. The bin is the
+   pair of points (bin start, minimum), (bin centre, maximum) whose bin holds
+   the cursor time. A gate lane is unchanged ("on" or "off"). `ChartMath` gets
+   a pure function for this reading, with a Node test.
 3. `setWindow` keeps the provider. A card that shows several files keeps the
    current file in a variable that its provider reads. It sets the variable,
    then calls `setWindow` (which renders with the provider).
@@ -803,7 +829,8 @@ the phase: S, with O line-by-line review. Review: O.
    view (for example, a sine with the number of points set by the view), and
    one card with an `async` init that waits 500 ms and one that rejects.
 2. Check with `dev-workflow:browser-check-localhost`: zoom, pan, the zoom
-   buttons, the tooltip, both themes, and the failure note.
+   buttons, the tooltip (also the "min – max" reading on a lane with
+   `minmax: true`), both themes, and the failure note.
 
 Acceptance: `scripts/check` passes. The browser check passes. The old cards
 (spectrum, PNS, the current diagram) still work in a browser page.
@@ -832,7 +859,11 @@ rest. Review: O.
 
 1. `assets/cards/diagram.js`: in `init` (async), decode the base64 and
    decompress each table with `DecompressionStream("gzip")`. Make the typed
-   arrays and `SeqLanes.decode` for each file that a window uses.
+   arrays and `SeqLanes.decode` for the file of the first window. Decode each
+   other file the first time a button selects one of its windows, and keep the
+   model (a page with N files then costs N times the memory only when all of
+   them were shown). While a file decodes, the status line shows "Loading…"
+   and the window buttons are disabled.
 2. Keep the current model in a variable `current`. Make one `laneChart` with
    `lanesFor: (view, bins) => { const r = SeqLanes.lanesFor(current, view,
    bins); showStatus(r.exact, bins); return r.lanes; }`, `xDomain` = the first
@@ -877,8 +908,11 @@ rest. Review: O.
      computation of section 4.4, item 2 (use `numpy.interp` for the edges).
      Allow a relative difference of 1e-12 only for the interpolated edge
      values.
-   - The whole-file exact lanes, rounded as `markup._points` does, must equal
-     `file_lanes(seq)` (this links the JavaScript to the vb-pulseq parity).
+   - The whole-file exact lanes must equal `file_lanes(seq)` after the test
+     rounds the JavaScript values in Python as `markup._points` does (`round(t,
+     4)` on the ms times, `round(v, 4)` on the values, 3 for the phase). The
+     JavaScript never rounds. This links the JavaScript to the vb-pulseq
+     parity.
 3. The test needs `node`. Both devShells have it. If `node` is not found, the
    test fails (do not skip it).
 4. `TESTS.md`: fill section 2.20.
@@ -896,7 +930,10 @@ rest. Review: O.
 
 1. `docs/usage.md`: remove `point_budget` and the envelope text. Describe the
    exact and min/max views, the status line, and the limits (10^7 blocks for
-   each file, and the other cards, section 2.8).
+   each file, and the other cards, section 2.8). Add `seq_lanes.js` to the
+   script order. State the browser requirement: `DecompressionStream`
+   (verify the first versions of Chrome, Firefox and Safari on MDN before you
+   write them).
 2. `scripts/vb_parity.py`: the diagram check compares `lane_meta(seq)` with
    the vb lanes without segments, and `diagram_tables` rebuilt to the
    whole-file polyline (as in task 1.3) with the vb lanes (rounded). Remove
@@ -935,7 +972,11 @@ are merged. Tier of the phase: O, with S for the script. Review: O.
      RF phase in each TR, so that the event libraries grow with the TRs.
 2. It records: build time and peak memory of the pypulseq sequence; time and
    memory of `diagram_card`; the page size (bytes); the size of each table
-   (compressed). It writes the page to `--out` and the numbers as JSON.
+   (compressed). It writes the page to `--out` and the numbers as JSON. It does
+   not write a `.seq` file (at 10^7 blocks that is about 390 MB and is not
+   needed: the card takes the `pp.Sequence`). For the worst case, make the RF
+   pulse one time and change its `phase_offset` for each TR, instead of a new
+   `make_sinc_pulse` call in each TR.
 3. First run it at 10^4, 10^5 and 10^6 blocks. Extrapolate the time and the
    memory to 10^7. If the build of 10^7 blocks would take more than 1 hour, or
    more than half of the RAM of the machine, stop and ask the user before you
