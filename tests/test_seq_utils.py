@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import numpy.testing as npt
 import pypulseq as pp
 import pytest
 from synthetic import (
@@ -94,6 +95,37 @@ def test_hold_samples_interpolates_a_block_pulse():
     assert abs(signal.sum() * dt) == pytest.approx(flip / (2 * math.pi))
 
 
+def test_gradient_offsets_trapezoid():
+    g = pp.make_trapezoid(channel="x", area=1000, system=SYSTEM)
+    delay, offsets, amp = seq_utils.gradient_offsets(g)
+    expected_offsets = np.cumsum([0.0, g.rise_time, g.flat_time, g.fall_time])
+    expected_amp = np.array([0.0, g.amplitude, g.amplitude, 0.0])
+    assert delay == g.delay
+    assert offsets == pytest.approx(expected_offsets)
+    assert amp == pytest.approx(expected_amp)
+
+
+def test_gradient_offsets_arbitrary():
+    n = 10
+    waveform = np.linspace(100.0, 500.0, n)
+    g = pp.make_arbitrary_grad(channel="x", waveform=waveform, system=SYSTEM)
+    # pypulseq gives this shape both `first` and `shape_dur`, so the offsets gain a
+    # point at each end.
+    assert hasattr(g, "first")
+    assert hasattr(g, "shape_dur")
+
+    delay, offsets, amp = seq_utils.gradient_offsets(g)
+    assert delay == g.delay
+    assert offsets[0] == pytest.approx(0.0)
+    assert offsets[-1] == pytest.approx(g.shape_dur)
+    assert amp[0] == pytest.approx(g.first)
+    assert amp[-1] == pytest.approx(g.last)
+
+    # The interior points are the waveform's own sample offsets and values, unchanged.
+    assert offsets[1:-1] == pytest.approx(np.asarray(g.tt, dtype=float))
+    assert amp[1:-1] == pytest.approx(waveform)
+
+
 def test_gradient_points_trapezoid():
     g = pp.make_trapezoid(channel="x", area=1000, system=SYSTEM)
     t0 = 1e-3
@@ -120,6 +152,24 @@ def test_gradient_points_arbitrary():
     # The interior points are the waveform samples, unchanged (already Hz/m).
     assert amp[1:-1] == pytest.approx(waveform)
     assert t[1:-1] == pytest.approx(t0 + g.delay + np.asarray(g.tt, dtype=float))
+
+
+@pytest.mark.parametrize(
+    "g",
+    [
+        pp.make_trapezoid(channel="x", area=1000, system=SYSTEM),
+        pp.make_arbitrary_grad(channel="x", waveform=np.linspace(100.0, 500.0, 10), system=SYSTEM),
+    ],
+    ids=["trapezoid", "arbitrary"],
+)
+def test_gradient_points_matches_gradient_offsets_exactly(g):
+    # This is the relationship the diagram tables rest on: gradient_points must be
+    # exactly (not just approximately) t0 + delay + offsets, for every bit, because a
+    # later phase rebuilds the same times from the stored offsets.
+    t0 = 1.234e-3
+    t, _ = seq_utils.gradient_points(g, t0)
+    delay, offsets, _ = seq_utils.gradient_offsets(g)
+    npt.assert_array_equal(t, (t0 + delay) + offsets)
 
 
 @pytest.mark.parametrize(

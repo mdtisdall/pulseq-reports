@@ -247,6 +247,60 @@ samples times the sample time is 60° as a fraction of a cycle (1/6).
 - The flip angle in cycles is the sum of B1 (Hz) × dt, which is correct for a
   pulse with constant phase.
 
+#### `test_gradient_offsets_trapezoid`
+
+**Checks:** `gradient_offsets` gives the delay and the four corner offsets and
+amplitudes of a trapezoid gradient, with the offsets relative to the delay
+(not including it).
+
+**How:** The test makes an x trapezoid and calls `gradient_offsets`. It
+compares the returned delay with the gradient's own `delay`, the returned
+offsets with the running sum of the rise time, the flat time and the fall
+time (starting at zero), and the returned amplitudes with zero, the plateau
+amplitude twice, and zero.
+
+**Assumptions:** None.
+
+#### `test_gradient_offsets_arbitrary`
+
+**Checks:** `gradient_offsets` gives the delay and the sample offsets and
+amplitudes of an arbitrary gradient, with one added point at each end, at
+offset 0.0 and at the shape duration, for the shape's `first` and `last`
+values.
+
+**How:** The test makes an x arbitrary gradient from a 10-point waveform,
+checks that pypulseq gave it both a `first` and a `shape_dur` attribute (the
+branch this test means to exercise), and calls `gradient_offsets`. It checks
+that the first and last returned amplitudes are the gradient's `first` and
+`last` values, and that the first and last returned offsets are 0.0 and the
+shape duration. It checks that the interior offsets and amplitudes are the
+gradient's own sample times (`g.tt`) and waveform, unchanged.
+
+**Assumptions:**
+
+- pypulseq's `make_arbitrary_grad` gives the shape both `first` and
+  `shape_dur` by default. The test checks that before it tests the helper,
+  so the case without them (used only for a shape that already has points at
+  its own ends) is not covered here.
+
+#### `test_gradient_points_matches_gradient_offsets_exactly`
+
+**Checks:** `gradient_points(g, t0)` gives exactly `(t0 + delay) + offsets`
+for the `delay` and `offsets` that `gradient_offsets(g)` returns, for both a
+trapezoid and an arbitrary gradient. This is the relationship a later phase
+depends on to rebuild point times from the stored offset tables.
+
+**How:** The test is parametrized over a trapezoid and an arbitrary
+gradient. For each, it calls `gradient_points` with a non-zero `t0` and
+`gradient_offsets` on the same event, then compares the two with
+`numpy.testing.assert_array_equal` — exact equality, not a tolerance.
+
+**Assumptions:**
+
+- Bit-for-bit equality is the right check here, not an approximation: the
+  point in this test is that `gradient_points` is defined in terms of
+  `gradient_offsets` with no room for a rounding difference to creep in.
+
 #### `test_gradient_points_trapezoid`
 
 **Checks:** `gradient_points` gives the four corner times and amplitudes of a
@@ -2730,7 +2784,162 @@ checks that `<summary>Blocks (table view)</summary>` is in the result.
 
 ### 2.18 Diagram tables (`test_diagram_data.py`)
 
-Phase 1 of `docs/plans/diagram-event-table.md` adds the entries.
+`test_diagram_data.py` tests `diagram_data.py`: the compact per-file tables
+(`diagram_tables`), their gzip+base64 wire form (`encode_tables`,
+`decode_tables`), and the lane metadata built from the tables instead of the
+expanded points (`lane_meta`). `waveforms.file_lanes` and
+`waveforms._events_in_range` are the reference (section 3.5 of
+`docs/plans/diagram-event-table.md`): the module must give the same numbers,
+because a later phase rebuilds these same numbers in JavaScript and a golden
+test there compares them with `==` and no tolerance. Most of these tests
+therefore compare with `numpy.array_equal` rather than `pytest.approx`.
+
+#### `test_rebuilt_polylines_exactly_match_events_in_range`
+
+**Checks:** For a synthetic spin echo, gradient echo, arbitrary-gradient and
+empty sequence, rebuilding each lane's whole-file polyline from the decoded
+tables with the section 4.3 time formulas gives exactly the same points,
+bit for bit, as `waveforms._events_in_range(seq, None, None)`'s own unrounded
+per-block arrays.
+
+**How:** A module helper, `_rebuild_lane_polylines`, walks the decoded
+tables block by block: it rebuilds each block's start time from the
+checkpoints and durations (`_block_starts`, section 4.3: `checkpoints[c]`
+plus one duration at a time up to the block), then each event's points as
+`(block start + event delay) + the event's own offset`, reading the event's
+slice out of its pool with its `*_at` and `*_n` entries. This is independent
+of `waveforms.py`, so it is a real check of the tables' content, not a
+tautology. A second helper, `_reference_lane_polylines`, concatenates the
+same six lanes' points directly from `_events_in_range`'s per-block
+`_BlockEvents`. The test builds `diagram_tables`, round-trips it through
+`encode_tables`/`decode_tables` (so the check also exercises the wire form),
+and compares the two helpers' output per lane with `numpy.array_equal`.
+
+**Assumptions:** None.
+
+#### `test_encode_then_decode_gives_the_same_arrays_and_dtypes`
+
+**Checks:** `decode_tables(encode_tables(tables))` gives back the same table
+names, the same dtype for each array, and the same values.
+
+**How:** The test builds the tables of a synthetic gradient echo sequence,
+round-trips them through `encode_tables` and `decode_tables`, and checks
+that the decoded dict has the same keys and that each array's dtype and
+values (`numpy.array_equal`) match the original.
+
+**Assumptions:** None.
+
+#### `test_index_dtype_widths`
+
+**Checks:** `_index_dtype` gives `uint8` for a maximum index up to 255,
+`uint16` up to 65535, and `uint32` above that, matching section 4.2's rule
+for the width of an index column.
+
+**How:** For each boundary value (0, 255, 256, 65535, 65536), the test
+builds a small made-up `uint32` array that contains it, takes its maximum,
+calls `_index_dtype` and checks the returned dtype against the expected one,
+and checks that casting the array to that dtype keeps the same dtype (no
+silent widening).
+
+**Assumptions:** None.
+
+#### `test_checkpoints_match_the_sequential_sum_at_blocks_0_1024_2048`
+
+**Checks:** `diagram_tables`'s `checkpoints` table holds the start time of
+blocks 0, 1024 and 2048, equal to the sequential sum that
+`waveforms._timed_blocks` gives at those same blocks.
+
+**How:** The test builds `synthetic.gre_sequence(num_trs=600)` (3000
+blocks, more than `2 * CHECKPOINT_BLOCKS`, so all three checkpoints this
+plan lists exist), builds its tables, and checks `checkpoints` has exactly 3
+entries equal to the start time that a plain list of `_timed_blocks` gives
+at indexes 0, 1024 and 2048.
+
+**Assumptions:**
+
+- Building the tables for this 3000-block sequence is fast enough to belong
+  in the suite: measured at about 30 ms total for the test (sequence
+  construction and `diagram_tables` together, on the machine this was
+  written on), well under pytest's per-test budget.
+
+#### `test_lane_meta_matches_file_lanes_without_segments_and_windows`
+
+**Checks:** `lane_meta(seq)` equals `waveforms.file_lanes(seq)` with the
+`segments` and `windows` keys removed from each lane, both when `lane_meta`
+builds its own tables and when it is given prebuilt tables.
+
+**How:** The test builds a synthetic spin echo sequence, computes the
+expected lane list by stripping `segments` and `windows` from
+`file_lanes`'s output, and checks it against `lane_meta(seq)` and against
+`lane_meta(seq, tables=diagram_tables(seq))`.
+
+**Assumptions:** None.
+
+#### `test_read_back_sequence_rebuilds_exactly_and_matches_the_original_within_tolerance`
+
+**Checks:** For a synthetic spin echo sequence written with `seq.write` and
+read back with `pp.Sequence.read`, the read sequence's own tables still
+rebuild its own `_events_in_range` polylines exactly; and the read
+sequence's polylines agree with the original sequence's own polylines
+closely, though not exactly.
+
+**How:** The test writes the spin echo sequence to a `tmp_path` file and
+reads it back into a fresh `pp.Sequence`. It checks the read sequence's
+rebuilt polylines against its own `_events_in_range` reference with
+`numpy.array_equal`, the same as
+`test_rebuilt_polylines_exactly_match_events_in_range`. It then compares the
+read sequence's reference polylines against the original sequence's, with a
+tolerance rather than exactly.
+
+**Assumptions:**
+
+- This is the one test in the file, and the only one the plan allows, that
+  uses a tolerance rather than an exact comparison.
+- The plan (`docs/plans/diagram-event-table.md`, task 1.3) states this
+  tolerance as 1e-9 s absolute and 1e-9 relative on values, reasoning that
+  the `.seq` file stores durations as raster counts and other values as
+  decimal text, so floats "can differ in the last bits". Measured directly
+  (`Sequence/write_seq.py` in the installed pypulseq, and the round-tripped
+  synthetic sequences here), block times do round-trip that closely, to a
+  few ULP, well inside 1e-9. Event **values** do not: pypulseq's own `.seq`
+  writer formats a `[TRAP]` gradient's amplitude, and other event values,
+  with Python's default `%g` text precision (6 significant digits;
+  `'{:12g}'` for `[TRAP]`), which measured as up to about 1e-6 relative
+  error on these synthetic sequences (for example about 3.6e-6 on a Gx
+  trapezoid amplitude) — far more than "the last bits", and about three
+  orders of magnitude looser than the plan's stated 1e-9. This is a property
+  of pypulseq's own file writer, not of `diagram_data.py`: the read
+  sequence's tables reproduce that same (already-rounded) sequence exactly,
+  which the test's first half checks. The test therefore keeps the plan's
+  1e-9 tolerance for times, where it holds, and uses a wider, measured
+  tolerance for values (1e-6 absolute, 1e-5 relative) instead of the plan's
+  1e-9. This gap between the plan's stated value tolerance and the measured
+  one has not been resolved with the plan's author; a future change to
+  pypulseq's write precision could require revisiting this tolerance.
+
+#### `test_two_rf_events_that_differ_only_in_phase_offset_share_their_offset_pools`
+
+**Checks:** Two RF events built with the same flip angle, duration and
+delay but a different `phase_offset` have their magnitude points, and their
+kept-phase-point offsets, stored once and shared in the pools, while their
+phase values are stored separately.
+
+**How:** The test builds a two-block sequence, one block pulse with
+`phase_offset=0` and one with `phase_offset=math.pi / 3`, otherwise
+identical, and computes its tables. It checks that the two RF events are
+dense indexes 1 and 2, that `rf_mag_offset_at`, `rf_mag_at` and
+`rf_phase_offset_at` are equal between them (the shared pool positions), and
+that `rf_phase_at` differs (the phase values are not equal, so the test is
+a genuine check of both sharing and non-sharing, not one where every pool
+happens to collapse).
+
+**Assumptions:**
+
+- `phase_offset` changes the phase samples (`_rf_offsets`'s `phase`) but not
+  the magnitude samples or which of them are kept (`mag = |signal|` and
+  `keep = mag > 1% of its peak` do not depend on `phase_offset`), so this
+  pair of events is expected to share exactly the offset arrays and not the
+  phase value array.
 
 ### 2.19 Sequence lanes (`test_seq_lanes.js`)
 
