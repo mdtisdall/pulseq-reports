@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const {fmt, niceTicks, valueAt, visiblePoints, clampView, zoomView, panView, dragView} = require(
+const {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
+  dragView} = require(
   path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "chart_math.js")
 );
 
@@ -37,6 +38,45 @@ test("test_value_at_returns_lane_fill_outside_all_segments", () => {
 
   const numericFillLane = {segments: [[[0, 0], [10, 100]]], fill: 42};
   assert.equal(valueAt(numericFillLane, -5), 42);
+});
+
+test("test_min_max_at_reads_the_bin_that_holds_the_cursor", () => {
+  // Two bins: [0, 10) has min -1, max 2; the second bin starts at t = 10.
+  const lane = {segments: [[[0, -1], [5, 2], [10, -3], [15, 4]]]};
+  assert.deepEqual(minMaxAt(lane, 3), {min: -1, max: 2});
+  assert.deepEqual(minMaxAt(lane, 12), {min: -3, max: 4});
+});
+
+test("test_min_max_at_bin_start_belongs_to_the_later_bin", () => {
+  // The first bin's own end (t = 10) is exclusive, so t = 10 falls in the
+  // second bin, whose start it is.
+  const lane = {segments: [[[0, -1], [5, 2], [10, -3], [15, 4]]]};
+  assert.deepEqual(minMaxAt(lane, 10), {min: -3, max: 4});
+});
+
+test("test_min_max_at_last_bin_of_a_segment_is_inclusive_at_its_own_end", () => {
+  // The last pair of a segment has no following pair, so its own end is
+  // derived as 2 * centre - start = 2 * 15 - 10 = 20, and t = 20 (the very
+  // end) is still in the bin.
+  const lane = {segments: [[[0, -1], [5, 2], [10, -3], [15, 4]]]};
+  assert.deepEqual(minMaxAt(lane, 20), {min: -3, max: 4});
+});
+
+test("test_min_max_at_returns_null_in_a_gap_between_segments", () => {
+  // Segment 1 covers only the bin [0, 10); segment 2 covers only the bin
+  // [20, 30). There is no bin for [10, 20), as for a gap between RF pulses.
+  const lane = {segments: [
+    [[0, -1], [5, 2]],
+    [[20, -3], [25, 4]],
+  ]};
+  assert.deepEqual(minMaxAt(lane, 3), {min: -1, max: 2});
+  assert.equal(minMaxAt(lane, 15), null);
+  assert.deepEqual(minMaxAt(lane, 22), {min: -3, max: 4});
+});
+
+test("test_min_max_at_returns_null_past_the_last_bin", () => {
+  const lane = {segments: [[[0, -1], [5, 2]]]};
+  assert.equal(minMaxAt(lane, 11), null);
 });
 
 test("test_fmt_rounds_to_three_significant_figures", () => {

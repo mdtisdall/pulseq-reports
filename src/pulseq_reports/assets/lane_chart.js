@@ -12,7 +12,7 @@ const PulseqReport = (() => {
     return node;
   };
   const text = (attrs, content, parent) => { el("text", attrs, parent).textContent = content; };
-  const {fmt, niceTicks, valueAt, visiblePoints, zoomView, panView, dragView} = ChartMath;
+  const {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, zoomView, panView, dragView} = ChartMath;
   // A line segment draws at most 4 * BUCKETS + 2 of its points in the view (see visiblePoints).
   const BUCKETS = 2 * PLOT_W;
   // A drag shorter than this, in CSS px, is a click and does not zoom.
@@ -28,9 +28,15 @@ const PulseqReport = (() => {
   // zoom, pan or reset changes the view; `isInitial` is true for a reset to `xDomain`.
   // Zoom: drag in the plot, the zoom buttons, or the + = - keys; 0 resets. Pan: Shift+drag
   // or horizontal scroll.
+  // `lanesFor(view, bins)`, when given, is called at the start of each render, with the
+  // current view and `bins = PLOT_W`, and its result is drawn instead of `lanes`; it must
+  // always return the same number of lanes. `lanes` is then only the initial lanes, shown
+  // by the first render before a view change. Without `lanesFor`, `lanes` is drawn as
+  // given to `laneChart` or to `setLanes`/`setWindow`, as before.
   // Returns {setView, setLanes, setWindow}: setView changes the view without calling
-  // onViewChange. setWindow replaces the lanes, `xDomain` and `extent` together.
-  function laneChart({svg, chart, tip, lanes, xDomain, extent = xDomain,
+  // onViewChange. setWindow replaces the lanes, `xDomain` and `extent` together, and keeps
+  // `lanesFor` if one was given.
+  function laneChart({svg, chart, tip, lanes, lanesFor, xDomain, extent = xDomain,
                       minSpan: minSpanOption, onViewChange = () => {},
                       xLabel, cursorText, bands = [],
                       bandStyle = "fill:var(--ink);fill-opacity:0.05"}) {
@@ -68,6 +74,7 @@ const PulseqReport = (() => {
     const x = t => LEFT + (t - view[0]) / (view[1] - view[0]) * PLOT_W;
 
     function render() {
+      if (lanesFor) lanes = lanesFor(view, PLOT_W);
       if (frame !== null) {
         cancelAnimationFrame(frame);
         frame = null;
@@ -162,6 +169,20 @@ const PulseqReport = (() => {
       }
     }
 
+    // Formats a lane's value for the tooltip, as before.
+    const valueText = (lane, v) => lane.unit && typeof v !== "string" && v !== null
+      ? `${fmt(v)} ${lane.unit}` : fmt(v);
+
+    // Formats the minimum and the maximum of a minmax lane's bin at t for the tooltip, for
+    // example "−12.3 – 4.56 mT/m". Falls back to the lane's fill value, formatted
+    // as valueText does, when t is in a gap between bins (see ChartMath.minMaxAt).
+    const minMaxText = (lane, t) => {
+      const mm = minMaxAt(lane, t);
+      if (mm === null) return valueText(lane, lane.fill);
+      const range = `${fmt(mm.min)} – ${fmt(mm.max)}`;
+      return lane.unit ? `${range} ${lane.unit}` : range;
+    };
+
     function setCursor(t) {
       cursor = t === null ? null : Math.min(view[1], Math.max(view[0], t));
       if (cursor === null) {
@@ -188,9 +209,8 @@ const PulseqReport = (() => {
         key.style.background = `var(--${lane.color})`;
         name.append(key, lane.title);
         const value = document.createElement("span");
-        const v = valueAt(lane, cursor);
-        value.textContent = lane.unit && typeof v !== "string" && v !== null
-          ? `${fmt(v)} ${lane.unit}` : fmt(v);
+        value.textContent = lane.kind !== "gate" && lane.minmax
+          ? minMaxText(lane, cursor) : valueText(lane, valueAt(lane, cursor));
         row.append(name, value);
         tip.appendChild(row);
       }
