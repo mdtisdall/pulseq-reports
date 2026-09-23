@@ -232,11 +232,10 @@ def test_read_back_sequence_rebuilds_exactly_and_matches_the_original_within_tol
     coarser round trip than "differ in the last few bits": measured on these synthetic
     sequences, times agree to within double-precision rounding (0 to a few ULP, far
     inside 1e-9 s), but values can differ by up to about 1e-6 relative (for example
-    about 3.6e-6 for a Gx trapezoid amplitude here). The plan's stated tolerance for
-    this test (1e-9 s absolute, 1e-9 relative on values) holds for times but not for
-    values; this test uses 1e-9 for times and a wider, measured tolerance for values
-    (1e-6 absolute, 1e-5 relative) instead. This is the one test in this file, and the
-    only one the plan allows, that compares with a tolerance rather than exactly."""
+    about 3.6e-6 for a Gx trapezoid amplitude here). This test uses 1e-9 for times and
+    a measured tolerance for values (1e-6 absolute, 1e-5 relative), as task 1.3 of the
+    plan states since its correction in phase 5. This is the one test in this file, and
+    the only one the plan allows, that compares with a tolerance rather than exactly."""
     seq = spin_echo_sequence()
     path = tmp_path / "roundtrip.seq"
     seq.write(str(path))

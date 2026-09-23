@@ -2,46 +2,74 @@
 
 Work that is planned but not started. Delete an item when its PR merges.
 
-## Draw the sequence diagram from the event table in the browser
+## Make the other cards work at 10^7 blocks
 
-**Why.** The diagram card (phase 7 of `docs/plans/pulseq-reports.md`) sends
-the expanded waveform points to the page. A file over the point budget gets an
-envelope for its whole-file view and exact points only for the windows that the
-caller chose in advance. In a whole-file view of a long file, the viewer cannot
-zoom in to exact waveforms. The expanded points are large, but a Pulseq sequence
-is compact: each block refers by ID to a small library of unique events. For the
-ex-vivo protocol (about 39,000 blocks in each file), the block table is a few
-integers for each block.
+**Why.** The sequence diagram works for a file of up to 10^7 blocks
+(`docs/plans/diagram-event-table.md`). The other cards were not made for that
+size, and a long file can make them too slow or too large:
 
-**What.** The page carries the compact form, and the chart script makes the
-points for the current view:
+- **PNS:** pypulseq `calculate_pns` uses the whole sampled waveform. A 1 h file
+  is about 3.6 × 10^8 samples for each axis, so several GB.
+- **RF exposure and gradient limits:** they call `seq.get_block` for each
+  block (about 18 µs for each block, so minutes at 10^7 blocks).
+- **Gradient spectrum:** it is chunked. Its time grows with the duration of
+  the file, not with the number of blocks (about 50 s for 1 h).
+- **Block table:** it reads only the rows that it shows. No change is needed.
 
-- Python writes two tables into the card data, with pypulseq (no `.seq`
-  parser in JavaScript):
-  - the event library: the corner or sample points of each unique RF, gradient
-    and ADC event, and the minimum and the maximum of each event;
-  - the block table: the start time of each block and the IDs of its events.
-- A new pure-JavaScript module gives the lanes for a time range:
-  - with few blocks in the view, the exact points of those blocks;
-  - with many blocks, the minimum and the maximum in each screen pixel, from the
-    minimum and the maximum of each event, and the exact shape of the events
-    that cross a pixel edge.
-- `laneChart` asks the module for new lanes after each zoom or pan.
-- The windows become shortcut buttons only. The point budget and the
-  envelope-or-exact choice go away.
-- The report stays one self-contained HTML file. Do not read the `.seq` file
-  when the page is viewed: a page opened from a local file cannot read other
-  files, and a server would stop the report working without it.
+For scale: a synthetic GRE-like sequence of 10^7 blocks (5 blocks for each
+TR, about 3.3 h) takes 87 s and 3.8 GB peak RSS to build in pypulseq
+(phase 5 of `docs/plans/diagram-event-table.md`). The diagram card adds 13 s
+and 0.2 GB to that.
 
-**How to check.**
+**What.** Give each card a method whose time and memory do not grow with the
+expanded waveform:
 
-- Node tests (pure functions, as for `chart_math.js`): the lanes that the module
-  gives for a time range equal `waveforms.file_lanes` for that range, for the
-  synthetic sequences. The Python functions in `waveforms.py` are the reference.
-- The ex-vivo protocol (4 files) gives a page smaller than the phase 7 page
-  (7.34 MB), and every view shows exact points when zoomed in.
-- A browser check of zoom and pan across the whole file.
+- RF exposure and gradient limits can use the block and event tables of
+  `diagram_data.diagram_tables` (each unique event is expanded one time).
+- PNS needs a chunked or windowed method.
 
-**When.** After the phases of `docs/plans/pulseq-reports.md` are merged, and
-before ex-vivo-gre-pulseq moves to the library. Write a plan in `docs/plans/`
-first: it changes the data of the diagram card, which vb-pulseq will also use.
+**How to check.** A scale run, as `scripts/diagram_scale.py` does for the
+diagram, for each card.
+
+**When.** Write a plan in `docs/plans/` first. Each card can be its own phase.
+
+## Support the rotation extension
+
+**Why.** The Pulseq rotation extension (MATLAB Pulseq 1.5.1, `mr.makeRotation`)
+keeps a library of unit quaternions, with at most one rotation in each block.
+The gradient events in the library are logical: the scanner rotates the
+gradients of a block with its rotation. A radial or PROPELLER sequence can use
+a few gradient events and a different rotation in each block. The cards that
+use the gradients (diagram, gradient spectrum, PNS, gradient limits) show the
+logical events as they are stored, so they would be wrong for such a sequence.
+Until rotations are supported, these cards refuse a sequence with rotations:
+`extensions.refuse_rotations` raises `NotImplementedError` (phase 6 of
+`docs/plans/diagram-event-table.md`, PR #16).
+
+pypulseq 1.5.0.post1 has no rotation extension (`pp.rotate` makes new, rotated
+gradient events; it is not the extension). Its `Sequence.read` raises
+`ValueError` for a `.seq` file with a rotation section. pypulseq draft PR #372
+("[v1.5.1] Add rotation extension") adds `make_rotation` and a
+`seq.rotation_library` of scalar-first quaternions; the guard already detects
+that form. Related pypulseq PRs: #302 and #378 (`rotate3D`), #341 (a refactor
+of `get_block`).
+
+**What.** These decisions are already made (decisions 8 and 9 of section 2.3
+of `docs/plans/diagram-event-table.md`):
+
+- The diagram shows the rotated gradient axes first, with a button for the
+  logical events as they are stored.
+- Rotations come from pypulseq, not from a `.seq` reader of this library.
+- Until then, the gradient cards refuse rotations. They do not draw unrotated
+  gradients as if they were correct.
+
+The diagram data format reserves these names (section 4.6 of that plan):
+`"format": 2` for data with rotations; the tables `rotation` (uint8/16/32,
+length N, dense rotation index, 0 = none) and `rotations` (float64, 9 values
+for each rotation: the rotation matrix, row by row). `SeqLanes.decode` already
+raises an error for format 2 and for an unknown table name. The other gradient
+cards need the rotated waveforms too, and `refuse_rotations` is then removed
+from each card that supports them.
+
+**When.** After a pypulseq release has rotation support. Write a plan in
+`docs/plans/` first.

@@ -258,11 +258,28 @@ def _assert_exact_lanes(js_lanes, meta_list, t0, t1, line_pts, phase_pulses, adc
 #
 # For each bin, the reference minimum and maximum come from the points of the
 # whole-file polyline (or, for the phase lane, the pulses' own points) that fall in
-# the bin, and the linear interpolation (`numpy.interp`'s own formula, called
-# directly, not reimplemented) at the bin's two edges. Section 4.4, item 2 of the plan
+# the bin, and the linear interpolation (`numpy.interp`, called directly, with one
+# change for an edge exactly on a repeated point time: `_edge_interp`) at the bin's
+# two edges. Section 4.4, item 2 of the plan
 # says which comparison to use: a value that a raw point already reaches (it is
 # <= every edge value, for the minimum; >= every edge value, for the maximum) must
 # match exactly; a value that only an edge reaches gets `math.isclose` at 1e-12.
+
+
+def _edge_interp(edges, xp: np.ndarray, fp: np.ndarray) -> np.ndarray:
+    """`numpy.interp(edges, xp, fp)`, except that an edge exactly on a point time
+    takes the value of the FIRST point at that time, not the last as `numpy.interp`
+    does. That is the value that the polyline reaches from the left, which is the
+    extreme that the bin to the left of the edge can reach; the bin to the right holds
+    every point at that time anyway. `SeqLanes` uses the same rule."""
+    edges = np.atleast_1d(np.asarray(edges, dtype=np.float64))
+    values = np.interp(edges, xp, fp)
+    if xp.size:
+        first = np.searchsorted(xp, edges, side="left")
+        safe = np.minimum(first, xp.size - 1)
+        hit = (first < xp.size) & (xp[safe] == edges)
+        values[hit] = fp[first[hit]]
+    return values
 
 
 def _bin_edges(t0: float, t1: float, bins: int) -> list[float]:
@@ -277,7 +294,7 @@ def _reference_minmax_line(P_L, t0: float, t1: float, bins: int):
     xp = np.array([t for t, _ in P_L], dtype=np.float64)
     fp = np.array([v for _, v in P_L], dtype=np.float64)
     edges = np.array(_bin_edges(t0, t1, bins), dtype=np.float64)
-    edge_values = np.interp(edges, xp, fp)
+    edge_values = _edge_interp(edges, xp, fp)
     out = []
     for k in range(bins):
         e0, e1 = edges[k], edges[k + 1]
@@ -327,7 +344,7 @@ def _reference_minmax_phase(phase_pulses, t0: float, t1: float, bins: int):
         if idx < 0 or pulse_ends[idx] < e:
             return None
         xp, fp = pulse_arrays[idx]
-        return float(np.interp(e, xp, fp))
+        return float(_edge_interp(e, xp, fp)[0])
 
     edges = _bin_edges(t0, t1, bins)
     edge_values = [edge_value(e) for e in edges]
