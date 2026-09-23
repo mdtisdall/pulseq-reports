@@ -223,6 +223,80 @@ function buildRepeatedTimeModel() {
   return {tables, model: SeqLanes.decode(1, tables, HAND_LANES_META)};
 }
 
+// 4 blocks with long events, so that a bin's range of points inside one
+// event is far longer than the 64-value chunks of `minMaxLanes`'s pyramid.
+// Block0 (20 ms) has RF event 1: 20,000 samples at a 1 µs dwell, with
+// pseudo-random |B1| and phase values and a few narrow spikes (a spike is
+// the extreme of its bin only if the search finds that one sample). Its
+// magnitude offsets are `[0, rt..., rt[-1]]`, as pypulseq gives them.
+// Block1 (10 ms) is empty. Block2 (30 ms) has gradient event 1 on gx:
+// 30,000 points at a 1 µs raster. Its sample at each 64-value chunk start
+// is a spike that grows to the right, and its sample at each chunk end is
+// a negative spike that grows to the left. So the maximum of any range of
+// its points is the first sample of a chunk, and the minimum is the last
+// sample of a chunk: a range scan that misses one value at a chunk edge
+// gives a wrong bin. Block3 (20 ms) has RF event 1 again and
+// gradient event 1 on gy. End: 0.08 s.
+function buildLongEventModel() {
+  let s = 12345;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const nRf = 20000, nGrad = 30000, dwell = 1e-6;
+  const rt = Float64Array.from({length: nRf}, (_, p) => (p + 0.5) * dwell);
+  const mag = Float64Array.from({length: nRf}, () => 1 + rnd());
+  const phase = Float64Array.from({length: nRf}, () => 2 * rnd() - 1);
+  for (const p of [0, 777, 12345, nRf - 1]) mag[p] = 9;
+  for (const p of [5, 4321, 19000]) phase[p] = 3;
+  phase[16000] = -3;
+  const grad = Float64Array.from({length: nGrad}, () => 10 * rnd() - 5);
+  for (let m = 0; 64 * m < nGrad; m++) {
+    grad[64 * m] = 50 + m * 1e-3;
+    if (64 * m + 63 < nGrad) grad[64 * m + 63] = -50 - (1000 - m) * 1e-3;
+  }
+  grad[0] = 0;
+  grad[nGrad - 1] = 0;
+
+  const magOffset = new Float64Array(nRf + 2);
+  magOffset.set(rt, 1);
+  magOffset[nRf + 1] = rt[nRf - 1];
+  const magValue = new Float64Array(nRf + 2);
+  magValue.set(mag, 1);
+
+  const tables = {
+    duration_index: Uint8Array.from([0, 1, 2, 0]),
+    durations: Float64Array.from([0.02, 0.01, 0.03]),
+    checkpoints: Float64Array.from([0.0]),
+
+    rf: Uint8Array.from([1, 0, 0, 1]),
+    gx: Uint8Array.from([0, 0, 1, 0]),
+    gy: Uint8Array.from([0, 0, 0, 1]),
+    gz: Uint8Array.from([0, 0, 0, 0]),
+    adc: Uint8Array.from([0, 0, 0, 0]),
+
+    rf_delay: Float64Array.from([0.0]),
+    rf_mag_n: Uint32Array.from([nRf + 2]),
+    rf_mag_offset_at: Uint32Array.from([0]),
+    rf_mag_at: Uint32Array.from([0]),
+    rf_mag_offset: magOffset,
+    rf_mag: magValue,
+    rf_phase_n: Uint32Array.from([nRf]),
+    rf_phase_offset_at: Uint32Array.from([0]),
+    rf_phase_at: Uint32Array.from([0]),
+    rf_phase_offset: rt,
+    rf_phase: phase,
+
+    grad_delay: Float64Array.from([0.0]),
+    grad_n: Uint32Array.from([nGrad]),
+    grad_offset_at: Uint32Array.from([0]),
+    grad_at: Uint32Array.from([0]),
+    grad_offset: Float64Array.from({length: nGrad}, (_, p) => p * dwell),
+    grad_value: grad,
+
+    adc_delay: Float64Array.from([]),
+    adc_length: Float64Array.from([]),
+  };
+  return {tables, model: SeqLanes.decode(1, tables, HAND_LANES_META)};
+}
+
 // 4 blocks, built to force two ADC windows that land in adjacent bins with
 // no "off" bin between them, closer together than one bin's width: block0
 // is a pad, block1 and block2 each have a short ADC window, block3 is a
@@ -278,8 +352,14 @@ function buildPointBudgetModel(nBlocks) {
   const duration_index = new Uint16Array(nBlocks); // all 0
   const durations = Float64Array.from([0.001]);
   const nCp = Math.ceil(nBlocks / 1024);
+  // The checkpoints are the sequential sum of the durations (section 4.3),
+  // which `decode` checks: not `c * 1024 * 0.001`.
   const checkpoints = new Float64Array(nCp);
-  for (let c = 0; c < nCp; c++) checkpoints[c] = c * 1024 * 0.001;
+  let sum = 0.0;
+  for (let i = 0; i < nBlocks; i++) {
+    if (i % 1024 === 0) checkpoints[i / 1024] = sum;
+    sum += durations[duration_index[i]];
+  }
 
   const tables = {
     duration_index, durations, checkpoints,
@@ -324,6 +404,29 @@ test("test_decode_throws_for_an_unsupported_format", () => {
 test("test_decode_throws_for_an_unknown_table_name", () => {
   const {tables} = buildHandModel();
   assert.throws(() => SeqLanes.decode(1, {...tables, rotation: new Uint8Array(5)}, HAND_LANES_META));
+});
+
+test("test_decode_throws_for_offsets_out_of_time_order", () => {
+  // The minimum/maximum view finds the points of an event by binary search
+  // on their times, so `decode` refuses an event whose offsets go down.
+  const {tables} = buildHandModel();
+  const offsets = Float64Array.from(tables.grad_offset);
+  offsets[6] = 0.0001; // grad event 2: [0, 0.0004, 0.0001, 0.002]
+  assert.throws(
+    () => SeqLanes.decode(1, {...tables, grad_offset: offsets}, HAND_LANES_META),
+    /not in time order/);
+});
+
+test("test_decode_throws_for_a_checkpoint_that_is_not_the_sum_of_durations", () => {
+  // The checkpoints are the sequential sum of the durations (section 4.3).
+  // `decode` checks this, because `blockStart` then starts from its own
+  // group starts, which are that same sum.
+  const {tables} = buildRandomModel(2048, 5);
+  const checkpoints = Float64Array.from(tables.checkpoints);
+  checkpoints[1] = checkpoints[1] + 1e-9;
+  assert.throws(
+    () => SeqLanes.decode(1, {...tables, checkpoints}, HAND_LANES_META),
+    /checkpoint 1/);
 });
 
 test("test_decode_throws_for_a_missing_table", () => {
@@ -781,6 +884,84 @@ test("test_min_max_lanes_edge_values_follow_the_last_of_repeated_point_times", (
   }
   assert.deepEqual(got.get(0), [0, 5]);
   assert.deepEqual(lineLaneProblems(model, "rf_mag", 0, model.durationS, bins), []);
+});
+
+test("test_min_max_lanes_matches_brute_force_inside_long_events", () => {
+  // `buildLongEventModel`: bins that hold thousands of points of one event
+  // (the pyramid), bins that hold fewer than 2 x 64 (a plain scan), and
+  // bin edges that cut inside an event (the binary search), for the line
+  // lanes and the RF phase lane.
+  const {model} = buildLongEventModel();
+  const views = [
+    [0, model.durationS, 3],
+    [0, model.durationS, 7],
+    [0, model.durationS, 50],
+    [0.0001, 0.0199, 3],
+    [0.003, 0.0171, 333],
+    [0.0301, 0.0599, 11],
+    [0.0301, 0.0599, 1],
+    [0.0301, 0.0599, 2],
+    [0.0301, 0.0599, 5],
+    [0.0301, 0.0599, 13],
+    [0.02, 0.05, 1],
+    [0.0337, 0.0521, 3],
+  ];
+  for (const [t0, t1, bins] of views) {
+    const where = `[${t0}, ${t1}] bins=${bins}`;
+    for (const laneId of ["rf_mag", "gx", "gy"]) {
+      assert.deepEqual(lineLaneProblems(model, laneId, t0, t1, bins), [], `${laneId} ${where}`);
+    }
+    assert.deepEqual(phaseLaneProblems(model, t0, t1, bins), [], `rf_phase ${where}`);
+  }
+});
+
+test("test_min_max_lanes_edge_on_a_repeated_point_time", () => {
+  // One 5 ms block with a gx event whose points are (0, 0), (2.5 ms, 1),
+  // (2.5 ms, 9), (5 ms, 0): the polyline rises to 1, jumps to 9 at 2.5 ms,
+  // and falls to 0. With 2 bins over [0, 5 ms], the edge between them is
+  // exactly 2.5 ms (0.005 * 1 / 2 has no rounding), on the two points.
+  // - Bin 0, [0, 2.5 ms), holds only (0, 0); the line in it reaches 1 at
+  //   its right end. Its edge value at 2.5 ms must be the FIRST point there
+  //   (1), not the last (9, which `numpy.interp` would give).
+  // - Bin 1, [2.5 ms, 5 ms], must hold both points at 2.5 ms: its maximum
+  //   9 comes only from the point (2.5 ms, 9), because both of its edge
+  //   values are 1 and 0. A search that misses points exactly at a bin's
+  //   start edge gives 1 here.
+  const tables = {
+    duration_index: Uint8Array.from([0]),
+    durations: Float64Array.from([0.005]),
+    checkpoints: Float64Array.from([0.0]),
+    rf: Uint8Array.from([0]),
+    gx: Uint8Array.from([1]),
+    gy: Uint8Array.from([0]),
+    gz: Uint8Array.from([0]),
+    adc: Uint8Array.from([0]),
+    rf_delay: Float64Array.from([]),
+    rf_mag_n: Uint32Array.from([]),
+    rf_mag_offset_at: Uint32Array.from([]),
+    rf_mag_at: Uint32Array.from([]),
+    rf_mag_offset: Float64Array.from([]),
+    rf_mag: Float64Array.from([]),
+    rf_phase_n: Uint32Array.from([]),
+    rf_phase_offset_at: Uint32Array.from([]),
+    rf_phase_at: Uint32Array.from([]),
+    rf_phase_offset: Float64Array.from([]),
+    rf_phase: Float64Array.from([]),
+    grad_delay: Float64Array.from([0.0]),
+    grad_n: Uint32Array.from([4]),
+    grad_offset_at: Uint32Array.from([0]),
+    grad_at: Uint32Array.from([0]),
+    grad_offset: Float64Array.from([0, 0.0025, 0.0025, 0.005]),
+    grad_value: Float64Array.from([0, 1, 9, 0]),
+    adc_delay: Float64Array.from([]),
+    adc_length: Float64Array.from([]),
+  };
+  const model = SeqLanes.decode(1, tables, HAND_LANES_META);
+  const idx = model.lanesMeta.findIndex(m => m.id === "gx");
+  assert.equal(0.005 * 1 / 2, 0.0025);
+  const got = gotLineBins(SeqLanes.minMaxLanes(model, 0, 0.005, 2)[idx]);
+  assert.deepEqual(got.get(0), [0, 1], "bin 0");
+  assert.deepEqual(got.get(2.5), [0, 9], "bin 1");
 });
 
 test("test_min_max_lanes_rf_phase_gap_splits_into_two_segments", () => {

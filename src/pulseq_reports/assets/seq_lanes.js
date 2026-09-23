@@ -57,6 +57,28 @@ const SeqLanes = (() => {
     return {min, max};
   }
 
+  // Throws when the offsets of an event are not in time order. The
+  // minimum/maximum view finds points inside an event by binary search on
+  // its point times, which is correct only for offsets that never go down
+  // (pypulseq gives them so: RF sample times, and the corner or sample
+  // times of a gradient). An offset array that several events share is
+  // checked one time.
+  function _checkOffsetOrder(kind, nArr, offsetAtArr, offsetArr, count) {
+    const checked = new Set();
+    for (let k = 0; k < count; k++) {
+      const n = nArr[k], at = offsetAtArr[k];
+      const key = at * 4294967296 + n;
+      if (checked.has(key)) continue;
+      checked.add(key);
+      for (let p = 1; p < n; p++) {
+        if (!(offsetArr[at + p] >= offsetArr[at + p - 1])) {
+          throw new Error(
+            `SeqLanes.decode: the offsets of ${kind} event ${k + 1} are not in time order`);
+        }
+      }
+    }
+  }
+
   // `tables`: {name: TypedArray}, already decompressed (section 4.1's
   // "dtype"/"data" are decoded by the caller). `lanesMeta`: the six lane
   // objects of section 4.1 ("lanes"), without "segments" and "windows".
@@ -83,12 +105,25 @@ const SeqLanes = (() => {
     const tb = tables;
     const numBlocks = tb.duration_index.length;
 
-    // The end of the file and the last block with a duration above zero:
-    // the same sequential sum as `waveforms._timed_blocks`/`duration_s`,
-    // one duration at a time, from 0.0 (section 4.3).
+    // The end of the file, the last block with a duration above zero, and
+    // the start of each group of GROUP_BLOCKS blocks: the same sequential
+    // sum as `waveforms._timed_blocks`/`duration_s`, one duration at a time,
+    // from 0.0 (section 4.3). The Python checkpoints are that same sum, so
+    // the running sum must equal each of them exactly; a difference means
+    // that the tables are not consistent, and `decode` refuses them. The
+    // group starts are then the same values that `blockStart` would get
+    // from a checkpoint, and `blockStart` and `blockAt` walk at most
+    // GROUP_BLOCKS - 1 durations from one, not 1023 from a checkpoint.
+    const groupStart = new Float64Array(Math.ceil(numBlocks / GROUP_BLOCKS) || 1);
     let start = 0.0;
     let lastNonZeroBlock = -1;
     for (let i = 0; i < numBlocks; i++) {
+      if (i % GROUP_BLOCKS === 0) groupStart[i / GROUP_BLOCKS] = start;
+      if (i % CHECKPOINT_BLOCKS === 0 && tb.checkpoints[i / CHECKPOINT_BLOCKS] !== start) {
+        throw new Error(
+          `SeqLanes.decode: checkpoint ${i / CHECKPOINT_BLOCKS} is not the sum of the ` +
+          "durations before it");
+      }
       const duration = tb.durations[tb.duration_index[i]];
       if (duration > 0) lastNonZeroBlock = i;
       start += duration;
@@ -100,11 +135,16 @@ const SeqLanes = (() => {
     const magStats = _eventStats(tb.rf_mag_n, tb.rf_mag_at, tb.rf_mag, rfCount);
     const phaseStats = _eventStats(tb.rf_phase_n, tb.rf_phase_at, tb.rf_phase, rfCount);
     const gradStats = _eventStats(tb.grad_n, tb.grad_at, tb.grad_value, gradCount);
+    _checkOffsetOrder("RF magnitude", tb.rf_mag_n, tb.rf_mag_offset_at, tb.rf_mag_offset, rfCount);
+    _checkOffsetOrder("RF phase", tb.rf_phase_n, tb.rf_phase_offset_at, tb.rf_phase_offset,
+      rfCount);
+    _checkOffsetOrder("gradient", tb.grad_n, tb.grad_offset_at, tb.grad_offset, gradCount);
 
     const model = {
       numBlocks,
       durationS,
       lastNonZeroBlock,
+      groupStart,
       lanesMeta,
       tables: tb,
       rf: {
@@ -113,6 +153,9 @@ const SeqLanes = (() => {
         phaseMin: phaseStats.min, phaseMax: phaseStats.max,
       },
       grad: {count: gradCount, min: gradStats.min, max: gradStats.max},
+      // The min/max pyramid of each value pool, by pool name, built on the
+      // first render that needs it (`_poolMinMax`).
+      pyramids: {},
     };
     model.groups = _buildGroups(model);
     return model;
@@ -275,15 +318,15 @@ const SeqLanes = (() => {
     return {count: G, lanes, trees, pointsPrefix, adcCount};
   }
 
-  // The start (s) of block `i`, as the sequential sum from the checkpoint
-  // at or before it (section 4.3): never a multiplication, never a
-  // cumulative array of length N.
+  // The start (s) of block `i`, as the sequential sum from the start of its
+  // group (section 4.3, with the group starts of `decode`, which equal the
+  // checkpoints' sum): never a multiplication, never a cumulative array of
+  // length N.
   function blockStart(model, i) {
     const tb = model.tables;
-    const c = Math.floor(i / CHECKPOINT_BLOCKS);
-    const base = c * CHECKPOINT_BLOCKS;
-    let s = tb.checkpoints[c];
-    for (let j = base; j < i; j++) {
+    const g = Math.floor(i / GROUP_BLOCKS);
+    let s = model.groupStart[g];
+    for (let j = g * GROUP_BLOCKS; j < i; j++) {
       s += tb.durations[tb.duration_index[j]];
     }
     return s;
@@ -293,39 +336,44 @@ const SeqLanes = (() => {
   // zero duration are never returned. For t at or past the end of the
   // file, the last block with a duration above zero. For t before the
   // start of the file, 0 (section 4.4, item 4).
-  //
-  // Binary search over the checkpoints for the block's 1024-block segment,
-  // then a sequential scan of at most 1024 blocks (section 4.4, item 5):
-  // durations telescope with no gaps, so every t in [0, durationS) falls in
-  // exactly one block with a duration above zero, and that block is always
-  // in the segment the checkpoint search finds.
   function blockAt(model, t) {
+    return _blockAtStart(model, t)[0];
+  }
+
+  // `blockAt` and the start of that block, in one pass. Binary search over
+  // the group starts for the group of the block, then a sequential scan of
+  // at most GROUP_BLOCKS blocks: durations telescope with no gaps, so
+  // every t in [0, durationS) falls in exactly one block with a duration
+  // above zero, and that block is always in the group the search finds.
+  // The start is the running sum of that scan, the same value as
+  // `blockStart`.
+  function _blockAtStart(model, t) {
     const N = model.numBlocks;
-    if (N === 0) return 0;
-    if (t < 0) return 0;
+    if (N === 0 || t < 0) return [0, 0];
     if (t >= model.durationS) {
-      return model.lastNonZeroBlock >= 0 ? model.lastNonZeroBlock : 0;
+      const last = model.lastNonZeroBlock >= 0 ? model.lastNonZeroBlock : 0;
+      return [last, blockStart(model, last)];
     }
     const tb = model.tables;
-    const checkpoints = tb.checkpoints;
-    let lo = 0, hi = checkpoints.length - 1;
+    const groupStart = model.groupStart;
+    let lo = 0, hi = groupStart.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (checkpoints[mid] <= t) lo = mid; else hi = mid - 1;
+      if (groupStart[mid] <= t) lo = mid; else hi = mid - 1;
     }
-    const c = lo;
-    let i = c * CHECKPOINT_BLOCKS;
-    let start = checkpoints[c];
-    const segEnd = Math.min(N, (c + 1) * CHECKPOINT_BLOCKS);
-    while (i < segEnd) {
+    let i = lo * GROUP_BLOCKS;
+    let start = groupStart[lo];
+    const groupEnd = Math.min(N, (lo + 1) * GROUP_BLOCKS);
+    while (i < groupEnd) {
       const duration = tb.durations[tb.duration_index[i]];
-      if (duration > 0 && start <= t && t < start + duration) return i;
+      if (duration > 0 && start <= t && t < start + duration) return [i, start];
       start += duration;
       i++;
     }
     // Unreachable when durations telescope with no gaps, as they always do
     // for a model built by `decode`. Kept as a defensive fallback.
-    return Math.max(0, Math.min(N - 1, c * CHECKPOINT_BLOCKS));
+    const j = Math.max(0, Math.min(N - 1, lo * GROUP_BLOCKS));
+    return [j, blockStart(model, j)];
   }
 
   // Calls `fn(i, start, duration)` for each block `i` whose closed interval
@@ -602,30 +650,126 @@ const SeqLanes = (() => {
     return lo;
   }
 
-  // The block that holds `t` and its start, in one pass: `blockAt` already
-  // walks the durations from a checkpoint, so returning the start it
-  // reached saves a second walk of up to 1024 blocks.
-  function _blockAtWithStart(model, t) {
-    const N = model.numBlocks;
-    if (N === 0) return [0, 0];
-    const i = Math.min(Math.max(blockAt(model, t), 0), N - 1);
-    return [i, blockStart(model, i)];
-  }
-
   // The delay, offset and value tables of one lane's events, resolved one
   // time, so the edge search below reads typed arrays only.
   function _laneEvent(model, laneId) {
     const tb = model.tables;
     if (laneId === "rf_mag") {
       return {delay: tb.rf_delay, offsetAt: tb.rf_mag_offset_at, valueAt: tb.rf_mag_at,
-        offset: tb.rf_mag_offset, value: tb.rf_mag};
+        offset: tb.rf_mag_offset, value: tb.rf_mag, pool: "rf_mag"};
     }
     if (laneId === "rf_phase") {
       return {delay: tb.rf_delay, offsetAt: tb.rf_phase_offset_at, valueAt: tb.rf_phase_at,
-        offset: tb.rf_phase_offset, value: tb.rf_phase};
+        offset: tb.rf_phase_offset, value: tb.rf_phase, pool: "rf_phase"};
     }
     return {delay: tb.grad_delay, offsetAt: tb.grad_offset_at, valueAt: tb.grad_at,
-      offset: tb.grad_offset, value: tb.grad_value};
+      offset: tb.grad_offset, value: tb.grad_value, pool: "grad_value"};
+  }
+
+  // The first point `p` in [0, n) of an event whose time `base + offset[oAt
+  // + p]` is >= t (lower bound), or > t (upper bound); `n` when there is
+  // none. The offsets of an event never go down (`_checkOffsetOrder`), and
+  // adding the same `base` keeps that order, so a binary search over the
+  // point times is exact. The times are computed as everywhere else:
+  // `(start + delay) + offset`, with `base = start + delay`.
+  function _lowerBound(offset, oAt, n, base, t) {
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (base + offset[oAt + mid] < t) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  function _upperBound(offset, oAt, n, base, t) {
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (base + offset[oAt + mid] <= t) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  // A min/max pyramid over one value pool: level 0 holds the minimum and
+  // the maximum of each 64 values of the pool, level 1 of each 64 entries
+  // of level 0, and so on, up to a level of at most 64 entries. It costs
+  // about 1/32 of the pool in extra float64 values. An event's points are
+  // a contiguous range of its pool, so the extremes of any range of points
+  // come from whole chunks of the highest levels that fit, plus exact scans
+  // of at most 2 x 64 entries at each level: O(64 log n), whatever the
+  // length of the event.
+  const PYRAMID_CHUNK = 64;
+
+  function _pyramid(values) {
+    const levels = [];
+    let mins = values, maxs = values;
+    while (mins.length > PYRAMID_CHUNK) {
+      const m = Math.ceil(mins.length / PYRAMID_CHUNK);
+      const lo = new Float64Array(m), hi = new Float64Array(m);
+      for (let c = 0; c < m; c++) {
+        const from = c * PYRAMID_CHUNK;
+        const to = Math.min(mins.length, from + PYRAMID_CHUNK);
+        let a = mins[from], b = maxs[from];
+        for (let j = from + 1; j < to; j++) {
+          if (mins[j] < a) a = mins[j];
+          if (maxs[j] > b) b = maxs[j];
+        }
+        lo[c] = a;
+        hi[c] = b;
+      }
+      levels.push({min: lo, max: hi});
+      mins = lo;
+      maxs = hi;
+    }
+    return levels;
+  }
+
+  // Widens `out` ([min, max]) with the values `ev.value[lo .. hi - 1]` of
+  // one pool, exactly. Short ranges are scanned; a longer range uses the
+  // pool's pyramid, which is built on the first call that needs it and then
+  // kept in `model.pyramids`.
+  function _poolMinMax(model, ev, lo, hi, out) {
+    let mins = ev.value, maxs = ev.value;
+    if (hi - lo > 2 * PYRAMID_CHUNK) {
+      let levels = model.pyramids[ev.pool];
+      if (levels === undefined) levels = model.pyramids[ev.pool] = _pyramid(ev.value);
+      for (let level = 0; hi - lo > 2 * PYRAMID_CHUNK && level < levels.length; level++) {
+        const cLo = Math.ceil(lo / PYRAMID_CHUNK), cHi = Math.floor(hi / PYRAMID_CHUNK);
+        for (let j = lo; j < cLo * PYRAMID_CHUNK; j++) {
+          if (mins[j] < out[0]) out[0] = mins[j];
+          if (maxs[j] > out[1]) out[1] = maxs[j];
+        }
+        for (let j = cHi * PYRAMID_CHUNK; j < hi; j++) {
+          if (mins[j] < out[0]) out[0] = mins[j];
+          if (maxs[j] > out[1]) out[1] = maxs[j];
+        }
+        lo = cLo;
+        hi = cHi;
+        mins = levels[level].min;
+        maxs = levels[level].max;
+      }
+    }
+    for (let j = lo; j < hi; j++) {
+      if (mins[j] < out[0]) out[0] = mins[j];
+      if (maxs[j] > out[1]) out[1] = maxs[j];
+    }
+  }
+
+  // The value at time `e` of one RF phase pulse (event index `idx`, its
+  // points starting at `base`), by linear interpolation over that pulse's
+  // own points, or null when `e` is before its first point or after its
+  // last (section 4.4, item 2: a phase edge value exists only inside one
+  // pulse). On a point time, the value of the first point at that time, as
+  // in `_edgeValue`.
+  function _pulseValueAt(ev, cols, idx, base, e) {
+    if (idx < 0) return null;
+    const n = cols.n[idx], oAt = ev.offsetAt[idx], vAt = ev.valueAt[idx];
+    const a = _lowerBound(ev.offset, oAt, n, base, e);
+    if (a < n && base + ev.offset[oAt + a] === e) return ev.value[vAt + a];
+    if (a === 0 || a === n) return null;
+    const t1 = base + ev.offset[oAt + a - 1], t2 = base + ev.offset[oAt + a];
+    const v1 = ev.value[vAt + a - 1], v2 = ev.value[vAt + a];
+    return v1 + (v2 - v1) / (t2 - t1) * (e - t1);
   }
 
   // Narrows `state` to the last point at or before `t` and the first at or
@@ -643,7 +787,9 @@ const SeqLanes = (() => {
   // is the FIRST point at the smallest time >= t. The blocks are not
   // scanned in play order (the block that holds `t` comes first), so a tie
   // between blocks goes to the later block (before) or to the earlier
-  // block (after); inside a block, `p` runs in order.
+  // block (after). Inside a block, the upper bound minus one is the last
+  // point at the largest time <= t, and the lower bound is the first point
+  // at the smallest time >= t: O(log n) for an event of n points.
   function _narrowNeighbours(cols, ev, i, start, t, state) {
     const k = cols.col[i];
     if (k === 0) return;
@@ -652,15 +798,18 @@ const SeqLanes = (() => {
     if (n === 0) return;
     const base = start + ev.delay[idx];
     const oAt = ev.offsetAt[idx], vAt = ev.valueAt[idx];
-    for (let p = 0; p < n; p++) {
-      const time = base + ev.offset[oAt + p];
-      if (time <= t && (state.bt === null || time > state.bt
-                        || (time === state.bt && i >= state.bi))) {
-        state.bt = time; state.bv = ev.value[vAt + p]; state.bi = i;
+    const b = _upperBound(ev.offset, oAt, n, base, t) - 1;
+    if (b >= 0) {
+      const time = base + ev.offset[oAt + b];
+      if (state.bt === null || time > state.bt || (time === state.bt && i >= state.bi)) {
+        state.bt = time; state.bv = ev.value[vAt + b]; state.bi = i;
       }
-      if (time >= t && (state.at === null || time < state.at
-                        || (time === state.at && i < state.ai))) {
-        state.at = time; state.av = ev.value[vAt + p]; state.ai = i;
+    }
+    const a = _lowerBound(ev.offset, oAt, n, base, t);
+    if (a < n) {
+      const time = base + ev.offset[oAt + a];
+      if (state.at === null || time < state.at || (time === state.at && i < state.ai)) {
+        state.at = time; state.av = ev.value[vAt + a]; state.ai = i;
       }
     }
   }
@@ -669,8 +818,8 @@ const SeqLanes = (() => {
   // given the block that holds `t` and its start. The polyline runs from
   // the zero point at time 0 to the zero point at the end of the file,
   // straight between its points, so a value between two points is the
-  // linear interpolation `numpy.interp` gives, with the same formula
-  // (section 4.4, item 2).
+  // linear interpolation of `numpy.interp`, with the same formula (section
+  // 4.4, item 2).
   //
   // Most edges of a zoomed-out view fall in a block with no event on the
   // lane, or in the gap after one, so the search usually has to look past
@@ -692,7 +841,7 @@ const SeqLanes = (() => {
         const from = gg * GROUP_BLOCKS;
         const to = Math.min(N, from + GROUP_BLOCKS);
         if (to <= from) return;
-        let s = blockStart(model, from);
+        let s = model.groupStart[gg];
         for (let i = from; i < to; i++) {
           if (i !== at) _narrowNeighbours(cols, ev, i, s, t, state);
           s += tb.durations[tb.duration_index[i]];
@@ -707,8 +856,11 @@ const SeqLanes = (() => {
     const ht = state.at === null ? model.durationS : state.at;
     const hv = state.at === null ? 0 : state.av;
     // `t` is exactly on a point time. With several points at that time,
-    // `numpy.interp` gives the last of them, which is `lv`.
-    if (ht === lt) return lv;
+    // the value is the first of them (`hv`), the value that the polyline
+    // reaches from the left. The bin to the left of `t` reaches only that
+    // value; the bin to the right holds all the points at `t` anyway.
+    // (`numpy.interp` gives the last of them instead.)
+    if (ht === lt) return hv;
     return lv + (hv - lv) / (ht - lt) * (t - lt);
   }
 
@@ -832,11 +984,12 @@ const SeqLanes = (() => {
   // instead of interpolating the zigzag.
   //
   // The bin edges, and the block that holds each edge, are found one time
-  // and shared by all six lanes: `blockAt` walks up to 1024 durations, so
-  // repeating it for each lane would cost six times as much. For each
-  // lane, each edge's block is expanded one time and used by the bins on
-  // both sides of it. The blocks between two edges never expand a point:
-  // their minimum and maximum come from the tree.
+  // and shared by all six lanes. For each lane, the event of each edge's
+  // block is found one time and used by the bins on both sides of it: a
+  // bin reads only its own range of that event's points, found by binary
+  // search, and takes their extremes from the pool's pyramid. The blocks
+  // between two edges never expand a point: their minimum and maximum come
+  // from the tree.
   function minMaxLanes(model, t0, t1, bins) {
     const N = model.numBlocks;
     const span = t1 - t0;
@@ -846,7 +999,7 @@ const SeqLanes = (() => {
     for (let k = 0; k <= bins; k++) {
       edges[k] = t0 + span * k / bins;
       if (N === 0) continue;
-      const found = _blockAtWithStart(model, edges[k]);
+      const found = _blockAtStart(model, edges[k]);
       edgeBlock[k] = found[0];
       edgeStart[k] = found[1];
     }
@@ -874,48 +1027,59 @@ const SeqLanes = (() => {
       const isPhase = meta.id === "rf_phase";
       const laneCols = _laneArrays(model, meta.id);
       const laneEv = _laneEvent(model, meta.id);
-      // Each edge's block, expanded one time for this lane.
-      const edgePts = new Array(bins + 1);
+      // The event of each edge's block on this lane (its index into the
+      // event tables, or -1) and the time of its first point's offset 0
+      // (`start + delay`). No point is copied out: the bins below find the
+      // points they need by binary search and read the pools directly.
+      const edgeIdx = new Int32Array(bins + 1).fill(-1);
+      const edgeBase = new Float64Array(bins + 1);
       for (let k = 0; k <= bins; k++) {
-        const b = edgeBlock[k], s = edgeStart[k];
-        edgePts[k] = N === 0 ? []
-          : isPhase ? _rfPhasePoints(model, b, s)
-                    : _linePointsForBlock(model, b, s, meta.id);
+        if (N === 0) continue;
+        const ev = laneCols.col[edgeBlock[k]];
+        if (ev === 0 || laneCols.n[ev - 1] === 0) continue;
+        edgeIdx[k] = ev - 1;
+        edgeBase[k] = edgeStart[k] + laneEv.delay[ev - 1];
       }
       // Each edge's value, computed one time and used by the bins on both
-      // sides of it.
+      // sides of it. On the phase lane an edge has a value only inside one
+      // pulse, the pulse of the edge's own block.
       const edgeValue = new Array(bins + 1);
       for (let k = 0; k <= bins; k++) {
-        if (isPhase) {
-          // On the phase lane an edge has a value only inside one pulse:
-          // both neighbouring points must belong to the same RF event.
-          edgeValue[k] = null;
-          const pts = edgePts[k], e = edges[k];
-          for (let p = 1; p < pts.length; p++) {
-            const ta = pts[p - 1][0], va = pts[p - 1][1];
-            const tb2 = pts[p][0], vb = pts[p][1];
-            if (ta <= e && e <= tb2) {
-              edgeValue[k] = tb2 === ta ? vb : va + (vb - va) / (tb2 - ta) * (e - ta);
-              break;
-            }
-          }
-        } else {
-          edgeValue[k] = _edgeValue(model, meta.id, laneCols, laneEv, edges[k],
-            edgeBlock[k], edgeStart[k]);
-        }
+        edgeValue[k] = isPhase
+          ? _pulseValueAt(laneEv, laneCols, edgeIdx[k], edgeBase[k], edges[k])
+          : _edgeValue(model, meta.id, laneCols, laneEv, edges[k], edgeBlock[k], edgeStart[k]);
       }
 
       const segments = [];
       let current = null;
-      for (let k = 0; k < bins; k++) {
-        let lo = Infinity, hi = -Infinity;
-        const take = v => { if (v < lo) lo = v; if (v > hi) hi = v; };
-        // The two blocks the bin's edges cut: their points can fall on
-        // either side of an edge, so they are filtered one by one.
-        for (const p of edgePts[k]) if (inBin(p[0], k)) take(p[1]);
-        if (edgeBlock[k + 1] !== edgeBlock[k]) {
-          for (const p of edgePts[k + 1]) if (inBin(p[0], k)) take(p[1]);
+      const out = [Infinity, -Infinity];
+      // The points of the event of edge `j` that are in bin `k`: a
+      // contiguous index range, found by binary search with the same rule as
+      // a point test (e_k <= t < e_(k+1), or <= e_(k+1) in the last bin).
+      const takeEdgeEvent = (j, k) => {
+        const idx = edgeIdx[j];
+        if (idx < 0) return;
+        const n = laneCols.n[idx], oAt = laneEv.offsetAt[idx], base = edgeBase[j];
+        const from = _lowerBound(laneEv.offset, oAt, n, base, edges[k]);
+        const to = k === bins - 1
+          ? _upperBound(laneEv.offset, oAt, n, base, edges[k + 1])
+          : _lowerBound(laneEv.offset, oAt, n, base, edges[k + 1]);
+        if (to > from) {
+          const vAt = laneEv.valueAt[idx];
+          _poolMinMax(model, laneEv, vAt + from, vAt + to, out);
         }
+      };
+      const inBin = (time, k) =>
+        k === bins - 1 ? time >= edges[k] && time <= edges[k + 1]
+                       : time >= edges[k] && time < edges[k + 1];
+      for (let k = 0; k < bins; k++) {
+        out[0] = Infinity;
+        out[1] = -Infinity;
+        const take = v => { if (v < out[0]) out[0] = v; if (v > out[1]) out[1] = v; };
+        // The two blocks the bin's edges cut: only their points inside the
+        // bin count.
+        takeEdgeEvent(k, k);
+        if (edgeBlock[k + 1] !== edgeBlock[k]) takeEdgeEvent(k + 1, k);
         // Everything strictly between is wholly inside the bin.
         if (edgeBlock[k + 1] - edgeBlock[k] > 1) {
           const range = _rangeMinMax(model, meta.id, edgeBlock[k] + 1, edgeBlock[k + 1] - 1,
@@ -930,6 +1094,7 @@ const SeqLanes = (() => {
         if (edgeValue[k] !== null) take(edgeValue[k]);
         if (edgeValue[k + 1] !== null) take(edgeValue[k + 1]);
 
+        const lo = out[0], hi = out[1];
         if (hi === -Infinity) {
           if (current !== null) { segments.push(current); current = null; }
           continue;

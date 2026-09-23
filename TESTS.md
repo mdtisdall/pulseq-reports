@@ -2946,15 +2946,14 @@ tolerance rather than exactly.
   `'{:12g}'` for `[TRAP]`), which measured as up to about 1e-6 relative
   error on these synthetic sequences (for example about 3.6e-6 on a Gx
   trapezoid amplitude) — far more than "the last bits", and about three
-  orders of magnitude looser than the plan's stated 1e-9. This is a property
-  of pypulseq's own file writer, not of `diagram_data.py`: the read
-  sequence's tables reproduce that same (already-rounded) sequence exactly,
-  which the test's first half checks. The test therefore keeps the plan's
-  1e-9 tolerance for times, where it holds, and uses a wider, measured
-  tolerance for values (1e-6 absolute, 1e-5 relative) instead of the plan's
-  1e-9. This gap between the plan's stated value tolerance and the measured
-  one has not been resolved with the plan's author; a future change to
-  pypulseq's write precision could require revisiting this tolerance.
+  orders of magnitude looser than 1e-9. This is a property of pypulseq's own
+  file writer, not of `diagram_data.py`: the read sequence's tables
+  reproduce that same (already-rounded) sequence exactly, which the test's
+  first half checks. The test therefore uses 1e-9 for times and a measured
+  tolerance for values (1e-6 absolute, 1e-5 relative). The plan first asked
+  for 1e-9 on the values too; phase 5 corrected the plan (task 1.3) to these
+  tolerances. A change to pypulseq's write precision can change the
+  tolerance that the values need.
 
 #### `test_two_rf_events_that_differ_only_in_phase_offset_share_their_offset_pools`
 
@@ -3067,6 +3066,31 @@ rotation extension).
 
 **How:** The test calls `decode` with the hand model's tables plus an extra
 `rotation` table, and checks that it throws.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_decode_throws_for_offsets_out_of_time_order`
+
+**Checks:** `decode` throws when the offsets of an event go down. The
+minimum/maximum view finds the points of an event by binary search on
+their times, which is correct only for offsets in time order.
+
+**How:** The test takes the hand model's tables, changes one offset of
+gradient event 2 so that its offsets are `[0, 0.0004, 0.0001, 0.002]`, and
+checks that `decode` throws with "not in time order" in the message.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_decode_throws_for_a_checkpoint_that_is_not_the_sum_of_durations`
+
+**Checks:** `decode` throws when a checkpoint is not the sequential sum of
+the durations before it (section 4.3). `decode` keeps its own start for
+each group of 64 blocks, from that same sum, and `blockStart` starts from
+those, so the two must agree exactly.
+
+**How:** The test builds a 2048-block random model, adds 1e-9 s to
+checkpoint 1, and checks that `decode` throws with "checkpoint 1" in the
+message.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -3364,6 +3388,43 @@ exactly `[0, 0]`, that bin 0 is `[0, 5]`, and that every bin matches
 
 **Assumptions:** None beyond the file's assumptions.
 
+#### `test_min_max_lanes_matches_brute_force_inside_long_events`
+
+**Checks:** `minMaxLanes` gives the right minimum and maximum when a bin
+holds a long run of one event's points. For such a run it takes the
+extremes from the min/max pyramid of the event's value pool, and it finds
+the run by binary search on the point times, also when a bin edge cuts
+inside the event.
+
+**How:** `buildLongEventModel` has an RF event of 20,000 samples (in two
+blocks) and a gradient event of 30,000 points, at a 1 µs raster, with
+pseudo-random values and narrow spikes. In the gradient event, the sample
+at each 64-value chunk start is a spike that grows to the right, and the
+sample at each chunk end is a negative spike that grows to the left, so
+the extremes of any range are chunk-edge samples: a scan that misses one
+value at a chunk edge gives a wrong bin. For 12 views (the whole file, and
+ranges inside the RF event and the gradient event, with 1 to 333 bins),
+the test compares the `rf_mag`, `gx` and `gy` lanes with
+`bruteForceLineWant` (`lineLaneProblems`) and the RF phase lane with
+`phaseLaneProblems`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_edge_on_a_repeated_point_time`
+
+**Checks:** A bin edge exactly on a time with two points takes the value
+of the first of them, the value that the polyline reaches from the left,
+and the bin that starts at that edge holds both points.
+
+**How:** A one-block model has a gx event with the points (0, 0),
+(2.5 ms, 1), (2.5 ms, 9), (5 ms, 0). The test checks that the edge of a
+2-bin view over [0, 5 ms] is exactly 2.5 ms, that bin 0 is `[0, 1]` (the
+last point, 9, would give `[0, 9]`), and that bin 1 is `[0, 9]` (its
+maximum comes only from the point (2.5 ms, 9): a search that misses points
+at the bin's start edge gives `[0, 1]`).
+
+**Assumptions:** None beyond the file's assumptions.
+
 #### `test_min_max_lanes_rf_phase_gap_splits_into_two_segments`
 
 **Checks:** A gap between two RF pulses (a stretch of bins with no phase
@@ -3447,7 +3508,7 @@ and Python compute each point time with the same float64 operations in the
 same order, precisely so this comparison can require bit-for-bit equality.
 For the min/max view, a bin's minimum or maximum that a raw point already
 reaches must also match exactly; one that only a bin-edge interpolation
-reaches (`numpy.interp`, called directly, not reimplemented) is compared
+reaches (`numpy.interp`, called directly, through `_edge_interp`) is compared
 with `math.isclose` at a relative tolerance of 1e-12, as the plan allows
 (task 4.4, item 2), because `SeqLanes` and the Python reference reach that
 value by different sequences of floating-point operations.
@@ -3492,7 +3553,9 @@ compares it to the JSON result field by field, `==` throughout. For each
 (task 4.4, item 2): the points of the reference polyline (or, for the RF
 phase lane, of the pulses' own points) that fall in the bin, by
 `numpy.searchsorted` over the same array `numpy.interp` reads, plus
-`numpy.interp` at the bin's two edges; a value is compared exactly when a
+`_edge_interp` at the bin's two edges (`numpy.interp`, except that an edge
+exactly on a point time takes the first point at that time); a value is
+compared exactly when a
 point in the bin already reaches it (it is `<=`, or `>=`, both edge
 values), and with `math.isclose` (`rel_tol=1e-12`,
 `abs_tol=1e-12 * lane_peak`) otherwise.
@@ -3501,12 +3564,15 @@ values), and with `math.isclose` (`rel_tol=1e-12`,
 
 - Two points of a lane can have the same time: each pypulseq RF
   magnitude event ends with the last sample and then the zero pad at the
-  same offset. `numpy.interp` resolves such a tie to the last of the points,
-  and so does `SeqLanes` (`_narrowNeighbours` and `_edgeValue` in
-  `assets/seq_lanes.js`). This test found that `SeqLanes` first kept the
-  first of the points; phase 4 fixed that, and
+  same offset. For an edge after such points, both `numpy.interp` and
+  `SeqLanes` interpolate from the last of them. This test found that
+  `SeqLanes` first took the first of them; phase 4 fixed that, and
   `test_min_max_lanes_edge_values_follow_the_last_of_repeated_point_times`
-  (section 2.19) checks it on a small hand-made model.
+  (section 2.19) checks it. For an edge exactly on such a time, the
+  reference (`_edge_interp`) and `SeqLanes` take the first of the points,
+  the value that the polyline reaches from the left, where `numpy.interp`
+  takes the last (phase 5; section 2.19,
+  `test_min_max_lanes_edge_on_a_repeated_point_time`).
 - `node` must be on `PATH` (both devShells have it); if it is not, the test
   fails with a message naming the missing dependency, rather than skipping.
 - The reference and `SeqLanes.minMaxLanes` are not required to reach an

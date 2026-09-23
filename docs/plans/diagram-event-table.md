@@ -3,7 +3,104 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: not started. The plan was written on 2026-09-19.
+Status: complete. The plan was written on 2026-09-19 and done on 2026-09-23.
+
+| Phase | Pull request |
+|---|---|
+| 0: TESTS.md skeleton | #12 |
+| 1: the tables in Python | #14 |
+| 2: the JavaScript module `SeqLanes` | #15 |
+| 3: the chart hook and asynchronous card start | #13 |
+| 6: refuse sequences with the rotation extension | #16 |
+| 4: the new diagram card | #17 |
+| 5: scale check and release | #18 |
+
+#11 added this plan.
+
+Decisions made during the work, which this plan did not have:
+
+1. Phase 6 ran before phase 4, so that phase 4 could call
+   `extensions.refuse_rotations` without a rebase.
+2. Task 1.3 item 1 asked for a relative 1e-9 on the values of a sequence
+   that is written with `seq.write` and read again. That is not possible:
+   pypulseq writes event amplitudes as 6-significant-digit text. Phase 5
+   corrected the task text to the tolerances of the merged test (1e-9 s on
+   times; 1e-6 absolute and 1e-5 relative on values).
+3. JavaScript never computes a block start by subtracting a duration from a
+   later start. `(start + d) - d` differs from the forward sum often enough
+   to move emitted points. Each start comes from `SeqLanes.blockStart`.
+4. When several points of a lane have the same time (each pypulseq RF
+   magnitude event ends with the last sample and then the zero pad at the
+   same offset), the point before an edge is the last of them and the point
+   after it is the first of them, in polyline order. The golden test of
+   phase 4 found that `SeqLanes` first took the first point before an edge,
+   which gave a non-zero |B1| in the gaps after RF pulses in the min/max
+   view. Phase 4 fixed it in `seq_lanes.js`, a phase 2 file. An edge exactly
+   at such a time takes the first of the points: the value that the
+   polyline reaches from the left, which is what the bin to the left of the
+   edge can reach (the bin to the right holds all the points). This differs
+   from `numpy.interp`, which takes the last; the golden test's reference
+   uses the same rule as `SeqLanes` (`_edge_interp`). Phase 5 made this
+   change.
+5. Phase 6: pypulseq 1.5.0.post1 raises `ValueError` when it reads a `.seq`
+   file with a rotation section. `refuse_rotations` detects a non-empty
+   `seq.rotation_library` and the `"ROTATIONS"` extension type, the form of
+   pypulseq draft PR #372. Task 6.1 used a hand-written `.seq` file and read
+   the PR branch's source: the permission settings did not allow running
+   code from the PR branch.
+6. The diagram card data lists the files in the order in which the windows
+   first use them, and a window's `file` is an index into that list.
+   `diagram_card` refuses rotations for each sequence in `seqs`, also one
+   that no window uses.
+7. In the card script, a failed decode of the first file shows the card's
+   "could not be drawn" note. A failed decode of a later file shows the
+   error in the status line, and the chart keeps its current file.
+8. Decision 6 of the first plan (vb-pulseq must pass `point_budget`) no
+   longer applies: the point budget is removed. The vb-pulseq spin-echo
+   page (232,890 event points) is 324 KB with the new card.
+
+9. The render budget failed for the worst case (p95 157 ms at 10^5
+   blocks). With the user's approval, phase 5 changed `seq_lanes.js`:
+   - a binary search inside each event, on the point times, for the points
+     of a bin and for the neighbours of an edge (`decode` now checks that
+     the offsets of each event are in time order);
+   - a min/max pyramid over each value pool, with chunks of 64 values,
+     built on the first render that needs it (about 90 ms for the 39.2
+     million RF phase values of the worst case at 10^5 blocks);
+   - the start of each group of 64 blocks, kept by `decode` from the same
+     sequential sum, so that `blockStart` and `blockAt` walk at most 63
+     durations. `decode` checks that each checkpoint equals that sum.
+10. The worst case was measured up to 10^5 blocks only (the user's
+    decision). At 10^7 blocks it extrapolates to a page of about 0.9 GB and
+    far more memory than the 64 GB of the machine, because each TR has a
+    new 2,000-sample RF phase array.
+11. `SeqLanes.EXACT_POINT_LIMIT` stays at 20,000.
+
+Results of phase 5, measured on 2026-09-23 with `scripts/diagram_scale.py`
+(pypulseq 1.5.0.post1, Python 3.12.14, a Mac with 10 cores and 64 GB), a
+Node benchmark on the decoded tables of each page (100 random views of
+812 bins), and the Chromium-based browser pane of the Claude desktop app:
+
+| Quantity (section 2.6) | Budget | Repeating, 10^7 blocks | Worst case, 10^5 blocks |
+|---|---|---|---|
+| Page size added by the diagram card | at most 40 MB | 0.46 MB | 9.1 MB |
+| Python time to make the card data | at most 120 s | 13.0 s | 5.3 s |
+| Browser: page open to first chart | at most 5 s | 1.50 s | 0.78 s |
+| Browser: JavaScript heap after load | at most 400 MB | 116 MB | 330 MB |
+| One zoom or pan render, 95th percentile | at most 50 ms | 7.3 ms | 5.8 ms |
+
+Other values:
+
+- Repeating case, 10^7 blocks (11,980 s of sequence): the pypulseq build
+  takes 87 s and 3.8 GB peak RSS; the card raises the peak RSS to 4.0 GB.
+  The whole-file render takes 9 ms, and `SeqLanes.decode` 1.1 s.
+- Repeating case, 10^5 and 10^6 blocks: card 0.13 s and 1.3 s; page 95 KB
+  and 128 KB.
+- Worst case, 10^5 blocks: 20,000 unique RF and 20,002 unique gradient
+  events; card peak RSS 2.55 GB; the largest render (the first one that
+  builds the RF phase pyramid) takes about 90 ms, the next ones 6 to 9 ms.
+- Before the changes of decision 9, the render p95 was 29.6 ms (repeating,
+  10^7 blocks) and 157 ms (worst case, 10^5 blocks).
 
 ## 1. Goal
 
@@ -715,10 +812,14 @@ def lane_meta(seq: pp.Sequence) -> list[dict]
    - `lane_meta(seq)` equals `file_lanes(seq)` without segments and windows.
    - A sequence written with `seq.write` and read with `pp.Sequence.read`:
      the tables of the read sequence rebuild exactly the polylines of
-     `waveforms._events_in_range` of the read sequence. The polylines of the
-     read sequence and of the original sequence agree within 1e-9 s and a
-     relative 1e-9 (the file stores durations as raster counts and decimal
-     text, so the floats can differ in the last bits).
+     `waveforms._events_in_range` of the read sequence. The times of the
+     polylines of the read sequence and of the original sequence agree within
+     1e-9 s (the file stores durations as raster counts, so the floats can
+     differ in the last bits). The values agree within 1e-6 absolute and 1e-5
+     relative: pypulseq writes event amplitudes as 6-significant-digit text
+     (`{:12g}` in `Sequence/write_seq.py`), so a value comes back up to about
+     3.6e-6 off. (Corrected in phase 5. The first text asked for a relative
+     1e-9 on the values too, which is not possible.)
    - Two events with the same shape (for example, two RF events that differ
      only in phase offset) share their offset arrays in the pools.
 2. `tests/test_seq_utils.py`: add a test for `gradient_offsets` (trapezoid and
