@@ -509,14 +509,14 @@ script's marker is not.
 #### `test_script_order`
 
 **Checks:** The page's scripts appear in this order: `chart_math.js`,
-`lane_chart.js`, each card's library script, the extra scripts in the given
-order, and `page.js`.
+`lane_chart.js`, `seq_lanes.js`, each card's library script, the extra scripts in the
+given order, and `page.js`.
 
 **How:** The test builds one card with a library script and two extra
 scripts, calls `render_page`, and checks that the string indices of a
-`chart_math.js` marker, a `lane_chart.js` (`PulseqReport`) marker, the card
-script's marker, each extra script's marker, and a `page.js` marker are
-in increasing order.
+`chart_math.js` marker, a `lane_chart.js` (`PulseqReport`) marker, a
+`seq_lanes.js` (`SeqLanes`) marker, the card script's marker, each extra
+script's marker, and a `page.js` marker are in increasing order.
 
 **Assumptions:** None.
 
@@ -3011,7 +3011,427 @@ happens to collapse).
 
 ### 2.19 Sequence lanes (`test_seq_lanes.js`)
 
-Phase 2 of `docs/plans/diagram-event-table.md` adds the entries.
+`seq_lanes.js` turns the compressed block and event tables of one `.seq`
+file (section 4.2 of `docs/plans/diagram-event-table.md`) into chart lanes,
+with no DOM and no network: `SeqLanes.decode` builds a model from typed
+arrays and lane metadata; `blockStart` and `blockAt` give block times
+without a start-time array of length N; `exactLanes` and `pointsIn` give the
+exact view and its point count; `minMaxLanes` gives the minimum and the
+maximum of each bin of a zoomed-out view; `lanesFor` picks between the two
+by `pointsIn` against `EXACT_POINT_LIMIT`.
+
+The tests load `seq_lanes.js` directly, with Node's `require`, from
+`src/pulseq_reports/assets/seq_lanes.js`, the same way `test_chart_math.js`
+loads `chart_math.js`. They use `node:test` and `node:assert/strict`, and no
+browser or DOM. Two kinds of model back the tests:
+
+- `buildHandModel`: 5 blocks built by hand (an RF pulse with a magnitude and
+  a phase point, a trapezoid gradient, an arbitrary gradient, an ADC window,
+  and an empty block), with every block start and every event point worked
+  out on paper. `buildPhaseGapModel` (3 blocks) and `buildAdcCloseModel` (4
+  blocks) are further hand-built models for two `minMaxLanes` edge cases
+  that the 5-block model does not have: an RF phase gap and two ADC windows
+  closer together than one bin. `buildPointBudgetModel` gives every block
+  the same, known number of points, so a view can be built that holds
+  exactly `EXACT_POINT_LIMIT` points.
+- `buildRandomModel`: a pseudo-random model of any block count (so it can be
+  built larger than 1024 or 2048 blocks, to cross a checkpoint boundary),
+  seeded for a deterministic sequence, used where the exact points are too
+  many to check by hand. It is the model builder of the scratchpad scripts
+  `validate_minmax.js` and `validate_phase_adc.js`, which the task that
+  wrote this file used to work out `minMaxLanes`'s behavior before writing
+  the tests, copied here so the test file reads nothing from the scratchpad
+  at run time.
+
+For `minMaxLanes`, most tests compare its output against a brute-force
+computation over `exactLanes`'s whole-file points, written out in the test
+file itself (`bruteForceLineWant`, and the per-bin loops in
+`phaseLaneProblems` and `adcLaneProblems`): for each bin, the minimum and
+the maximum of every whole-file point in the bin, and of the polyline's
+value at each of the bin's two edges, by direct linear interpolation
+(`numpyInterp`, `numpy.interp`'s formula, section 4.4 item 2, the same
+formula the Python reference of the golden test of section 2.20 uses).
+
+**Assumptions for the whole file:**
+
+- The functions take only plain values (numbers, arrays, typed arrays) and
+  return only plain values. Nothing in a test depends on the page or a
+  browser.
+- Interpolated edge values need about 1e-12 relative tolerance
+  (`relClose`): `minMaxLanes` and the brute-force check in the test reach
+  the same mathematical value by different sequences of floating-point
+  operations (a segment tree of group extremes and `_edgeValue`'s neighbour
+  search, against a linear scan of every whole-file point), so the two need
+  not always land on the exact same bit pattern. Every other numeric
+  comparison in this file (`blockStart`, `blockAt`, `exactLanes`, the
+  windows of `minMaxLanes`'s ADC lane, and the point counts and segment
+  counts used to pin down the edge cases) is an exact comparison, with no
+  tolerance, because those values are sums of the same operations in the
+  same order, or bin-edge times computed by the same formula the test
+  itself uses, or plain integer counts.
+- `test_min_max_lanes_matches_brute_force_for_line_lanes_over_several_views`,
+  `test_min_max_lanes_matches_brute_force_for_the_rf_phase_lane` and
+  `test_min_max_lanes_matches_brute_force_for_adc_windows` reuse the model
+  sizes, seeds and views of the scratchpad's `validate_minmax.js` and
+  `validate_phase_adc.js`, which already ran them against `seq_lanes.js`
+  with 0 mismatches. This file's tests do not depend on that scratchpad run
+  for their own result: each one recomputes the brute-force comparison
+  itself.
+
+#### `test_decode_throws_for_an_unsupported_format`
+
+**Checks:** `decode` throws for a `format` other than 1 (section 4.6: a page
+with data for a later format must fail loudly, not draw wrong waveforms).
+
+**How:** The test calls `SeqLanes.decode(2, tables, HAND_LANES_META)` with
+the hand model's tables, and checks that it throws.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_decode_throws_for_an_unknown_table_name`
+
+**Checks:** `decode` throws when `tables` has a table name it does not
+know, for example `rotation` (section 4.6, the name reserved for the
+rotation extension).
+
+**How:** The test calls `decode` with the hand model's tables plus an extra
+`rotation` table, and checks that it throws.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_decode_throws_for_a_missing_table`
+
+**Checks:** `decode` throws when `tables` is missing one of the known
+tables. This is not one of the six required checks, but it is the other
+half of the same "requires exactly the known tables" behavior, and the test
+was already available to add cheaply.
+
+**How:** The test calls `decode` with the hand model's tables minus
+`checkpoints`, and checks that it throws.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_block_start_is_a_sequential_sum_from_zero_exactly`
+
+**Checks:** `blockStart` gives the sequential sum of the block durations
+from 0.0, for every block of a small model, with no tolerance.
+
+**How:** The test calls `blockStart` on the hand model's 5 blocks (block
+durations 0.002, 0.003, 0.0025, 0.001, 0.0015 s) and checks the exact
+result for each: 0, 0.002, 0.005, 0.0075, 0.0085.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_block_start_is_exact_across_a_checkpoint_boundary`
+
+**Checks:** `blockStart` agrees exactly, with no tolerance, with a plain
+sequential sum from 0.0, across more than one 1024-block checkpoint
+boundary.
+
+**How:** The test builds a 2500-block random model (`buildRandomModel(2500,
+11)`), which section 4.2 gives 3 checkpoints (blocks 0, 1024, 2048). It
+then walks every block, keeping its own running total `want` (starting at
+0.0 and adding one block's duration at a time, the same forward order
+`decode` itself uses to build `durationS`), and checks that
+`blockStart(model, i)` equals `want` exactly before adding block `i`'s
+duration, for every `i` from 0 to 2499.
+
+**Assumptions:** Floating-point addition of the same two operands always
+gives the same bit pattern. Since `blockStart` restarts from
+`checkpoints[c]`, itself an exact partial sum captured mid-loop when
+`buildRandomModel` computed `want`, and then adds the same remaining
+durations in the same order, its result and the test's independently-kept
+`want` must be bit-for-bit equal; this is not a coincidence of this
+particular model, but a property of the two computations. This differs from
+the whole file's general "no tolerance" assumption only in giving the
+reason a checkpoint-based partial sum still matches an unbroken one.
+
+#### `test_block_at_before_the_file_returns_block_zero`
+
+**Checks:** `blockAt` returns block 0 for a time before the start of the
+file (section 4.4, item 4).
+
+**How:** The test calls `blockAt(model, -0.001)` on the hand model and
+checks that the result is 0.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_block_at_at_a_block_start_returns_that_block`
+
+**Checks:** `blockAt` returns block `i` for `t` exactly at that block's
+start, at every block edge of a small model.
+
+**How:** The test calls `blockAt` at each of the hand model's 5 block
+starts (0, 0.002, 0.005, 0.0075, 0.0085) and checks that each call returns
+that block's index (0 through 4).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_block_at_inside_a_block_returns_that_block`
+
+**Checks:** `blockAt` returns the right block for a time strictly inside it,
+not just at its edges.
+
+**How:** The test calls `blockAt(model, 0.0019)`, inside block 0 (which
+spans [0, 0.002)), and checks the result is 0. It calls `blockAt(model,
+0.0086)`, inside block 4 (which spans [0.0085, 0.01)), and checks the
+result is 4.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_block_at_at_the_end_of_the_file_returns_the_last_nonzero_block`
+
+**Checks:** `blockAt` returns the last block with a duration above zero for
+`t` exactly at the end of the file (section 4.4, item 4).
+
+**How:** The test calls `blockAt(model, 0.01)` (the hand model's
+`durationS`) and checks that the result is 4, the last block.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_block_at_past_the_end_of_the_file_returns_the_last_nonzero_block`
+
+**Checks:** `blockAt` also returns the last block with a duration above
+zero for `t` past the end of the file (section 4.4, item 4).
+
+**How:** The test calls `blockAt(model, 0.02)`, past the hand model's
+`durationS` of 0.01, and checks that the result is 4.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_exact_lanes_rf_pulse_with_phase`
+
+**Checks:** `exactLanes` gives the right whole-file points for an RF
+pulse's magnitude lane and its phase lane, in ms, with the zero pad points
+at each end of the magnitude lane's polyline.
+
+**How:** The test calls `exactLanes(model, 0, 0.01)` on the hand model and
+checks the `rf_mag` lane's one segment: the zero pad at time 0, the pulse's
+3 magnitude points (from block 0's start of 0, delay 0.0002 and offsets [0,
+0.0005, 0.001], values [0, 10, 0]), and the zero pad at the end of the file
+(10 ms). It checks the `rf_phase` lane's one segment: the pulse's single
+phase point, at (0 + 0.0002 + 0.0005) s = 0.7 ms, value π/2.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_exact_lanes_trapezoid_gradient_block`
+
+**Checks:** `exactLanes` gives the right whole-file points for a trapezoid
+gradient event.
+
+**How:** The test calls `exactLanes(model, 0, 0.01)` and checks the `gx`
+lane's one segment: the zero pad at time 0, the trapezoid's 4 points (from
+block 1's start of 0.002, delay 0.0001 and offsets [0, 0.0005, 0.0015,
+0.002], values [0, 10, 10, 0]), and the zero pad at the end of the file.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_exact_lanes_arbitrary_gradient_block`
+
+**Checks:** `exactLanes` gives the right whole-file points for an arbitrary
+(non-trapezoid) gradient event.
+
+**How:** The test calls `exactLanes(model, 0, 0.01)` and checks the `gy`
+lane's one segment: the zero pad at time 0, the event's 4 points (from
+block 2's start of 0.005, delay 0.00005 and offsets [0, 0.0004, 0.0012,
+0.002], values [0, -3, -6, 0]), and the zero pad at the end of the file.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_exact_lanes_adc_window`
+
+**Checks:** `exactLanes` gives the right ADC window.
+
+**How:** The test calls `exactLanes(model, 0, 0.01)` and checks the `adc`
+lane's one window: from block 3's start of 0.0075 plus the ADC's delay of
+0.00002, to that plus its length of 0.0006, in ms.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_exact_lanes_zero_pads_when_a_lane_has_no_event`
+
+**Checks:** `exactLanes` gives just the two zero pad points, at time 0 and
+at the end of the file, for a lane with no event anywhere in the file.
+
+**How:** The test calls `exactLanes(model, 0, 0.01)` on the hand model,
+whose `gz` lane has no event in any of its 5 blocks, and checks that the
+`gz` lane's one segment is exactly `[[0, 0], [10, 0]]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_exact_lanes_range_that_cuts_a_block`
+
+**Checks:** `exactLanes` gives every point of a block whose whole extent is
+inside the requested range, plus the pad-point neighbours, when the range
+itself is narrower than the whole file.
+
+**How:** The test calls `exactLanes(model, 0.0021, 0.0049)`, a range
+strictly inside block 1 (the gx trapezoid). It checks that the `gx` lane's
+one segment holds all 4 of the trapezoid's points (none of the block's
+points fall outside this range), with the zero pad at time 0 before them
+(nothing on the gx lane before the trapezoid) and the zero pad at the end of
+the file after them (nothing on the gx lane after it).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_exact_lanes_range_with_no_event_still_returns_neighbour_points`
+
+**Checks:** `exactLanes` still returns the nearest point before and after a
+range that has no event of its own on a lane.
+
+**How:** The test calls `exactLanes(model, 0.009, 0.0095)`, a range inside
+block 4 (the empty delay block, which has no gx event). It checks that the
+`gx` lane's one segment is exactly two points: the last gx point before the
+range (the end of block 1's trapezoid, at 0.0041 s) and the first after it
+(the zero pad at the end of the file, since nothing on gx follows the
+trapezoid).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_matches_brute_force_for_line_lanes_over_several_views`
+
+**Checks:** `minMaxLanes`'s minimum and maximum in each bin, for the
+`rf_mag`, `gx`, `gy` and `gz` lanes, match a brute-force computation over
+the exact whole-file points, across several model sizes, seeds, views and
+bin counts.
+
+**How:** The test builds 5 random models (300, 300, 3000, 3000 and 2500
+blocks, with seeds 7, 7, 99, 99 and 11) and, for each, calls `minMaxLanes`
+with a view and a bin count (a whole-ish view and a zoomed-in view of the
+300- and 3000-block models, and an odd bin count of 137 for the 2500-block
+model). For each of the 4 line lanes, it calls `lineLaneProblems`, which
+computes each bin's want value with `bruteForceLineWant` (every whole-file
+point in the bin, plus `numpyInterp` at the bin's two edges) and compares it
+against `minMaxLanes`'s bin, within `relClose`'s tolerance. It checks that
+the list of problems is empty for every lane, model and view.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_matches_brute_force_for_the_rf_phase_lane`
+
+**Checks:** `minMaxLanes`'s minimum and maximum in each bin of the RF phase
+lane match a brute-force computation over the exact whole-file phase
+points, across several model sizes, seeds, views and bin counts.
+
+**How:** The test builds 4 random models (300, 300, 3000 and 2500 blocks)
+and calls `phaseLaneProblems` for each, with the same views as the line-lane
+test above (minus the 3000-block zoomed-in view). `phaseLaneProblems` works
+like `lineLaneProblems`, except that an edge value only counts when the
+edge falls between two points of the same RF pulse (section 4.4, item 2), so
+each pulse's points are searched on their own rather than as one
+whole-file polyline. It checks that the list of problems is empty for every
+model and view.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_matches_brute_force_for_adc_windows`
+
+**Checks:** `minMaxLanes`'s ADC windows (the runs of "on" bins) match a
+brute-force computation over the exact whole-file ADC windows, across
+several model sizes, seeds, views and bin counts.
+
+**How:** The test builds the same 4 random models as the RF phase test and
+calls `adcLaneProblems` for each, with the same views. `adcLaneProblems`
+marks each bin "on" when a whole-file ADC window overlaps it, merges runs of
+"on" bins into windows at the bin edges, and compares that list, by exact
+equality (bin-edge times, not interpolated values), against `minMaxLanes`'s
+`windows`. It checks that the list of problems is empty for every model and
+view.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_matches_brute_force_across_a_checkpoint_boundary`
+
+**Checks:** `minMaxLanes` (line lanes, RF phase and ADC) matches the
+brute-force computation for a whole-file view of a model whose block count
+crosses more than one 1024-block checkpoint boundary.
+
+**How:** The test builds a 2500-block random model (checkpoints at blocks 0,
+1024 and 2048) and calls `lineLaneProblems`, `phaseLaneProblems` and
+`adcLaneProblems` with the whole file as the view and 200 bins, so several
+bin edges fall inside the second and third checkpoint segments. It checks
+that every problem list is empty.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_bin_with_no_point_uses_only_edge_values`
+
+**Checks:** A bin that holds no point of a lane, only interpolated values at
+its two edges, gets the right minimum and maximum.
+
+**How:** The test calls `minMaxLanes` on the hand model's `gx` lane with 10
+bins over the whole file (bin width 0.001 s). It first checks, with
+`bruteForceLineWant`, that bin 5 ([0.005, 0.006) s, inside block 2) has no
+gx point of its own (`hadPoint` is false: the trapezoid's points are all
+inside [0.0021, 0.0041] s, and the zero pad points sit at time 0 and 0.01
+s, both outside this bin) and that its want value is exactly `[0, 0]` (both
+of bin 5's edges interpolate, between the trapezoid's zero-valued last point
+and the zero-valued pad at the end of the file, to exactly 0, with no
+rounding, since the interpolation's numerator is 0). It then checks, with
+`lineLaneProblems`, that every bin of this view matches the brute force,
+which covers bin 5 along with the rest.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_rf_phase_gap_splits_into_two_segments`
+
+**Checks:** A gap between two RF pulses (a stretch of bins with no phase
+value) splits `minMaxLanes`'s phase lane into two segments, one for each
+pulse.
+
+**How:** The test builds `buildPhaseGapModel` (an RF pulse at 0.4 ms, an
+empty block, then a second RF pulse at 3.4 ms) and calls `minMaxLanes` with
+4 bins over the whole file (bin width 1 ms). It checks that the `rf_phase`
+lane's `segments` array has exactly 2 entries (the two middle bins have no
+phase value: no point of either pulse falls in them, and neither pulse has
+a second point to interpolate an edge value from, section 4.4 item 2). It
+then checks, with `phaseLaneProblems`, that every bin of this view matches
+the brute force.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_adc_windows_closer_than_one_bin_merge_into_one_window`
+
+**Checks:** Two ADC windows that land in adjacent bins, with no "off" bin
+between them, are reported as a single merged window, wider than either
+physical window.
+
+**How:** The test builds `buildAdcCloseModel` (two ADC windows 0.7 ms apart,
+[0.0011, 0.0014] s and [0.0021, 0.0024] s) and calls `minMaxLanes` with 4
+bins over the whole file (bin width 1 ms), which puts the first window in
+bin 1 and the second in bin 2. It checks that the `adc` lane's `windows`
+array has exactly 1 entry. It then checks, with `adcLaneProblems`, that this
+merged window (and the rest of the bins) matches the brute force.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_lanes_for_switches_from_exact_to_min_max_at_the_point_limit`
+
+**Checks:** `lanesFor` returns `exactLanes`'s lanes with `exact: true` for a
+view whose point count is at `EXACT_POINT_LIMIT`, and `minMaxLanes`'s lanes
+with `exact: false` for a view just over the limit.
+
+**How:** The test builds `buildPointBudgetModel(2600)`, where every block
+has exactly 8 points (an RF pulse's 3 magnitude and 1 phase point, plus a gx
+event's 4 points), so 2500 blocks give exactly `EXACT_POINT_LIMIT` (20000)
+points. It finds `tAtLimit`, the midpoint of block 2499 (so the view [0,
+tAtLimit] holds blocks 0 through 2499, 2500 blocks), and `tOverLimit`, the
+midpoint of block 2500 (2501 blocks). It checks with `pointsIn` that these
+views hold exactly 20000 and 20008 points. It then checks that
+`lanesFor(model, [0, tAtLimit * 1000], 100)` has `exact: true` and `lanes`
+deep-equal to `exactLanes(model, 0, tAtLimit)`, and that `lanesFor(model, [0,
+tOverLimit * 1000], 100)` has `exact: false` and `lanes` deep-equal to
+`minMaxLanes(model, 0, tOverLimit, 100)`.
+
+**Assumptions:** `pointsIn`, which this test uses to confirm the view's
+point count, is not itself one of the six behaviors this file was asked to
+cover, but its own correctness is a straightforward reading of `_blockPoints`
+(section 4.4, item 3): for every block in the view, the RF magnitude and
+phase point counts when the block has an RF event, each gradient axis's
+point count when it has a gradient event, and 2 for an ADC event. The test
+does not re-derive this by a separate brute force; it relies on the
+function under test elsewhere in `seq_lanes.js` doing the addition section
+4.4 describes.
 
 ### 2.20 Sequence lanes against Python (`test_seq_lanes_golden.py`)
 
