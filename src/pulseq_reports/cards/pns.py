@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pypulseq as pp
 
+from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.markup import _AXIS_COLOR, Lane, _lanes_json, _points, _table, _zoom_controls
 from pulseq_reports.page import Card
 from pulseq_reports.pns import peak_tr_window, pns_prediction
@@ -176,7 +177,11 @@ def pns_card(
 
     The SAFE model runs over the whole gradient waveform, so this card is slow for a
     long sequence.
+
+    Raises `NotImplementedError` for a sequence with the rotation extension
+    (`extensions.refuse_rotations`).
     """
+    refuse_rotations(seq.seq)
     data = pns_data(seq.seq, gradient_asc)
     return Card(
         id=card_id,

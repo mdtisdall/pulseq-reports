@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 import pypulseq as pp
 
+from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.grad_spectrum import (
     MAX_FREQUENCY_HZ,
     PRISMA_AS82_RESONANCES,
@@ -176,9 +177,14 @@ def spectrum_card(
 
     `data` is always the JSON-ready spectrum dict and `script` is always `"spectrum"`,
     even when there are no gradients, so the card script can still read `data.reason`.
+
+    Raises `NotImplementedError` for a sequence with the rotation extension
+    (`extensions.refuse_rotations`).
     """
     if not seqs:
         raise ValueError("spectrum_card needs at least one sequence")
+    for named in seqs:
+        refuse_rotations(named.seq)
 
     if len(seqs) == 1:
         data = spectrum_data(seqs[0].seq, resonances=resonances)

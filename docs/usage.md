@@ -312,3 +312,23 @@ example µT, mT/m, T/m/s and percent, are named in each card's table.
 When the library gets the same single sequence as vb-pulseq, the timing,
 definitions, RF exposure, gradient spectrum and PNS cards give the same
 data as vb-pulseq's own report; `scripts/vb_parity.py` checks this.
+
+## Rotation extension
+
+The Pulseq rotation extension rotates the gradients of a block on the
+scanner. `pulseq-reports` does not support it yet: `spectrum_card`,
+`pns_card` and `gradient_limits_card` (and, later, the diagram card) raise
+`NotImplementedError` for a sequence that uses it
+(`extensions.refuse_rotations`). The RF exposure, timing, definitions and
+block table cards do not use the gradients, so they accept a sequence with
+rotations.
+
+Limits: pypulseq 1.5.0.post1 cannot make a rotation, and its
+`Sequence.read` raises `ValueError` for a `.seq` file with a rotation
+section, so with that version no sequence with rotations reaches a card.
+The guard also detects a rotation the way pypulseq draft PR #372 stores it
+in memory (a non-empty `seq.rotation_library`) and the way its
+`Sequence.read` marks a file it has read (the `"ROTATIONS"` extension
+type). A later pypulseq version that stores rotations in a different way
+can get past the guard undetected. Support for the rotation extension is
+planned; see `TODO.md`.
