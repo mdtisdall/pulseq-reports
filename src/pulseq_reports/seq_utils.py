@@ -53,18 +53,25 @@ def hold_samples(rf: SimpleNamespace, raster: float) -> tuple[np.ndarray, float]
     return np.interp(centers, t, signal.real) + 1j * np.interp(centers, t, signal.imag), dt
 
 
-def gradient_points(g, t0: float) -> tuple[np.ndarray, np.ndarray]:
-    """Corner or sample times (s) and amplitudes (Hz/m) of one gradient event."""
+def gradient_offsets(g) -> tuple[float, np.ndarray, np.ndarray]:
+    """The delay (s) and the offsets (s) and amplitudes (Hz/m) of one gradient event's
+    corner or sample points, relative to the delay."""
     if g.type == "trap":
-        t = t0 + g.delay + np.cumsum([0.0, g.rise_time, g.flat_time, g.fall_time])
+        offsets = np.cumsum([0.0, g.rise_time, g.flat_time, g.fall_time])
         amp = np.array([0.0, g.amplitude, g.amplitude, 0.0])
     else:
-        t = t0 + g.delay + np.asarray(g.tt, dtype=float)
+        offsets = np.asarray(g.tt, dtype=float)
         amp = np.asarray(g.waveform, dtype=float)
         if hasattr(g, "first") and hasattr(g, "shape_dur"):
-            t = np.concatenate([[t0 + g.delay], t, [t0 + g.delay + g.shape_dur]])
+            offsets = np.concatenate([[0.0], offsets, [g.shape_dur]])
             amp = np.concatenate([[g.first], amp, [g.last]])
-    return t, amp
+    return g.delay, offsets, amp
+
+
+def gradient_points(g, t0: float) -> tuple[np.ndarray, np.ndarray]:
+    """Corner or sample times (s) and amplitudes (Hz/m) of one gradient event."""
+    delay, offsets, amp = gradient_offsets(g)
+    return (t0 + delay) + offsets, amp
 
 
 @dataclass(frozen=True)

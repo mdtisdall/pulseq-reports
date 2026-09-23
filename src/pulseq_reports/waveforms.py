@@ -73,6 +73,23 @@ def _in_range(start: float, duration: float, lo: float | None, hi: float | None)
     return (lo is None or end > lo) and (hi is None or start < hi)
 
 
+def _rf_offsets(rf) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """The delay (s) and the offsets and values of one RF event's magnitude (µT) and
+    phase (rad) points, relative to the delay: `mag_offsets = [0, rt..., rt[-1]]` with a
+    zero-padded `mag`, and `phase_offsets = rt[keep]` with `phase` there, where `keep`
+    is `mag` above 1% of its peak."""
+    rt = np.asarray(rf.t, dtype=float)
+    signal = np.asarray(rf.signal, dtype=complex)
+    mag = np.abs(signal) / GAMMA * 1e6
+    phase = np.angle(signal * np.exp(1j * (rf.phase_offset + 2 * np.pi * rf.freq_offset * rt)))
+    mag_offsets = np.concatenate([[0.0], rt, [rt[-1]]])
+    mag_padded = np.concatenate([[0.0], mag, [0.0]])
+    keep = mag > 0.01 * mag.max() if mag.max() > 0 else np.zeros_like(mag, bool)
+    phase_offsets = rt[keep]
+    phase = phase[keep]
+    return rf.delay, mag_offsets, mag_padded, phase_offsets, phase
+
+
 def _block_events(block_id: int, t: float, duration: float, block) -> _BlockEvents:
     """The diagram content of one block that starts at `t` (s). The same computation as
     vb-pulseq `report/diagram.py::sequence_data` for one block."""
@@ -80,17 +97,10 @@ def _block_events(block_id: int, t: float, duration: float, block) -> _BlockEven
     rf_mag = rf_phase = None
     rf = getattr(block, "rf", None)
     if rf is not None:
-        rt = np.asarray(rf.t, dtype=float)
-        signal = np.asarray(rf.signal, dtype=complex)
-        mag = np.abs(signal) / GAMMA * 1e6
-        phase = np.angle(signal * np.exp(1j * (rf.phase_offset + 2 * np.pi * rf.freq_offset * rt)))
-        start = t + rf.delay
-        rf_mag = (
-            np.concatenate([[start], start + rt, [start + rt[-1]]]),
-            np.concatenate([[0.0], mag, [0.0]]),
-        )
-        keep = mag > 0.01 * mag.max() if mag.max() > 0 else np.zeros_like(mag, bool)
-        rf_phase = (start + rt[keep], phase[keep])
+        delay, mag_offsets, mag, phase_offsets, phase = _rf_offsets(rf)
+        start = t + delay
+        rf_mag = (start + mag_offsets, mag)
+        rf_phase = (start + phase_offsets, phase)
         use = getattr(rf, "use", "")
         events.append(f"RF ({use})" if use else "RF")
 
@@ -177,13 +187,13 @@ def point_count(seq: pp.Sequence, start_s: float | None = None, end_s: float | N
     return count
 
 
-def _value_lane(lane_id, title, unit, color, segments, symmetric, has_events, fill=0.0) -> Lane:
-    values = [abs(v) for seg in segments for _, v in seg]
-    peak = max(values, default=0.0)
+def _value_domain(peak: float, symmetric: bool) -> tuple[list[float], list[float], list[str]]:
+    """The domain, ticks and tick labels of a value lane whose largest absolute rounded
+    point is `peak`."""
     if peak == 0.0:
-        domain, ticks, labels = [-1.0, 1.0], [0.0], ["0"]
-    elif symmetric:
-        domain, ticks, labels = (
+        return [-1.0, 1.0], [0.0], ["0"]
+    if symmetric:
+        return (
             [-1.1 * peak, 1.1 * peak],
             [-peak, 0.0, peak],
             [
@@ -192,8 +202,13 @@ def _value_lane(lane_id, title, unit, color, segments, symmetric, has_events, fi
                 _fmt(peak),
             ],
         )
-    else:
-        domain, ticks, labels = [0.0, 1.1 * peak], [0.0, peak], ["0", _fmt(peak)]
+    return [0.0, 1.1 * peak], [0.0, peak], ["0", _fmt(peak)]
+
+
+def _value_lane(lane_id, title, unit, color, segments, symmetric, has_events, fill=0.0) -> Lane:
+    values = [abs(v) for seg in segments for _, v in seg]
+    peak = max(values, default=0.0)
+    domain, ticks, labels = _value_domain(peak, symmetric)
     return Lane(
         id=lane_id,
         title=title,
