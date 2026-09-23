@@ -177,6 +177,52 @@ function buildPhaseGapModel() {
   return {tables, model: SeqLanes.decode(1, tables, HAND_LANES_META)};
 }
 
+// 3 blocks, built like pypulseq RF events: each magnitude event is
+// `[0, |B1|..., 0]` at offsets `[0, rt..., rt[-1]]`, so a pulse ends with two
+// points at the same time, the last sample then the zero pad. Block0 (1 ms)
+// has RF event 1 (delay 0.1 ms): points (0.1 ms, 0), (0.2, 2), (0.5, 5),
+// (0.9, 3), (0.9, 0). Block1 (4 ms) is empty. Block2 (1 ms) has RF event 2,
+// a block pulse with rt[0] = 0 (delay 0): points (5.0 ms, 0), (5.0, 4),
+// (5.3, 4), (5.3, 0), so it also starts with two points at the same time.
+// Block starts: 0, 0.001, 0.005. End: 0.006. Between the pulses, the
+// whole-file polyline is 0: it runs from (0.9 ms, 0) to (5.0 ms, 0).
+function buildRepeatedTimeModel() {
+  const tables = {
+    duration_index: Uint8Array.from([0, 1, 0]),
+    durations: Float64Array.from([0.001, 0.004]),
+    checkpoints: Float64Array.from([0.0]),
+
+    rf: Uint8Array.from([1, 0, 2]),
+    gx: Uint8Array.from([0, 0, 0]),
+    gy: Uint8Array.from([0, 0, 0]),
+    gz: Uint8Array.from([0, 0, 0]),
+    adc: Uint8Array.from([0, 0, 0]),
+
+    rf_delay: Float64Array.from([0.0001, 0.0]),
+    rf_mag_n: Uint32Array.from([5, 4]),
+    rf_mag_offset_at: Uint32Array.from([0, 5]),
+    rf_mag_at: Uint32Array.from([0, 5]),
+    rf_mag_offset: Float64Array.from([0, 0.0001, 0.0004, 0.0008, 0.0008, 0, 0, 0.0003, 0.0003]),
+    rf_mag: Float64Array.from([0, 2, 5, 3, 0, 0, 4, 4, 0]),
+    rf_phase_n: Uint32Array.from([0, 0]),
+    rf_phase_offset_at: Uint32Array.from([0, 0]),
+    rf_phase_at: Uint32Array.from([0, 0]),
+    rf_phase_offset: Float64Array.from([]),
+    rf_phase: Float64Array.from([]),
+
+    grad_delay: Float64Array.from([]),
+    grad_n: Uint32Array.from([]),
+    grad_offset_at: Uint32Array.from([]),
+    grad_at: Uint32Array.from([]),
+    grad_offset: Float64Array.from([]),
+    grad_value: Float64Array.from([]),
+
+    adc_delay: Float64Array.from([]),
+    adc_length: Float64Array.from([]),
+  };
+  return {tables, model: SeqLanes.decode(1, tables, HAND_LANES_META)};
+}
+
 // 4 blocks, built to force two ADC windows that land in adjacent bins with
 // no "off" bin between them, closer together than one bin's width: block0
 // is a pad, block1 and block2 each have a short ADC window, block3 is a
@@ -712,6 +758,29 @@ test("test_min_max_lanes_bin_with_no_point_uses_only_edge_values", () => {
 
   const problems = lineLaneProblems(model, "gx", 0, 0.01, bins);
   assert.deepEqual(problems, []);
+});
+
+test("test_min_max_lanes_edge_values_follow_the_last_of_repeated_point_times", () => {
+  // `buildRepeatedTimeModel`: RF event 1 ends with (0.9 ms, 3) then (0.9 ms,
+  // 0), and RF event 2 starts with (5.0 ms, 0) then (5.0 ms, 4). The
+  // polyline leaves the first pulse from its LAST point at 0.9 ms (value 0)
+  // and enters the second at its FIRST point at 5.0 ms (value 0), so it is 0
+  // everywhere in the gap. A whole-file view of 5 bins (width 1.2 ms) puts
+  // the edges 1.2, 2.4, 3.6 and 4.8 ms in the gap, none of them on a
+  // repeated time. Bins 1 to 3 have no point: their minimum and maximum
+  // come only from edge values, which must be exactly 0 (the interpolation
+  // between two zero values multiplies by a zero numerator). Taking the
+  // FIRST point at 0.9 ms (value 3) instead would give a value near 3.
+  const {model} = buildRepeatedTimeModel();
+  const bins = 5;
+  const idx = model.lanesMeta.findIndex(m => m.id === "rf_mag");
+  const got = gotLineBins(SeqLanes.minMaxLanes(model, 0, model.durationS, bins)[idx]);
+  for (const k of [1, 2, 3]) {
+    const e0 = model.durationS * k / bins;
+    assert.deepEqual(got.get(e0 * 1000), [0, 0], `bin ${k}`);
+  }
+  assert.deepEqual(got.get(0), [0, 5]);
+  assert.deepEqual(lineLaneProblems(model, "rf_mag", 0, model.durationS, bins), []);
 });
 
 test("test_min_max_lanes_rf_phase_gap_splits_into_two_segments", () => {

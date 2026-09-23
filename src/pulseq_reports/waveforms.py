@@ -2,10 +2,9 @@
 
 `file_lanes` gives the exact chart lanes of a sequence, or of the blocks in a time
 range: RF magnitude and phase, the ADC gate and the three gradient axes, in ms, µT,
-rad and mT/m. `file_envelope` gives the minimum and the maximum of each waveform in
-equal time bins, for a view that has too many points to send. `point_count` counts the
-points of `file_lanes` without building them, so a caller can choose between the two.
-`block_rows` gives the rows of the block table from the same description of each block.
+rad and mT/m. It is the reference for the browser's `SeqLanes` (`assets/seq_lanes.js`),
+which draws the diagram from the tables of `diagram_data`. `block_rows` gives the rows
+of the block table from the same description of each block.
 
 Each function reads one block at a time. A range reads only the blocks that overlap it.
 """
@@ -21,12 +20,7 @@ import pypulseq as pp
 from .markup import Lane, _fmt, _lanes_json, _points
 from .seq_utils import GAMMA, NamedSequence, gradient_points
 
-DIAGRAM_POINT_BUDGET = 200_000  # points for all lanes of one file
-
 _AXES = ("gx", "gy", "gz")
-# The joined line lanes (RF magnitude and the three gradient axes) each get two zero
-# points, one at each end of the range.
-_PAD_POINTS = 2 * (1 + len(_AXES))
 
 
 @dataclass(frozen=True)
@@ -174,19 +168,6 @@ def block_rows(
     return rows, total
 
 
-def point_count(seq: pp.Sequence, start_s: float | None = None, end_s: float | None = None) -> int:
-    """The number of points that `file_lanes(seq, start_s, end_s)` gives, over all its
-    lanes (an ADC window counts as two points), computed without building the lanes."""
-    count = _PAD_POINTS
-    for e in _events_in_range(seq, start_s, end_s):
-        if e.rf_mag is not None:
-            count += e.rf_mag[0].size + e.rf_phase[0].size
-        count += sum(t.size for t, _ in e.grads.values())
-        if e.adc is not None:
-            count += 2
-    return count
-
-
 def _value_domain(peak: float, symmetric: bool) -> tuple[list[float], list[float], list[str]]:
     """The domain, ticks and tick labels of a value lane whose largest absolute rounded
     point is `peak`."""
@@ -326,124 +307,6 @@ def file_lanes(
         return [[[lo_ms, 0.0], *[p for part in parts for p in part], [hi_ms, 0.0]]]
 
     return _lanes_json(_lanes(rf_mag, rf_phase, adc_windows, grads, joined))
-
-
-class _Envelope:
-    """The running minimum and maximum of one piecewise-linear waveform in equal time
-    bins. Where no event covers part of a bin, the waveform is zero there."""
-
-    def __init__(self, edges: np.ndarray) -> None:
-        self.edges = edges
-        n = edges.size - 1
-        self.low = np.full(n, np.inf)
-        self.high = np.full(n, -np.inf)
-        self.covered = np.zeros(n)  # the time in each bin that an event covers
-        self.has_event = False
-
-    def add(self, t: np.ndarray, v: np.ndarray) -> None:
-        """Add one event: the polyline through (t, v), zero outside [t[0], t[-1]]."""
-        edges, n = self.edges, self.edges.size - 1
-        t0, t1 = max(t[0], edges[0]), min(t[-1], edges[-1])
-        if t1 < t0:
-            return
-        self.has_event = True
-        # The extremes of a polyline in a bin are at its points in the bin or at the
-        # bin edges.
-        inside = (t >= edges[0]) & (t <= edges[-1])
-        bins = np.clip(np.searchsorted(edges, t[inside], side="right") - 1, 0, n - 1)
-        np.minimum.at(self.low, bins, v[inside])
-        np.maximum.at(self.high, bins, v[inside])
-        first = max(int(np.searchsorted(edges, t0, side="right")) - 1, 0)
-        last = min(int(np.searchsorted(edges, t1, side="left")), n)
-        # The bin edges inside the event, and the range ends where the event crosses
-        # them. Each value belongs to the bins on both sides of its edge.
-        k = np.arange(first, min(last, n) + 1)
-        k = k[(edges[k] > t[0]) & (edges[k] < t[-1])]
-        if k.size:
-            at = np.interp(edges[k], t, v)
-            for b in (k - 1, k):
-                ok = (b >= 0) & (b < n)
-                np.minimum.at(self.low, b[ok], at[ok])
-                np.maximum.at(self.high, b[ok], at[ok])
-        for b in range(first, min(last, n)):
-            lo, hi = max(edges[b], t0), min(edges[b + 1], t1)
-            if hi > lo:
-                self.covered[b] += hi - lo
-
-    def points(self, width: float) -> list[list[float]]:
-        """(bin start, minimum), (bin centre, maximum) for each bin, rounded like
-        `markup._points`. A bin that events do not cover fully includes zero."""
-        uncovered = self.covered < width * (1 - 1e-9)
-        low = np.where(uncovered, np.minimum(self.low, 0.0), self.low)
-        high = np.where(uncovered, np.maximum(self.high, 0.0), self.high)
-        starts, centres = self.edges[:-1], self.edges[:-1] + width / 2
-        t = np.column_stack([starts, centres]).ravel()
-        v = np.column_stack([low, high]).ravel()
-        return [[round(float(a), 4), round(float(b), 4)] for a, b in zip(t, v)]
-
-
-def file_envelope(
-    seq: pp.Sequence, bins: int, start_s: float | None = None, end_s: float | None = None
-) -> list[dict]:
-    """The lanes of `file_lanes` as a minimum/maximum envelope in `bins` equal time bins
-    over [start_s, end_s] (the whole sequence by default), with times in ms.
-
-    Each line lane (RF |B1|, Gx, Gy, Gz) is one segment through (bin start, minimum) and
-    (bin centre, maximum) for each bin. The ADC gate lane merges windows that are closer
-    than one bin. There is no RF phase lane. Each lane has a `note` field that says it
-    is an envelope; the RF |B1| note also says that the RF phase is not shown.
-    """
-    if bins < 1:
-        raise ValueError(f"bins must be at least 1, not {bins}")
-    lo = 0.0 if start_s is None else start_s
-    hi = duration_s(seq) if end_s is None else end_s
-    lo_ms, hi_ms = lo * 1e3, hi * 1e3
-    if not hi_ms > lo_ms:
-        raise ValueError(f"the range ({lo}, {hi}) s is empty")
-    edges = np.linspace(lo_ms, hi_ms, bins + 1)
-    width = (hi_ms - lo_ms) / bins
-
-    envelopes = {lane: _Envelope(edges) for lane in ("rf_mag", *_AXES)}
-    adc_windows: list[list[float]] = []
-    for e in _events_in_range(seq, lo, hi):
-        if e.rf_mag is not None:
-            t, v = e.rf_mag
-            envelopes["rf_mag"].add(t * 1e3, v)
-        for axis, (t, v) in e.grads.items():
-            envelopes[axis].add(t * 1e3, v)
-        if e.adc is not None:
-            a0, a1 = e.adc[0] * 1e3, e.adc[1] * 1e3
-            if adc_windows and a0 - adc_windows[-1][1] < width:
-                adc_windows[-1][1] = max(adc_windows[-1][1], a1)
-            else:
-                adc_windows.append([a0, a1])
-
-    def joined(envelope: _Envelope) -> list:
-        return [envelope.points(width)] if envelope.has_event else []
-
-    note = f"Minimum and maximum in each of {bins} time bins of {width:.4g} ms."
-    lanes = []
-    for lane_id, title, unit, color, symmetric in (
-        ("rf_mag", "RF |B1|", "µT", "rf", False),
-        *((axis, f"G{axis[1]}", "mT/m", axis, True) for axis in _AXES),
-    ):
-        envelope = envelopes[lane_id]
-        lane = dataclasses.asdict(
-            _value_lane(
-                lane_id,
-                title,
-                unit,
-                color,
-                joined(envelope),
-                symmetric=symmetric,
-                has_events=envelope.has_event,
-            )
-        )
-        lane["note"] = note + (" RF phase is not shown." if lane_id == "rf_mag" else "")
-        lanes.append(lane)
-    adc = _adc_lane([[round(a, 4), round(b, 4)] for a, b in adc_windows])
-    adc["note"] = f"ADC windows closer than one bin ({width:.4g} ms) are merged."
-    return [lanes[0], adc, *lanes[1:]]
 
 
 def first_adc_window(seqs: Sequence[NamedSequence], file_index: int = 0) -> TimeWindow:

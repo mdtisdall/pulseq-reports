@@ -2389,17 +2389,15 @@ title are in the result.
 ### 2.15 Waveform data (`test_waveforms.py`)
 
 `test_waveforms.py` tests `waveforms.py`: the exact chart lanes
-(`file_lanes`), the minimum/maximum envelope (`file_envelope`), the point
-count without building the lanes (`point_count`), the block table rows
-(`block_rows`), and the two named views `first_adc_window` and
-`full_window`. The lane and block-table tests are adapted from vb-pulseq's
+(`file_lanes`), the block table rows (`block_rows`), and the two named views
+`first_adc_window` and `full_window`. The lane and block-table tests are adapted from vb-pulseq's
 `test_spin_echo_lanes`, `test_block_table`,
 `test_zero_phase_rf_and_zero_gradient_are_events` and its `report_at_tr`
 tests, moved to `tests/synthetic.py` sequences and to the module's own
 functions in place of vb's `sequence_data` dict; the PNS, page and
 timing-check parts of those vb tests belong to other cards and are dropped.
-The rest of the file is new coverage for a range that cuts a block, the
-envelope, `point_count`, and the two named views.
+The rest of the file is new coverage for a range that cuts a block and the
+two named views.
 
 #### `test_spin_echo_lanes`
 
@@ -2512,72 +2510,6 @@ with value 0.
 
 **Assumptions:** None.
 
-#### `test_point_count_matches_file_lanes_point_count`
-
-**Checks:** `point_count`, computed without building the lanes, equals the
-total number of points that `file_lanes` gives over all its lanes, both for
-the whole file and for a range: each line lane's segment points, plus 2 for
-each ADC window.
-
-**How:** The test builds a synthetic gradient echo sequence and, for
-`(start_s, end_s)` equal to `(None, None)` and to a quarter-to-60%-of-file
-range, computes the expected count directly from `file_lanes`'s own output
-(summing segment lengths of the line lanes and adding 2 for each ADC
-window) and compares it with `point_count`'s result.
-
-**Assumptions:** None.
-
-#### `test_envelope_bin_min_and_max_match_dense_interpolation`
-
-**Checks:** Each envelope bin's minimum and maximum match the true minimum
-and maximum of the exact waveform in that bin.
-
-**How:** The test builds a synthetic gradient echo sequence, computes
-`file_lanes` and `file_envelope` for the same 40 bins, and for each line
-lane and each bin, builds a dense `numpy.interp` of the exact lane's
-segment: 2000 evenly spaced samples across the bin, plus the segment's own
-vertex times that fall inside the bin (added explicitly, because a narrow
-spike such as a trapezoid with no flat top reaches its peak at a single
-instant that an evenly spaced grid alone can miss). It checks that the
-envelope's minimum and maximum for that bin match the dense sample's
-minimum and maximum within 2e-4.
-
-**Assumptions:**
-
-- Outside a segment's own time range, `numpy.interp`'s zero fill matches
-  `file_envelope`'s treatment of time that no event covers.
-
-#### `test_envelope_merges_adc_windows_closer_than_one_bin`
-
-**Checks:** ADC windows closer together than one bin's width merge into
-one envelope window that spans from the first window's start to the last
-window's end, and the ADC lane's `note` says so.
-
-**How:** The test builds a synthetic gradient echo sequence with three TRs
-and a short TR (8 ms), so that the gap between any two of its three ADC
-windows is smaller than the width of a single bin covering the whole file.
-It calls `file_envelope` with `bins=1` and checks that the ADC lane has one
-window, from the first exact window's start to the last exact window's end,
-and that its `note` mentions "merged".
-
-**Assumptions:** None.
-
-#### `test_envelope_drops_rf_phase_and_has_note_fields`
-
-**Checks:** `file_envelope` has no RF phase lane, its RF magnitude lane's
-note says that RF phase is not shown, its other line lanes' notes describe
-the bins without mentioning RF phase, and the ADC lane's note mentions that
-windows are merged.
-
-**How:** The test builds a synthetic gradient echo sequence and calls
-`file_envelope`. It checks that the lane ids are exactly `rf_mag`, `adc`,
-`gx`, `gy` and `gz` (no `rf_phase`), that the `rf_mag` lane's `note` mentions
-that RF phase is not shown, that each of `gx`, `gy` and `gz`'s `note`
-mentions "Minimum and maximum" but not RF phase, and that the `adc` lane's
-`note` mentions "merged".
-
-**Assumptions:** None.
-
 #### `test_first_adc_window_label_and_times`
 
 **Checks:** `first_adc_window` gives a window from 0 to 1.1 times the end of
@@ -2630,64 +2562,88 @@ unlimited rows with the same `total`.
 
 ### 2.16 Sequence diagram card (`test_diagram_card.py`)
 
-`test_diagram_card.py` tests `cards/diagram.py`. `diagram_card` builds one
-button for each caller-given time window, sharing one lane set across the
-windows of a small file (parity with vb-pulseq) and giving a file over the
-point budget its own lane set (exact or an envelope) for each window. The
-last test is adapted from vb-pulseq's
-`test_report_has_zoom_controls_on_each_line_chart`, checking only the
-diagram card because phases 4 (gradient spectrum) and 5 (PNS) are not
-merged into this branch.
+`test_diagram_card.py` tests `cards/diagram.py`. `diagram_card` sends one
+entry in `data["files"]` for each file that at least one caller-given time
+window uses (its compressed block and event tables, `diagram_data`, plus
+`lane_meta`), and one entry in `data["windows"]` for each window, with one
+button for each window in the given order (section 4.1 of
+`docs/plans/diagram-event-table.md`). There is no lane set and no point
+budget any more: every view is drawn in the browser from the tables (phase
+4's job is done there, not in Python). The last test is adapted from
+vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`, checking
+only the diagram card because phases 4 (gradient spectrum) and 5 (PNS) are
+not merged into this branch.
 
-#### `test_small_file_has_one_lane_set_with_the_file_extent`
+#### `test_data_has_format_1_with_file_and_window_keys`
 
-**Checks:** For a file within the point budget, `diagram_card`'s data has
-one lane set, not an envelope, with the extent of the whole file, and every
-window points to it with the given view.
+**Checks:** `diagram_card`'s data has `format == 1`, one file entry with
+the keys of section 4.1 (`name`, `duration_s`, `num_blocks`, `lanes`,
+`tables`), a `lanes` equal to `lane_meta(seq)`, a `duration_s` and
+`num_blocks` equal to `waveforms.duration_s(seq)` and
+`len(seq.block_events)`, each table entry with the keys `dtype`, `length`
+and `data`, and each window entry with the keys `label`, `file` and
+`view_ms`.
 
 **How:** The test builds a synthetic spin echo sequence and calls
-`diagram_card` with its `first_adc_window` and `full_window`. It checks that
-`data["lane_sets"]` has one entry, that its `envelope` is `False` and its
-`extent_ms` is `[0.0, duration_ms]`, that every window's `lane_set` is 0, and
-that each window's `view_ms` matches the given `TimeWindow`'s start and end
-in ms.
+`diagram_card` with its `first_adc_window` and `full_window`, then checks
+the key sets and values of `card.data` and of its one file and its windows
+directly against `diagram_data.lane_meta`, `waveforms.duration_s` and
+`seq.block_events`.
 
 **Assumptions:** None.
 
-#### `test_over_budget_file_gets_one_lane_set_per_window`
+#### `test_tables_decode_to_diagram_tables`
 
-**Checks:** A file over `point_budget` gets an envelope lane set for a
-window equal to the whole file (extent the whole file), and an exact lane
-set for a short window within the budget (extent equal to that window).
+**Checks:** A file entry's `tables`, decoded with `diagram_data.decode_tables`,
+equal `diagram_data.diagram_tables(seq)`: the same table names, the same
+dtype and the same values for each.
 
-**How:** The test builds a synthetic multi-TR gradient echo sequence, picks
-a `point_budget` below the whole file's `point_count` but above one TR's
-`point_count`, and calls `diagram_card` with `full_window` and a one-TR
-`TimeWindow`. It checks that there are two lane sets, that the full window's
-lane set has `envelope=True` and the whole file's extent, and that the short
-window's lane set has `envelope=False` and the window's own extent.
+**How:** The test builds a synthetic gradient echo sequence, calls
+`diagram_card` with its `full_window`, decodes the one file entry's
+`tables`, and compares each decoded array's dtype and values
+(`numpy.array_equal`) against `diagram_tables(seq)`'s own arrays.
 
 **Assumptions:** None.
 
-#### `test_two_files_prefix_button_text_with_the_file_name`
+#### `test_two_files_give_two_file_entries_and_names_in_button_texts`
 
-**Checks:** With two files, each button's text starts with its file's name.
+**Checks:** With two files, each used by one window, `data["files"]` has
+two entries in the order in which the windows first use them (here the
+`seqs` order), and each button's text starts with its file's name.
 
 **How:** The test builds two named sequences and one `full_window` for
-each, calls `diagram_card`, and checks that `"a.seq: Full sequence"` and
-`"b.seq: Full sequence"` both appear in `body_html`.
+each, calls `diagram_card`, and checks `data["files"]`'s names and that
+`"a.seq: Full sequence"` and `"b.seq: Full sequence"` both appear in
+`body_html`.
+
+**Assumptions:** None.
+
+#### `test_a_window_of_a_file_with_no_other_window_adds_that_file`
+
+**Checks:** A window of a file that no other window uses still adds that
+file to `data["files"]`; a file in `seqs` with no window at all is not in
+`data["files"]`; and each window's `file` index points at the right entry.
+
+**How:** The test builds three named sequences, `a.seq`, `b.seq` and
+`c.seq`, and calls `diagram_card` with one window each for `c.seq` and
+`a.seq` only (`b.seq` gets none). It checks `data["files"]` has exactly two
+entries, with the names `{"a.seq", "c.seq"}`, and that each window's `file`
+index, looked up by the window's label prefix (`"c.seq:"`, `"a.seq:"`),
+names the file with the matching file name (so a file's position in
+`data["files"]` — its order of first use — is checked against the window
+that should point at it, not assumed).
 
 **Assumptions:** None.
 
 #### `test_ids_start_with_the_given_card_id`
 
 **Checks:** With a non-default `card_id`, the card's own id and the ids of
-its SVG, chart and tooltip elements all start with it.
+its SVG, chart, tooltip and status-line elements all start with it.
 
 **How:** The test calls `diagram_card` with `card_id="my-diagram"` and
 checks that `card.id` is `"my-diagram"` and that `body_html` has
-`id="my-diagram-diagram"`, `id="my-diagram-chart"` and
-`id="my-diagram-tip"`.
+`id="my-diagram-diagram"`, `id="my-diagram-chart"`, `id="my-diagram-tip"`
+and `id="my-diagram-mode"`.
 
 **Assumptions:** None.
 
@@ -2720,13 +2676,28 @@ before its `start_s` and expects `ValueError`.
 
 **Assumptions:** None.
 
-#### `test_render_page_includes_diagram_script_once`
+#### `test_render_page_includes_diagram_and_seq_lanes_scripts_once`
 
-**Checks:** `render_page` includes the diagram card script exactly once.
+**Checks:** `render_page` includes the diagram card script and
+`assets/seq_lanes.js` exactly once each.
 
 **How:** The test builds a diagram card, renders it with `render_page`, and
 checks that the page has exactly one
-`PulseqReport.registerCard("diagram"` call.
+`PulseqReport.registerCard("diagram"` call and exactly one `const SeqLanes`
+(the top of `seq_lanes.js`).
+
+**Assumptions:** None.
+
+#### `test_no_envelope_note_and_status_line_is_present`
+
+**Checks:** The card's body has no envelope note (removed with the lane
+sets and the point budget) and has the status-line element
+`{card_id}-mode` that `assets/cards/diagram.js` writes the "Exact
+waveform."/"Minimum and maximum..." text into.
+
+**How:** The test builds a diagram card and checks that `"too many"` and
+`"envelope"` do not appear in `body_html`, and that `id="diagram-mode"` and
+`aria-live="polite"` do.
 
 **Assumptions:** None.
 
@@ -3373,6 +3344,26 @@ which covers bin 5 along with the rest.
 
 **Assumptions:** None beyond the file's assumptions.
 
+#### `test_min_max_lanes_edge_values_follow_the_last_of_repeated_point_times`
+
+**Checks:** When two points of a lane have the same time, an edge value
+after them interpolates from the last of them, and an edge value before
+them interpolates to the first of them, as the polyline does. A pypulseq RF
+magnitude event always ends with two such points (the last sample, then the
+zero pad at `rt[-1]`), so without this rule, each bin in the gap after a
+pulse gets a value near the pulse's last sample instead of 0.
+
+**How:** `buildRepeatedTimeModel` has two RF pulses with an empty 4 ms
+block between them. The first pulse ends with (0.9 ms, 3) then (0.9 ms, 0).
+The second, a block pulse, starts with (5.0 ms, 0) then (5.0 ms, 4). The
+test calls `minMaxLanes` on the `rf_mag` lane with 5 bins over the whole
+file (edges at 1.2, 2.4, 3.6 and 4.8 ms, all in the gap and none on a
+repeated time). It checks that bins 1 to 3, which hold no point, are
+exactly `[0, 0]`, that bin 0 is `[0, 5]`, and that every bin matches
+`bruteForceLineWant` (`lineLaneProblems`).
+
+**Assumptions:** None beyond the file's assumptions.
+
 #### `test_min_max_lanes_rf_phase_gap_splits_into_two_segments`
 
 **Checks:** A gap between two RF pulses (a stretch of bins with no phase
@@ -3435,7 +3426,102 @@ function under test elsewhere in `seq_lanes.js` doing the addition section
 
 ### 2.20 Sequence lanes against Python (`test_seq_lanes_golden.py`)
 
-Phase 4 of `docs/plans/diagram-event-table.md` adds the entries.
+`test_seq_lanes_golden.py` is the golden test of task 4.4 of
+`docs/plans/diagram-event-table.md`: it checks that `SeqLanes`
+(`assets/seq_lanes.js`), run through Node on one sequence's real
+`diagram_tables`, gives exactly the same lanes as a Python reference built
+straight from `waveforms._events_in_range`'s unrounded per-block arrays —
+not from `diagram_data.py` or `seq_lanes.js` itself, so a bug shared between
+the tables and the JavaScript would not pass this test by accident.
+`tests/js/golden_seq_lanes.js` is the Node half: given a JSON file with one
+file's encoded tables, its lane metadata, and a list of `exact` or `minmax`
+queries, it decodes the tables, calls `SeqLanes.decode` once, answers each
+query with `SeqLanes.exactLanes` or `SeqLanes.minMaxLanes`, and writes the
+results as JSON. It is not named `test_*.js`, so `node --test` does not try
+to run it on its own; `test_seq_lanes_golden.py` runs it with
+`subprocess.run`.
+
+For the exact view, every point must be equal to the reference, with `==`
+and no tolerance: the plan's design (section 2.7, item 3) makes the browser
+and Python compute each point time with the same float64 operations in the
+same order, precisely so this comparison can require bit-for-bit equality.
+For the min/max view, a bin's minimum or maximum that a raw point already
+reaches must also match exactly; one that only a bin-edge interpolation
+reaches (`numpy.interp`, called directly, not reimplemented) is compared
+with `math.isclose` at a relative tolerance of 1e-12, as the plan allows
+(task 4.4, item 2), because `SeqLanes` and the Python reference reach that
+value by different sequences of floating-point operations.
+
+#### `test_seq_lanes_exact_and_minmax_views_match_the_python_reference`
+
+**Checks:** For the synthetic spin echo, gradient echo (the default 4 TRs,
+600 TRs so the tables cross two 1024-block checkpoints, and 10 TRs, which
+carries a "TR" definition), arbitrary-gradient and empty sequences,
+`SeqLanes.exactLanes` and `SeqLanes.minMaxLanes` give the same lanes as the
+Python reference, for several queries of each kind. It also checks that
+`SeqLanes.decode`'s `durationS` equals `waveforms.duration_s(seq)` exactly,
+and, for every sequence with at least one RF, gradient or ADC event, that
+the whole-file exact lanes, rounded the way `markup._points` rounds them,
+equal `waveforms.file_lanes(seq)` (with the RF phase lane's empty segments,
+one for each zero-amplitude pulse, removed, since `exactLanes` never emits
+one for such a pulse) — the link between this golden test and the
+vb-pulseq parity that `file_lanes` itself keeps.
+
+**How:** For each sequence, the test builds its own Python reference (the
+whole-file polyline of each line lane, as `[(0, 0), *event points,
+(duration, 0)]`; the phase points of each RF pulse that has at least one;
+each ADC window), all as unrounded floats from `_events_in_range`. It then
+builds a set of `exact` queries — the whole file; one block with an event;
+a range that cuts from partway through one event block into partway
+through another; a range inside a block with no event, or, when the
+sequence has none (for example `spin_echo_sequence`, whose blocks all carry
+an event), the widest gap between two consecutive points of some line
+lane's polyline; a range near the end; and one past the end — and a set of
+`minmax` queries (the whole file at 1, 7 and 800 bins; the cutting range at
+50 bins; and one RF pulse's span, or the first event block's span for a
+sequence with no RF, at 2000 bins, fine enough to leave most bins with no
+point of their own). The empty sequence gets the two ranges the plan lists
+for it instead (`[0, 0]` and `[0, min(1e-3, duration)]`), and only the
+second as a `minmax` query, at 3 bins; because that set has no whole-file
+query, the file_lanes link is not checked for it. All the queries of one
+sequence go to `golden_seq_lanes.js` in a single Node process. For each
+`exact` result, the test rebuilds the expected segment or window with the
+same restriction rule as `SeqLanes.exactLanes` (task 4.4, item 1) and
+compares it to the JSON result field by field, `==` throughout. For each
+`minmax` result, it rebuilds each bin's expected minimum and maximum
+(task 4.4, item 2): the points of the reference polyline (or, for the RF
+phase lane, of the pulses' own points) that fall in the bin, by
+`numpy.searchsorted` over the same array `numpy.interp` reads, plus
+`numpy.interp` at the bin's two edges; a value is compared exactly when a
+point in the bin already reaches it (it is `<=`, or `>=`, both edge
+values), and with `math.isclose` (`rel_tol=1e-12`,
+`abs_tol=1e-12 * lane_peak`) otherwise.
+
+**Assumptions:**
+
+- Two points of a lane can have the same time: each pypulseq RF
+  magnitude event ends with the last sample and then the zero pad at the
+  same offset. `numpy.interp` resolves such a tie to the last of the points,
+  and so does `SeqLanes` (`_narrowNeighbours` and `_edgeValue` in
+  `assets/seq_lanes.js`). This test found that `SeqLanes` first kept the
+  first of the points; phase 4 fixed that, and
+  `test_min_max_lanes_edge_values_follow_the_last_of_repeated_point_times`
+  (section 2.19) checks it on a small hand-made model.
+- `node` must be on `PATH` (both devShells have it); if it is not, the test
+  fails with a message naming the missing dependency, rather than skipping.
+- The reference and `SeqLanes.minMaxLanes` are not required to reach an
+  edge value by the same floating-point operations, so an interpolated
+  value gets `math.isclose` rather than `==`; every other numeric
+  comparison in this file — the exact view's points and windows, a
+  min/max bin's point-sourced extreme, bin-edge times, and the point and
+  segment counts used to align the two sides — is exact, because both
+  sides compute those from the same inputs by the same formula, or because
+  they are plain counts.
+- The "range inside a block with no event" and "one RF pulse's span" query
+  builders read `seq.block_events` directly (as `diagram_data.py` does) to
+  find an event or a pure delay block, rather than reusing `_reference_data`
+  for that purpose, so the choice of query does not depend on the same
+  code path the assertions then check.
 
 ### 2.21 Sequence extensions (`test_extensions.py`)
 
@@ -3521,24 +3607,30 @@ for `NotImplementedError`.
 
 #### `test_gradient_cards_refuse_rotations`
 
-**Checks:** `spectrum_card`, `pns_card` and `gradient_limits_card` each
-raise `NotImplementedError` for a sequence with a rotation library.
+**Checks:** `spectrum_card`, `pns_card`, `gradient_limits_card` and
+`diagram_card` each raise `NotImplementedError` for a sequence with a
+rotation library.
 
-**How:** The test is parametrized over the three cards, each called through
-a small lambda that wraps the sequence in the `NamedSequence` (and list)
-form that card expects. For each, it builds a `gre_sequence` with a
-non-empty `rotation_library` and calls the card inside `pytest.raises`.
+**How:** The test is parametrized over the four cards, each called through
+a small lambda or helper function that wraps the sequence in the
+`NamedSequence` (and list) form that card expects; `diagram_card` also
+needs a window, so its helper gives it `waveforms.full_window`. For each,
+it builds a `gre_sequence` with a non-empty `rotation_library` and calls
+the card inside `pytest.raises`.
 
 **Assumptions:** None.
 
 #### `test_multi_file_cards_refuse_a_rotation_in_any_file`
 
-**Checks:** `spectrum_card` and `gradient_limits_card` raise
-`NotImplementedError` when any one of several files has a rotation, not
-only when the first one does.
+**Checks:** `spectrum_card`, `gradient_limits_card` and `diagram_card`
+raise `NotImplementedError` when any one of several files has a rotation,
+not only when the first one does.
 
-**How:** The test is parametrized over the two cards. For each, it calls
-the card with two named sequences, a plain `gre_sequence` first and a
-`gre_sequence` with a rotation library second, inside `pytest.raises`.
+**How:** The test is parametrized over the three cards (`diagram_card`
+through a helper that gives it one window, `waveforms.full_window`, on the
+first file only, so the file with the rotation is checked with no window
+of its own). For each, it calls the card with two named sequences, a plain
+`gre_sequence` first and a `gre_sequence` with a rotation library second,
+inside `pytest.raises`.
 
 **Assumptions:** None.

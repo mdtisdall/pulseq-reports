@@ -1,6 +1,5 @@
 import math
 
-import numpy as np
 import pypulseq as pp
 import pytest
 from synthetic import DWELL, NUM_SAMPLES, SYSTEM, gre_sequence, spin_echo_sequence
@@ -113,87 +112,6 @@ def test_range_that_cuts_a_block_includes_it_whole_and_pads_at_its_own_edges():
     assert gy_segment[-1][0] == pytest.approx(crusher_end_ms, abs=1e-4)
     assert gy_segment[-1][0] > end_s * 1e3
     assert gy_segment[-1][1] == 0.0
-
-
-def test_point_count_matches_file_lanes_point_count():
-    """`point_count` (computed without building the lanes) equals the total number of
-    points that `file_lanes` gives, over all its lanes, with and without a range: each
-    line lane's points, plus 2 for each ADC window."""
-    seq = gre_sequence(num_trs=3, tr=20e-3)
-    duration_s = waveforms.duration_s(seq)
-
-    def expected(start_s, end_s):
-        lanes = waveforms.file_lanes(seq, start_s, end_s)
-        total = sum(
-            len(segment)
-            for lane in lanes
-            if lane.get("kind") != "gate"
-            for segment in lane["segments"]
-        )
-        (adc_lane,) = [lane for lane in lanes if lane["id"] == "adc"]
-        return total + 2 * len(adc_lane["windows"])
-
-    for start_s, end_s in [(None, None), (duration_s * 0.25, duration_s * 0.6)]:
-        assert waveforms.point_count(seq, start_s, end_s) == expected(start_s, end_s)
-
-
-def test_envelope_bin_min_and_max_match_dense_interpolation():
-    """Each envelope bin's minimum and maximum match a dense `numpy.interp` of the
-    exact `file_lanes` points, sampled many times inside that bin."""
-    seq = gre_sequence(num_trs=3, tr=20e-3)
-    bins = 40
-    total_ms = waveforms.duration_s(seq) * 1e3
-    edges = np.linspace(0.0, total_ms, bins + 1)
-    exact_by_id = {lane["id"]: lane for lane in waveforms.file_lanes(seq)}
-    envelope_by_id = {lane["id"]: lane for lane in waveforms.file_envelope(seq, bins)}
-
-    for lane_id in ("rf_mag", "gx", "gy", "gz"):
-        (segment,) = exact_by_id[lane_id]["segments"]
-        ts = np.array([p[0] for p in segment])
-        vs = np.array([p[1] for p in segment])
-        env_segments = envelope_by_id[lane_id]["segments"]
-        assert env_segments  # the sequence has events on every line lane
-        (points,) = env_segments
-        for b in range(bins):
-            # The exact vertices inside the bin are added to the dense grid, because a
-            # narrow spike (for example a trapezoid with no flat top) reaches its peak
-            # at a single instant that an evenly spaced grid alone can miss.
-            inside = ts[(ts >= edges[b]) & (ts <= edges[b + 1])]
-            dense_t = np.union1d(np.linspace(edges[b], edges[b + 1], 2000), inside)
-            dense_v = np.interp(dense_t, ts, vs, left=0.0, right=0.0)
-            got_lo, got_hi = points[2 * b][1], points[2 * b + 1][1]
-            assert got_lo == pytest.approx(dense_v.min(), abs=2e-4)
-            assert got_hi == pytest.approx(dense_v.max(), abs=2e-4)
-
-
-def test_envelope_merges_adc_windows_closer_than_one_bin():
-    seq = gre_sequence(num_trs=3, tr=8e-3)
-    exact_windows = [
-        w for lane in waveforms.file_lanes(seq) if lane["id"] == "adc" for w in lane["windows"]
-    ]
-    assert len(exact_windows) == 3  # one ADC window for each TR
-
-    # A single bin over the whole file: the gap between any two ADC windows is smaller
-    # than the bin width, so all three windows merge into one.
-    (adc_lane,) = [lane for lane in waveforms.file_envelope(seq, 1) if lane["id"] == "adc"]
-    assert len(adc_lane["windows"]) == 1
-    (merged,) = adc_lane["windows"]
-    assert merged[0] == pytest.approx(exact_windows[0][0], abs=1e-3)
-    assert merged[1] == pytest.approx(exact_windows[-1][1], abs=1e-3)
-    assert "merged" in adc_lane["note"]
-
-
-def test_envelope_drops_rf_phase_and_has_note_fields():
-    seq = gre_sequence(num_trs=2, tr=20e-3)
-    lanes = waveforms.file_envelope(seq, 5)
-    by_id = {lane["id"]: lane for lane in lanes}
-    assert "rf_phase" not in by_id
-    assert set(by_id) == {"rf_mag", "adc", "gx", "gy", "gz"}
-    assert "RF phase is not shown" in by_id["rf_mag"]["note"]
-    for lane_id in ("gx", "gy", "gz"):
-        assert "Minimum and maximum" in by_id[lane_id]["note"]
-        assert "RF phase" not in by_id[lane_id]["note"]
-    assert "merged" in by_id["adc"]["note"]
 
 
 def test_first_adc_window_label_and_times():
