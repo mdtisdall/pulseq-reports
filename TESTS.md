@@ -3439,4 +3439,106 @@ Phase 4 of `docs/plans/diagram-event-table.md` adds the entries.
 
 ### 2.21 Sequence extensions (`test_extensions.py`)
 
-Phase 6 of `docs/plans/diagram-event-table.md` adds the entries.
+`test_extensions.py` tests `extensions.refuse_rotations`, the guard that
+`cards/spectrum.py`, `cards/pns.py` and `cards/gradient_limits.py` call
+before they read any gradient. Task 6.1 of
+`docs/plans/diagram-event-table.md` found that pypulseq 1.5.0.post1 cannot
+make a rotation and that its `Sequence.read` raises `ValueError` for a
+`.seq` file with a rotation section. This file therefore makes its own
+rotation sequences by hand, the way pypulseq draft PR #372 stores a
+rotation: a `rotation_library` event library on the `pp.Sequence`, a
+`"ROTATIONS"` entry in `seq.extension_string_idx`, or, for the one test that
+checks a `.seq` file directly, an `[EXTENSIONS]` section and an `extension
+ROTATIONS` section written into the file text after `pp.Sequence.write`.
+
+#### `test_refuse_rotations_accepts_synthetic_sequences`
+
+**Checks:** `refuse_rotations` raises nothing for each synthetic sequence
+builder in `tests/synthetic.py`: none of them uses the rotation extension.
+
+**How:** The test is parametrized over `spin_echo_sequence`, `gre_sequence`,
+`arbitrary_gradient_sequence` and `empty_sequence`. For each, it builds the
+sequence and calls `refuse_rotations` on it.
+
+**Assumptions:** None.
+
+#### `test_refuse_rotations_raises_for_a_rotation_library`
+
+**Checks:** `refuse_rotations` raises `NotImplementedError`, with "rotation
+extension" in the message, for a sequence with a non-empty
+`rotation_library`.
+
+**How:** The test builds a `gre_sequence`, sets its `rotation_library` to a
+new `EventLibrary` holding one scalar-first unit quaternion (the format PR
+#372 uses), and calls `refuse_rotations` inside `pytest.raises`.
+
+**Assumptions:** None.
+
+#### `test_refuse_rotations_raises_for_a_rotations_extension_type`
+
+**Checks:** `refuse_rotations` raises `NotImplementedError`, with "rotation
+extension" in the message, for a sequence that has registered the
+`"ROTATIONS"` extension type.
+
+**How:** The test builds a `gre_sequence`, calls
+`seq.set_extension_string_ID("ROTATIONS", 1)` (as PR #372's `Sequence.read`
+does while reading a file with a rotation section), and calls
+`refuse_rotations` inside `pytest.raises`.
+
+**Assumptions:** None.
+
+#### `test_refuse_rotations_ignores_an_empty_rotation_library`
+
+**Checks:** A `rotation_library` attribute that exists but holds no data is
+not a rotation: `refuse_rotations` raises nothing.
+
+**How:** The test builds a `gre_sequence`, sets its `rotation_library` to a
+new, empty `EventLibrary`, and calls `refuse_rotations` on it.
+
+**Assumptions:** None.
+
+#### `test_a_rotation_file_never_reaches_a_card_unrotated`
+
+**Checks:** A `.seq` file with a rotation section never reaches a card with
+its rotation silently dropped.
+
+**How:** The test writes a `gre_sequence` to a file, then edits the file
+text to add a rotation: an `[EXTENSIONS]` section, an `extension ROTATIONS`
+section with one quaternion, and the second block's extension list id set
+to point at it. It reads the file with a fresh `pp.Sequence`. With pypulseq
+1.5.0.post1, `Sequence.read` raises `ValueError`, and the test checks that
+"ROTATIONS" is in the error message. If `Sequence.read` raises nothing (a
+future pypulseq with rotation support), the test instead calls
+`refuse_rotations` on the sequence `read` returned, inside `pytest.raises`
+for `NotImplementedError`.
+
+**Assumptions:**
+
+- With pypulseq 1.5.0.post1, only the `Sequence.read` branch of this test
+  runs. The `refuse_rotations` branch is unexercised until a pypulseq
+  version can read the file, but it protects against a version that reads
+  the rotation and drops it silently.
+
+#### `test_gradient_cards_refuse_rotations`
+
+**Checks:** `spectrum_card`, `pns_card` and `gradient_limits_card` each
+raise `NotImplementedError` for a sequence with a rotation library.
+
+**How:** The test is parametrized over the three cards, each called through
+a small lambda that wraps the sequence in the `NamedSequence` (and list)
+form that card expects. For each, it builds a `gre_sequence` with a
+non-empty `rotation_library` and calls the card inside `pytest.raises`.
+
+**Assumptions:** None.
+
+#### `test_multi_file_cards_refuse_a_rotation_in_any_file`
+
+**Checks:** `spectrum_card` and `gradient_limits_card` raise
+`NotImplementedError` when any one of several files has a rotation, not
+only when the first one does.
+
+**How:** The test is parametrized over the two cards. For each, it calls
+the card with two named sequences, a plain `gre_sequence` first and a
+`gre_sequence` with a rotation library second, inside `pytest.raises`.
+
+**Assumptions:** None.

@@ -5,6 +5,7 @@ import html
 import math
 from collections.abc import Sequence
 
+from ..extensions import refuse_rotations
 from ..grad_limits import GradientLimits, gradient_limits
 from ..markup import _fmt, _table
 from ..page import Card
@@ -85,7 +86,12 @@ def gradient_limits_card(
     `window=None`, there is one RMS column, over the whole file.
 
     No chart: `data=None` and `script=None`.
+
+    Raises `NotImplementedError` for a sequence with the rotation extension
+    (`extensions.refuse_rotations`).
     """
+    for ns in seqs:
+        refuse_rotations(ns.seq)
     multi = len(seqs) > 1
     headers = (["File"] if multi else []) + [
         "Axis",
