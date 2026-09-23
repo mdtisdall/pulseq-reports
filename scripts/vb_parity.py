@@ -20,6 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import vb_pulseq
 from vb_pulseq import report as vb_report
 from vb_pulseq.report import diagram as vb_diagram
@@ -27,7 +28,7 @@ from vb_pulseq.report import exposure_card as vb_exposure
 from vb_pulseq.report import pns_card as vb_pns
 from vb_pulseq.report import spectrum_card as vb_spectrum
 
-from pulseq_reports import pns, waveforms
+from pulseq_reports import diagram_data, pns, waveforms
 from pulseq_reports.cards import blocks, definitions, diagram, rf_exposure, spectrum, timing
 from pulseq_reports.cards import pns as pns_cards
 from pulseq_reports.seq_utils import NamedSequence
@@ -54,6 +55,19 @@ ACCEPTED = {
             "the PNS data (peak_tr_ms). This script checks that the window times are equal."
         ),
         "The ids start with the card id.",
+        (
+            "The card data is the block and event tables and the lane metadata (format 1), "
+            "not lanes: the browser draws the lanes from them with SeqLanes. This script "
+            "rebuilds the whole-file lanes from the tables (as diagram_data.decode_tables "
+            "gives them) with numpy, and compares that against vb's lanes, instead of "
+            "comparing lanes directly."
+        ),
+        (
+            "In the browser, a view with more than 20,000 points shows the minimum and the "
+            "maximum of each lane in each time bin instead of every point, with a status "
+            "line under the chart saying which. This script only checks the whole-file "
+            "exact lanes, which vb-pulseq also sends in full."
+        ),
     ],
     "gradient spectrum": [
         "The ids are gradient-spectrum-chart, -diagram and -tip, not spectrum-*.",
@@ -118,6 +132,101 @@ def vb_template_section(page: str, start: str, end: str) -> str:
     return page[begin : page.index(end, begin)]
 
 
+def _rebuild_file_lanes(tables: dict[str, np.ndarray]) -> dict[str, list]:
+    """Rebuild the whole-file lanes from decoded diagram tables (section 4.2 and 4.3 of
+    docs/plans/diagram-event-table.md), in the shape of `waveforms.file_lanes`: each
+    line lane (rf_mag, gx, gy, gz) is one segment `[[0.0, 0.0], *points, [end_ms, 0.0]]`;
+    the RF phase lane has one segment for each block with an RF event, an empty segment
+    when that event has no phase point (as vb-pulseq and `file_lanes` do); the ADC lane
+    is its list of windows. Values are rounded as `markup._points` rounds them:
+    `round(t_ms, 4)` and `round(v, 4)` (phase: `round(v, 3)`); ADC window ends and the
+    line lanes' end point use `round(x, 4)`.
+
+    Block starts are the plain sequential sum `start += duration` in play order from
+    0.0, not the tables' own checkpoints: this script only needs the whole file, and
+    `tests/test_diagram_data.py` already checks the checkpoint reconstruction.
+
+    Returns `{"rf_mag": [[...]], "rf_phase": [[...], [], ...], "adc": [[a0, a1], ...],
+    "gx": [[...]], "gy": [[...]], "gz": [[...]]}` — the "segments" or "windows" value of
+    each lane in `file_lanes`/vb-pulseq order.
+    """
+    duration_index = tables["duration_index"].astype(np.int64)
+    durations = tables["durations"]
+    n = duration_index.size
+    starts = np.empty(n, dtype=np.float64)
+    t = 0.0
+    for i in range(n):
+        starts[i] = t
+        t += float(durations[duration_index[i]])
+    end_ms = round(t * 1e3, 4)
+
+    def line_points(index_col, delay_col, n_col, offset_at_col, at_col, offset_pool, value_pool):
+        idx = tables[index_col]
+        points = []
+        for i in range(n):
+            k = int(idx[i])
+            if not k:
+                continue
+            k -= 1
+            t0 = starts[i] + tables[delay_col][k]
+            length = int(tables[n_col][k])
+            offset_at = int(tables[offset_at_col][k])
+            at = int(tables[at_col][k])
+            offsets = tables[offset_pool][offset_at : offset_at + length]
+            values = tables[value_pool][at : at + length]
+            for off, v in zip(offsets, values):
+                points.append([round((t0 + off) * 1e3, 4), round(float(v), 4)])
+        return [[[0.0, 0.0], *points, [end_ms, 0.0]]]
+
+    rf_phase_segments = []
+    rf_idx = tables["rf"]
+    for i in range(n):
+        k = int(rf_idx[i])
+        if not k:
+            continue
+        k -= 1
+        length = int(tables["rf_phase_n"][k])
+        if length == 0:
+            rf_phase_segments.append([])
+            continue
+        t0 = starts[i] + tables["rf_delay"][k]
+        offset_at = int(tables["rf_phase_offset_at"][k])
+        at = int(tables["rf_phase_at"][k])
+        offsets = tables["rf_phase_offset"][offset_at : offset_at + length]
+        values = tables["rf_phase"][at : at + length]
+        rf_phase_segments.append(
+            [[round((t0 + off) * 1e3, 4), round(float(v), 3)] for off, v in zip(offsets, values)]
+        )
+
+    adc_windows = []
+    adc_idx = tables["adc"]
+    for i in range(n):
+        k = int(adc_idx[i])
+        if not k:
+            continue
+        k -= 1
+        a0 = starts[i] + tables["adc_delay"][k]
+        a1 = a0 + tables["adc_length"][k]
+        adc_windows.append([round(a0 * 1e3, 4), round(a1 * 1e3, 4)])
+
+    return {
+        "rf_mag": line_points(
+            "rf", "rf_delay", "rf_mag_n", "rf_mag_offset_at", "rf_mag_at", "rf_mag_offset", "rf_mag"
+        ),
+        "rf_phase": rf_phase_segments,
+        "adc": adc_windows,
+        "gx": line_points(
+            "gx", "grad_delay", "grad_n", "grad_offset_at", "grad_at", "grad_offset", "grad_value"
+        ),
+        "gy": line_points(
+            "gy", "grad_delay", "grad_n", "grad_offset_at", "grad_at", "grad_offset", "grad_value"
+        ),
+        "gz": line_points(
+            "gz", "grad_delay", "grad_n", "grad_offset_at", "grad_at", "grad_offset", "grad_value"
+        ),
+    }
+
+
 def check_sequence(name: str) -> bool:
     seq = vb_report.SEQUENCES[name]()
     named = [NamedSequence(name, seq)]
@@ -134,17 +243,25 @@ def check_sequence(name: str) -> bool:
         window = None if peak_time is None else pns.peak_tr_window(seq, peak_time / 1e3)
         lib_peak_tr = None if window is None else [round(t * 1e3, 4) for t in window]
         compare(vb_pns_data["peak_tr_ms"], lib_peak_tr)
-        # vb sends every point of the file. The library does that for a file within the
-        # point budget, so the card is checked with a budget of the file's points.
-        count = waveforms.point_count(seq)
-        card = diagram.diagram_card(named, [first, full], point_budget=count)
-        compare(vb_data["lanes"], card.data["lane_sets"][0]["lanes"])
-        if count > waveforms.DIAGRAM_POINT_BUDGET:
-            notes.append(
-                f"diagram: the file has {count} points, more than the default budget "
-                f"({waveforms.DIAGRAM_POINT_BUDGET}). With the default, the card sends an "
-                "envelope for the full-file view; pass point_budget to keep the vb page."
-            )
+
+        # The card data is the block and event tables and the lane metadata (format 1),
+        # not lanes (ACCEPTED["diagram"]). Check the lane metadata, then rebuild the
+        # whole-file lanes from the tables and compare those against vb's lanes.
+        card = diagram.diagram_card(named, [first, full])
+        file_entry = card.data["files"][0]
+        vb_lanes = vb_data["lanes"]
+        compare(
+            [
+                {k: v for k, v in lane.items() if k not in ("segments", "windows")}
+                for lane in vb_lanes
+            ],
+            file_entry["lanes"],
+        )
+        tables = diagram_data.decode_tables(file_entry["tables"])
+        rebuilt = _rebuild_file_lanes(tables)
+        for lane in vb_lanes:
+            key = "windows" if lane["kind"] == "gate" else "segments"
+            compare(lane[key], rebuilt[lane["id"]])
 
     def blocks_check():
         rows, total = waveforms.block_rows(seq)

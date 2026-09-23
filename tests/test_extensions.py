@@ -8,11 +8,13 @@ from synthetic import (
     spin_echo_sequence,
 )
 
+from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.seq_utils import NamedSequence
+from pulseq_reports.waveforms import full_window
 
 # A scalar-first unit quaternion (angle 45 deg about z): q0=cos(22.5deg), qz=sin(22.5deg).
 _QUATERNION = (0.9238795325112867, 0.0, 0.0, 0.3826834323650898)
@@ -118,6 +120,15 @@ def test_a_rotation_file_never_reaches_a_card_unrotated(tmp_path):
             refuse_rotations(seq)
 
 
+def _diagram_card_single(seq):
+    named = NamedSequence("rot", seq)
+    return diagram_card([named], [full_window([named])])
+
+
+def _diagram_card_multi(seqs):
+    return diagram_card(seqs, [full_window(seqs, 0)])
+
+
 @pytest.mark.parametrize(
     "call_card",
     [
@@ -127,20 +138,22 @@ def test_a_rotation_file_never_reaches_a_card_unrotated(tmp_path):
             lambda seq: gradient_limits_card([NamedSequence("rot", seq)]),
             id="gradient_limits_card",
         ),
+        pytest.param(_diagram_card_single, id="diagram_card"),
     ],
 )
 def test_gradient_cards_refuse_rotations(call_card):
-    """`spectrum_card`, `pns_card` and `gradient_limits_card` each raise
-    `NotImplementedError` for a sequence with a rotation library."""
+    """`spectrum_card`, `pns_card`, `gradient_limits_card` and `diagram_card` each
+    raise `NotImplementedError` for a sequence with a rotation library."""
     seq = _with_rotation_library()
     with pytest.raises(NotImplementedError, match="rotation extension"):
         call_card(seq)
 
 
-@pytest.mark.parametrize("call_card", [spectrum_card, gradient_limits_card])
+@pytest.mark.parametrize("call_card", [spectrum_card, gradient_limits_card, _diagram_card_multi])
 def test_multi_file_cards_refuse_a_rotation_in_any_file(call_card):
-    """`spectrum_card` and `gradient_limits_card` raise `NotImplementedError` when any
-    one of several files has a rotation, not only when the first one does."""
+    """`spectrum_card`, `gradient_limits_card` and `diagram_card` raise
+    `NotImplementedError` when any one of several files has a rotation, not only when
+    the first one does."""
     seqs = [NamedSequence("a", gre_sequence()), NamedSequence("b", _with_rotation_library())]
     with pytest.raises(NotImplementedError, match="rotation extension"):
         call_card(seqs)

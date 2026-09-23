@@ -144,15 +144,26 @@ files" table that treats the files as played one after another with no gap.
 card for each file it should cover, or none. Each card on a page needs its own id,
 so give the PNS cards different ids, for example `pns_card(named, card_id=f"pns-{i}")`.
 
-`diagram_card` sends exact waveform points for a file up to `point_budget`
-points (200,000 by default, `waveforms.DIAGRAM_POINT_BUDGET`). A file over
-that budget does not get an exact whole-file view: instead, the full-file
-window becomes a minimum/maximum envelope in equal time bins, without the RF
-phase lane, with close ADC windows merged. A smaller window of the same file
-still gets exact points, unless that window is itself over the budget, in
-which case it also becomes an envelope over its own range. The card adds a
-note that names the files this happened to. Nothing in the caller's code
-needs to change for this: `diagram_card` decides per file and per window.
+`diagram_card` sends the compressed block and event tables of each file that
+at least one window uses, not expanded points. The page stays one
+self-contained file. Its size depends on the number of blocks and of
+distinct events, not on the number of waveform points.
+
+In the browser, each view (a zoom, a pan, or a window button) shows the
+exact waveform when that view has at most 20,000 points
+(`SeqLanes.EXACT_POINT_LIMIT`). A view with more points shows the minimum and
+the maximum of each lane in each of the chart's time bins instead, including
+the RF phase lane; no peak and no ADC window is lost. A status line under the
+chart says which of the two the current view shows. Windows are only
+shortcut buttons: they do not change what a view shows, only where it starts.
+
+This card works for a file of up to 10^7 blocks. The other cards (PNS, RF
+exposure, gradient limits, gradient spectrum) are not built for that size
+yet.
+
+The diagram card needs the browser's `DecompressionStream` with the "gzip"
+format: Chrome 80, Edge 80, Firefox 113, Safari 16.4 or later (MDN
+browser-compat-data, `api/DecompressionStream.json`, checked 2026-09-23).
 
 ## 4. Adding your own card
 
@@ -228,9 +239,10 @@ an id that starts with `section.id`, and scope any `querySelectorAll` for
 buttons or other controls to `section`, not to the whole document, so a
 second copy of the same card does not answer to the first one's controls.
 
-Script order on the page: `chart_math.js`, `lane_chart.js`, the library's
-own card scripts (each included once, by name, from `assets/cards/`), then
-`extra_scripts` in the order given, then `page.js`. `page.js` runs last and
+Script order on the page: `chart_math.js`, `lane_chart.js`, `seq_lanes.js`,
+the library's own card scripts (each included once, by name, from
+`assets/cards/`), then `extra_scripts` in the order given, then `page.js`.
+`page.js` runs last and
 calls each card's registered `init` function. `PulseqReport` (from
 `lane_chart.js`) is loaded before any `extra_scripts`, so a custom card
 script can call `PulseqReport.registerCard` and `PulseqReport.laneChart` at
@@ -290,7 +302,7 @@ one of:
 | `cards.spectrum.spectrum_card(seqs, resonances=PRISMA_AS82_RESONANCES, scanner_label=...)` | The gradient spectrum of each axis and their root-sum-of-squares, against a gradient coil's acoustic resonance bands. |
 | `cards.pns.pns_card(seq, gradient_asc=None)` | The SAFE-model PNS prediction over time for one sequence, with a "peak TR" view when the sequence has a `TR` definition and more than one TR. |
 | `cards.gradient_limits.gradient_limits_card(seqs, window=None, limits=None)` | Peak amplitude, peak slew rate and RMS amplitude of each logical axis and of the three-axis vector, as a percent of the hardware limits. |
-| `cards.diagram.diagram_card(seqs, windows, point_budget=DIAGRAM_POINT_BUDGET)` | RF magnitude and phase, the ADC gate, and Gx, Gy, Gz against time, with one button for each window. |
+| `cards.diagram.diagram_card(seqs, windows)` | RF magnitude and phase, the ADC gate, and Gx, Gy, Gz against time, with one button for each window. |
 | `cards.blocks.blocks_card(seqs, windows=None, max_rows=500)` | A collapsed, block-by-block table: block id, start, duration and events. |
 
 All eight functions take `card_id` with a default, so a page can hold two
@@ -317,7 +329,7 @@ data as vb-pulseq's own report; `scripts/vb_parity.py` checks this.
 
 The Pulseq rotation extension rotates the gradients of a block on the
 scanner. `pulseq-reports` does not support it yet: `spectrum_card`,
-`pns_card` and `gradient_limits_card` (and, later, the diagram card) raise
+`pns_card`, `gradient_limits_card` and `diagram_card` raise
 `NotImplementedError` for a sequence that uses it
 (`extensions.refuse_rotations`). The RF exposure, timing, definitions and
 block table cards do not use the gradients, so they accept a sequence with

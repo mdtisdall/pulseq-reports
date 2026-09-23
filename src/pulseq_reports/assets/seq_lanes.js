@@ -8,10 +8,9 @@
 // `windows`, section 4.1). `blockStart` and `blockAt` give block times
 // without ever building a start-time array of length N (section 4.5).
 // `exactLanes` and `pointsIn` give the exact view (section 4.4, item 1) and
-// its point count. The minimum/maximum view (`minMaxLanes`, `lanesFor`) and
-// the group tree of section 4.5 are added by a later task; `decode` already
-// computes the per-event minimum, maximum and point count that tree is
-// built on.
+// its point count. `minMaxLanes` gives the minimum/maximum view (section
+// 4.4, item 2), from the group tree of section 4.5 that `decode` builds, and
+// `lanesFor` chooses between the two views for each render (item 3).
 const SeqLanes = (() => {
   const EXACT_POINT_LIMIT = 20000;
   const CHECKPOINT_BLOCKS = 1024; // section 4.2: one checkpoint for each 1024 blocks
@@ -635,6 +634,16 @@ const SeqLanes = (() => {
   // the lane costs one read, and a block with one reads its points
   // straight out of the pools. The point time is `(start + delay) +
   // offset`, in that order, as everywhere else (section 4.3).
+  //
+  // "Last" and "first" are in polyline order, also when several points
+  // have the same time. A pypulseq RF magnitude event always ends with two
+  // such points (the last sample, then the zero pad at the same offset),
+  // and the polyline continues from the second one, so the point before
+  // `t` is the LAST point at the largest time <= t, and the point after it
+  // is the FIRST point at the smallest time >= t. The blocks are not
+  // scanned in play order (the block that holds `t` comes first), so a tie
+  // between blocks goes to the later block (before) or to the earlier
+  // block (after); inside a block, `p` runs in order.
   function _narrowNeighbours(cols, ev, i, start, t, state) {
     const k = cols.col[i];
     if (k === 0) return;
@@ -645,11 +654,13 @@ const SeqLanes = (() => {
     const oAt = ev.offsetAt[idx], vAt = ev.valueAt[idx];
     for (let p = 0; p < n; p++) {
       const time = base + ev.offset[oAt + p];
-      if (time <= t && (state.bt === null || time > state.bt)) {
-        state.bt = time; state.bv = ev.value[vAt + p];
+      if (time <= t && (state.bt === null || time > state.bt
+                        || (time === state.bt && i >= state.bi))) {
+        state.bt = time; state.bv = ev.value[vAt + p]; state.bi = i;
       }
-      if (time >= t && (state.at === null || time < state.at)) {
-        state.at = time; state.av = ev.value[vAt + p];
+      if (time >= t && (state.at === null || time < state.at
+                        || (time === state.at && i < state.ai))) {
+        state.at = time; state.av = ev.value[vAt + p]; state.ai = i;
       }
     }
   }
@@ -672,7 +683,7 @@ const SeqLanes = (() => {
     if (t <= 0 || t >= model.durationS) return 0;
     const tb = model.tables;
     const N = model.numBlocks;
-    const state = {bt: null, bv: 0, at: null, av: 0};
+    const state = {bt: null, bv: 0, bi: -1, at: null, av: 0, ai: -1};
     _narrowNeighbours(cols, ev, at, atStart, t, state);
     if (state.bt === null || state.at === null) {
       const g = Math.floor(at / GROUP_BLOCKS);
@@ -695,7 +706,9 @@ const SeqLanes = (() => {
     const lv = state.bt === null ? 0 : state.bv;
     const ht = state.at === null ? model.durationS : state.at;
     const hv = state.at === null ? 0 : state.av;
-    if (ht === lt) return hv;
+    // `t` is exactly on a point time. With several points at that time,
+    // `numpy.interp` gives the last of them, which is `lv`.
+    if (ht === lt) return lv;
     return lv + (hv - lv) / (ht - lt) * (t - lt);
   }
 
