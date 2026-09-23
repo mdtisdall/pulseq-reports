@@ -36,6 +36,30 @@ const ChartMath = (() => {
     return lane.fill;
   }
 
+  // Returns {min, max} of the minmax bin (section 4.4 item 2 of
+  // docs/plans/diagram-event-table.md) that holds t, for a lane with the key
+  // minmax: true. Such a lane's segments hold pairs of points (bin start,
+  // minimum), (bin centre, maximum), one pair for each bin that has a
+  // value. A bin's own right edge is not read from a following pair (there
+  // may be none, or it may belong to the next, unrelated bin across a gap);
+  // it is derived from the bin's own pair instead, as `2 * centre - start`,
+  // which is exact because centre is the midpoint of the bin. Returns null
+  // when t is not covered by any bin: a gap between two segments, for
+  // example an RF-phase pulse gap. A gate lane has no such gap; it is read
+  // with valueAt instead.
+  function minMaxAt(lane, t) {
+    for (const seg of lane.segments) {
+      for (let i = 0; i < seg.length; i += 2) {
+        const [start, min] = seg[i];
+        const [centre, max] = seg[i + 1];
+        const hasNext = i + 2 < seg.length;
+        const end = hasNext ? seg[i + 2][0] : 2 * centre - start;
+        if (t >= start && (hasNext ? t < end : t <= end)) return {min, max};
+      }
+    }
+    return null;
+  }
+
   // Returns the points of one segment that must actually be drawn for the
   // view [lo, hi]: points outside the view are dropped (keeping one point
   // just past each edge so the edge-to-point line still draws), and when
@@ -155,6 +179,7 @@ const ChartMath = (() => {
     return clampView([Math.min(x0, x1), Math.max(x0, x1)], extent, minSpan);
   }
 
-  return {fmt, niceTicks, valueAt, visiblePoints, clampView, zoomView, panView, dragView};
+  return {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
+    dragView};
 })();
 if (typeof module !== "undefined") module.exports = ChartMath;

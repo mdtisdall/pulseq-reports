@@ -580,7 +580,8 @@ that no substring matching `__[A-Z_]+__` is in the result.
 
 `chart_math.js` has the pure functions that the report page's charts use:
 `fmt` formats a number for display, `niceTicks` chooses the tick values for
-an axis, `valueAt` reads a lane's value at a given time, `visiblePoints`
+an axis, `valueAt` reads a lane's value at a given time, `minMaxAt` reads the
+minimum and the maximum of a minmax lane's bin at a given time, `visiblePoints`
 picks the points of one line segment that the chart must actually draw for
 the current view, `clampView` moves and, if needed, widens a view so it fits
 inside a chart's extent, `zoomView` zooms a view by a factor about an
@@ -594,7 +595,9 @@ and `dragView` for the zoom and pan controls on a chart. Its `render`
 function calls `visiblePoints` once for each line segment, with the current
 view and a bucket count of 2 times the plot width in viewBox units (812), so
 a zoomed-out chart with many points does not draw more points than the chart
-can show.
+can show. Its tooltip (`setCursor`) calls `valueAt` for a lane without the
+key `minmax: true`, and `minMaxAt` for a lane with that key (except a gate
+lane, which is always read with `valueAt`).
 
 The tests load `chart_math.js` directly, with Node's `require`, from
 `src/pulseq_reports/assets/chart_math.js`. They use `node:test` and
@@ -615,6 +618,11 @@ page, and they do not use a browser or a DOM.
   before that move. Their tests check properties from each function's
   specification, the comment above it in `chart_math.js`, not expected
   values from an earlier version of the function.
+- `minMaxAt` is new to this library; it has no vb-pulseq history. Its tests
+  check properties from the comment above it in `chart_math.js` and from
+  section 4.4 item 2 of `docs/plans/diagram-event-table.md`, which defines
+  the point pairs `(bin start, minimum), (bin centre, maximum)` that a
+  minmax lane's segments hold.
 
 #### `test_nice_ticks_step_is_1_2_or_5_times_power_of_ten`
 
@@ -672,6 +680,66 @@ whether the fill is null or a number.
 of 42. At t = 20, after the end of the segment, `valueAt` on the first lane
 must return null. At t = -5, before the start of the segment, `valueAt` on
 the second lane must return 42.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_at_reads_the_bin_that_holds_the_cursor`
+
+**Checks:** `minMaxAt` returns the minimum and the maximum of the bin whose
+span holds a given time.
+
+**How:** The test makes a lane with one segment of two bins: the first bin's
+points are (0, -1) and (5, 2), and the second bin's points are (10, -3) and
+(15, 4). At t = 3, inside the first bin, `minMaxAt` must return {min: -1,
+max: 2}. At t = 12, inside the second bin, it must return {min: -3, max: 4}.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_at_bin_start_belongs_to_the_later_bin`
+
+**Checks:** A time exactly at the start of a bin belongs to that bin, not to
+the bin before it: a bin's own right edge is exclusive.
+
+**How:** Using the same two-bin lane as the previous test, the test calls
+`minMaxAt` at t = 10, the start of the second bin, which is also the first
+bin's own right edge. The result must be the second bin's {min: -3, max: 4}.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_at_last_bin_of_a_segment_is_inclusive_at_its_own_end`
+
+**Checks:** The last bin of a segment has no following pair to read its
+right edge from; `minMaxAt` derives it from the bin's own two points
+instead, as `2 * centre - start`, and a time exactly at that computed end is
+still in the bin.
+
+**How:** Using the same two-bin lane, the second bin's own end is
+`2 * 15 - 10 = 20`. The test calls `minMaxAt` at t = 20 and checks that the
+result is still the second bin's {min: -3, max: 4}.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_at_returns_null_in_a_gap_between_segments`
+
+**Checks:** `minMaxAt` returns null for a time that falls between two
+segments, where no bin has a value (for example, a gap between two RF
+pulses on the phase lane).
+
+**How:** The test makes a lane with two segments: one bin, (0, -1) and
+(5, 2), covering [0, 10), and one bin, (20, -3) and (25, 4), covering
+[20, 30), with no bin for [10, 20). `minMaxAt` at t = 3 and t = 22 must
+return the first and the second bin; at t = 15, in the gap, it must return
+null.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_at_returns_null_past_the_last_bin`
+
+**Checks:** `minMaxAt` returns null for a time after the last bin's own end.
+
+**How:** The test makes a lane with one segment of one bin, (0, -1) and
+(5, 2), whose own end is `2 * 5 - 0 = 10`. The test calls `minMaxAt` at
+t = 11, past that end, and checks that the result is null.
 
 **Assumptions:** None beyond the file's assumptions.
 
