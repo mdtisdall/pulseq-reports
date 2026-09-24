@@ -93,16 +93,21 @@ from each card that supports them.
   `dgdt = diff(g) / dt` of the gradient sampled at the half-raster times
   `(k + 0.5) * dt`.
 
-They differ in three places:
+`docs/notes/slew-definitions.md` (2026-09-24) compares the two definitions,
+and the pypulseq and MATLAB Pulseq implementations of each, with figures. In
+short:
 
 - At a corner on the raster, `dgdt` is the average of the two slopes.
 - For a ramp of exactly one raster interval, the largest `dgdt` is half the
   segment slope.
-- At a step at a block junction, `dgdt` is the step / `dt` plus the average
-  of the slopes next to it. The limit check sees the step alone.
+- At the edge of an arbitrary gradient, `dgdt` is half the slope of the
+  half-raster edge segment.
+- At a step at a block junction, the merged waveform puts the step into the
+  first segment of the next event. `dgdt` can then reach about 2 ×
+  `max_slew`. The limit check sees the step alone.
 
-For a continuous polyline, `|dgdt|` is never larger than the largest segment
-slope (it is a weighted average of the slopes). At a step it can be larger.
+Without a step, `|dgdt|` is never larger than the largest segment slope (it
+is a weighted average of the slopes).
 
 **What.** Find out which definition each of these should use, and change
 this library to match:

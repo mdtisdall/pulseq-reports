@@ -210,8 +210,9 @@ Do not open these decisions again. The user made them or approved them.
      first value of the block after|`. Use 0 where a block has no event on
      the axis, and 0 before the first block.
    The junction steps are new. The current card does not report them.
-   pypulseq checks a step only against `seq.system`, and only when the block
-   after it has a gradient on that axis. The card computes every
+   pypulseq checks a step only against `seq.system`. It checks every axis
+   at every junction, with 0 for a block that has no event on the axis
+   (`docs/notes/slew-definitions.md`, section 4). The card computes every
    junction and gives the percent of the caller's limits. The SAFE model uses
    a different slew (the raster difference `dgdt`). `TODO.md` has an item to
    study this difference. Until then, do not change either definition.
