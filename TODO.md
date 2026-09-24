@@ -73,3 +73,48 @@ from each card that supports them.
 
 **When.** After a pypulseq release has rotation support. Write a plan in
 `docs/plans/` first.
+
+## Study the two definitions of the gradient slew rate
+
+**Why.** This library uses two slew rates that are not the same:
+
+- **The gradient limits check** uses the definition of pypulseq's own limit
+  checks. In an event, the slew is the slope of each segment of the gradient
+  polyline:
+  - `make_trapezoid`: amplitude / rise time, and amplitude / fall time.
+  - `make_extended_trapezoid`: `diff(waveform) / diff(tt)`.
+  - `make_arbitrary_grad`: the difference of its raster samples /
+    `grad_raster_time`, with half-raster edge segments.
+
+  At a block junction, it is the step / `grad_raster_time`, as `add_block`
+  checks it. (Decided on 2026-09-24. The card gets the junction steps in phase 4 of
+  `docs/plans/cards-at-scale.md`.)
+- **The SAFE PNS model** (pypulseq `safe_gwf_to_pns`) uses
+  `dgdt = diff(g) / dt` of the gradient sampled at the half-raster times
+  `(k + 0.5) * dt`.
+
+They differ in three places:
+
+- At a corner on the raster, `dgdt` is the average of the two slopes.
+- For a ramp of exactly one raster interval, the largest `dgdt` is half the
+  segment slope.
+- At a step at a block junction, `dgdt` is the step / `dt` plus the average
+  of the slopes next to it. The limit check sees the step alone.
+
+For a continuous polyline, `|dgdt|` is never larger than the largest segment
+slope (it is a weighted average of the slopes). At a step it can be larger.
+
+**What.** Find out which definition each of these should use, and change
+this library to match:
+
+- The slew limit that the scanner applies (what the Siemens gradient system
+  checks, and on which raster).
+- The gradient limits card.
+- A slew lane in the sequence diagram, next to the PNS lanes (planned).
+
+Record the answer, and the sources for it. If pypulseq's own limit checks and
+its SAFE model disagree in a way that matters, tell the pypulseq maintainers
+(the user decides).
+
+**When.** Before the slew lane of the sequence diagram is built. Until then,
+keep both definitions as they are.
