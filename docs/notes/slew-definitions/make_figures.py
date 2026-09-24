@@ -6,7 +6,7 @@ Run from the repository root, in the devShell:
         --pulseq-matlab <pulseq clone>/matlab --safe-matlab <safe_pns_prediction clone>
 
 The README section of the report gives the commits of the two MATLAB clones. Octave
-comes from PATH, or else from the project's locked nixpkgs (`nix shell --inputs-from .
+comes from PATH, or else from the locked nixpkgs of the flake (`nix shell --inputs-from .
 nixpkgs#octave`). The figures are written next to this file, each in a light and a dark
 version. The numbers table is printed.
 """
@@ -48,8 +48,13 @@ THEMES = {
     },
 }
 
+# The blue line is the value that the limit checks compare with max_slew. Both libraries
+# compute the same value for every event in figures 1-5, except that MATLAB does not
+# check a trapezoid at all; figure 7 has the one event type where the values differ.
 LABEL_LIMIT = "Limit checks: segment slope"
-LABEL_JUNCTION = "Limit checks: junction step / Δ"
+LABEL_LIMIT_BOTH = "Limit checks, both: segment slope"
+LABEL_LIMIT_PY_ONLY = "Limit check, pypulseq only: segment slope"
+LABEL_JUNCTION = "Limit checks, both: junction step / Δ"
 LABEL_PY = "pypulseq calc_pns: dgdt"
 LABEL_MAT = "MATLAB calcPNS: dgdt"
 
@@ -100,10 +105,12 @@ def legend(fig, th, handles, ncol):
 
 
 def step_polyline(segments, lo, hi):
-    """A step polyline (us, T/m/s) of the segment slopes, 0 where no segment is."""
+    """A step polyline (us, T/m/s) of rows (t0, t1, value), 0 where no row is. Rows
+    with a NaN value (a segment that the check does not look at) are left out."""
     xs, ys = [lo], [0.0]
     last = lo
-    for t0, t1, s in sorted(segments.tolist()):
+    rows = segments[~np.isnan(segments[:, 2])]
+    for t0, t1, s in sorted(rows.tolist()):
         t0, t1 = t0 * US, t1 * US
         if t0 > last:
             xs += [last, t0]
@@ -142,12 +149,22 @@ def plot_gradient(ax, th, r, axis, samples="both", merged=()):
         )
 
 
-def plot_slew(ax, th, r, axis, lo, hi):
+def plot_slew(ax, th, r, axis, lo, hi, split=False):
     """Bottom panel: the limit-check slew, and the dgdt of both PNS paths, each drawn
-    over the raster interval that it covers."""
+    over the raster interval that it covers. The limit-check line is pypulseq's value
+    (column 3 of the segment rows). With split, MATLAB's value (column 4) is drawn solid
+    and pypulseq's dotted, for an event where they differ."""
     i = sp.AXES.index(axis)
-    xs, ys = step_polyline(r.limit[axis]["segments"], 0.0, r.py["t"][-1] * US + 100)
-    ax.plot(xs, ys, color=th["limit"], linewidth=2.5, solid_joinstyle="miter")
+    seg = r.limit[axis]["segments"]
+    end = r.py["t"][-1] * US + 100
+    if split:
+        xs, ys = step_polyline(seg[:, [0, 1, 4]], 0.0, end)
+        ax.plot(xs, ys, color=th["limit"], linewidth=2.5, solid_joinstyle="miter")
+        xs, ys = step_polyline(seg[:, [0, 1, 3]], 0.0, end)
+        ax.plot(xs, ys, color=th["limit"], linewidth=2.5, ls=(0, (1, 1.5)))
+    else:
+        xs, ys = step_polyline(seg[:, [0, 1, 3]], 0.0, end)
+        ax.plot(xs, ys, color=th["limit"], linewidth=2.5, solid_joinstyle="miter")
     jn = r.limit[axis]["junctions"]
     jn = jn[np.abs(jn[:, 1]) > 1e-6]
     ax.plot(
@@ -171,7 +188,7 @@ def plot_slew(ax, th, r, axis, lo, hi):
     ax.text(hi, LIMIT, "max_slew ", color=th["muted"], fontsize=7, va="bottom", ha="right")
 
 
-def handles(th, which):
+def handles(th, which, limit_label=LABEL_LIMIT):
     from matplotlib.lines import Line2D
 
     h = {
@@ -189,7 +206,18 @@ def handles(th, which):
         "wave_mat": Line2D(
             [], [], color=th["mat"], lw=1.25, ls="--", label="MATLAB waveforms_and_times()"
         ),
-        "limit": Line2D([], [], color=th["limit"], lw=2.5, label=LABEL_LIMIT),
+        "limit": Line2D([], [], color=th["limit"], lw=2.5, label=limit_label),
+        "limit_mat": Line2D(
+            [], [], color=th["limit"], lw=2.5, label="Limit check, MATLAB: segment slope"
+        ),
+        "limit_py_os": Line2D(
+            [],
+            [],
+            color=th["limit"],
+            lw=2.5,
+            ls=(0, (1, 1.5)),
+            label="Limit check, pypulseq: segment slope / 4",
+        ),
         "junction": Line2D(
             [], [], ls="none", marker="D", ms=6, color=th["limit"], label=LABEL_JUNCTION
         ),
@@ -212,18 +240,31 @@ def annotate(ax, th, x, y, text, dx=6, dy=0, ha="left"):
     )
 
 
-def two_panel(th, r, axis, lo, hi, width=7.5, samples="both", merged=(), extra_handles=()):
+def two_panel(
+    th,
+    r,
+    axis,
+    lo,
+    hi,
+    width=7.5,
+    samples="both",
+    merged=(),
+    extra_handles=(),
+    limit_label=LABEL_LIMIT,
+    split=False,
+):
     fig, axes = new_figure(th, 2, 1, width, 4.6)
     top, bottom = axes[0, 0], axes[1, 0]
     plot_gradient(top, th, r, axis, samples=samples, merged=merged)
-    plot_slew(bottom, th, r, axis, lo, hi)
+    plot_slew(bottom, th, r, axis, lo, hi, split=split)
     style(top, th, "G (mT/m)")
     style(bottom, th, "slew (T/m/s)")
     bottom.set_xlim(lo, hi)
     bottom.set_xlabel("time (µs)", color=th["ink2"], fontsize=9)
     sample_keys = ["samples"] if samples == "both" else ["samples_py", "samples_mat"]
-    keys = ["event", *sample_keys, *extra_handles, "limit", "junction", "py", "mat"]
-    legend(fig, th, handles(th, keys), ncol=3)
+    limit_keys = ["limit_mat", "limit_py_os"] if split else ["limit", "junction"]
+    keys = ["event", *sample_keys, *extra_handles, *limit_keys, "py", "mat"]
+    legend(fig, th, handles(th, keys, limit_label), ncol=3)
     fig.subplots_adjust(top=0.84 if len(keys) <= 6 else 0.8, left=0.1, right=0.95, bottom=0.11)
     return fig, top, bottom
 
@@ -232,20 +273,20 @@ def two_panel(th, r, axis, lo, hi, width=7.5, samples="both", merged=(), extra_h
 
 
 def fig_trapezoid(th, res):
-    fig, _top, bottom = two_panel(th, res["trap"], "x", 30, 170)
+    fig, _top, bottom = two_panel(th, res["trap"], "x", 30, 170, limit_label=LABEL_LIMIT_PY_ONLY)
     annotate(bottom, th, 85, 50, "at a corner: the average of 100 and 0", dx=4, dy=8)
     return fig
 
 
 def fig_blips(th, res):
-    fig, _top, bottom = two_panel(th, res["blips"], "x", 30, 230)
+    fig, _top, bottom = two_panel(th, res["blips"], "x", 30, 230, limit_label=LABEL_LIMIT_PY_ONLY)
     note = "one-raster ramps (left): dgdt peak 50,\nhalf the slope\ntwo-raster ramps (right): dgdt peak 100"
     annotate(bottom, th, 166, 55, note, dx=0)
     return fig
 
 
 def fig_arbitrary(th, res):
-    fig, _top, bottom = two_panel(th, res["arb"], "x", 30, 270)
+    fig, _top, bottom = two_panel(th, res["arb"], "x", 30, 270, limit_label=LABEL_LIMIT_BOTH)
     note = "at each edge: a half-raster segment\nof slope 94, but dgdt 47"
     annotate(bottom, th, 160, 60, note, dx=0)
     return fig
@@ -273,7 +314,7 @@ def fig_junctions(th, res):
         k = int(np.argmax(np.abs(r.py["dgdt"][:, 0])))
         annotate(bottom, th, r.py["t"][k] * US - 5, peak, f"dgdt {peak:.0f}", dx=6, dy=6)
     keys = ["event", "samples", "wave_py", "limit", "junction", "py", "mat"]
-    legend(fig, th, handles(th, keys), ncol=4)
+    legend(fig, th, handles(th, keys, LABEL_LIMIT_BOTH), ncol=4)
     fig.subplots_adjust(top=0.8, left=0.07, right=0.95, bottom=0.1)
     return fig
 
@@ -349,6 +390,24 @@ def fig_pns(th, res):
     return fig
 
 
+def fig_oversampled(th, res):
+    fig, _top, bottom = two_panel(
+        th,
+        res["arb_oversampled"],
+        "x",
+        30,
+        190,
+        samples="separate",
+        merged=("py", "mat"),
+        extra_handles=("wave_py", "wave_mat"),
+        split=True,
+    )
+    bottom.set_ylim(-230, 230)
+    note = "MATLAB's check: 200 (rejects)\npypulseq's check: 50 (accepts)"
+    annotate(bottom, th, 118, 150, note, dx=0)
+    return fig
+
+
 FIGURES = {
     "fig1-trapezoid": fig_trapezoid,
     "fig2-one-raster-ramps": fig_blips,
@@ -356,6 +415,7 @@ FIGURES = {
     "fig4-junction-steps": fig_junctions,
     "fig5-no-gradient-block": fig_no_gradient_block,
     "fig6-pns-time-shift": fig_pns,
+    "fig7-oversampled": fig_oversampled,
 }
 
 
@@ -365,11 +425,12 @@ FIGURES = {
 def numbers(res, table):
     rows = [
         (
-            "| Example | Axis | Limit checks: segments | Limit checks: junctions | "
+            "| Example | Axis | pypulseq limit check: segments | "
+            "MATLAB limit check: segments | Limit checks, both: junctions | "
             "pypulseq dgdt | MATLAB dgdt | pypulseq test report | MATLAB test report | "
             "PNS peak pypulseq | PNS peak MATLAB |"
         ),
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for name, r in res.items():
         axes = ("x", "y") if name == "epi" else ("x",)
@@ -378,8 +439,10 @@ def numbers(res, table):
             seg = r.limit[axis]["segments"]
             jn = r.limit[axis]["junctions"]
             dm = np.atleast_2d(r.mat["dgdt"])[i]
+            mat_seg = np.abs(seg[:, 4])
+            mat_cell = "not checked" if np.all(np.isnan(mat_seg)) else f"{np.nanmax(mat_seg):.1f}"
             rows.append(
-                f"| `{name}` | {axis} | {np.abs(seg[:, 2]).max():.1f} | "
+                f"| `{name}` | {axis} | {np.abs(seg[:, 3]).max():.1f} | {mat_cell} | "
                 f"{np.abs(jn[:, 1]).max():.1f} | {np.abs(r.py['dgdt'][:, i]).max():.1f} | "
                 f"{np.abs(dm).max():.1f} | {r.py_report_slew[i]:.1f} | "
                 f"{np.atleast_1d(r.mat['report_slew'])[i]:.1f} | "

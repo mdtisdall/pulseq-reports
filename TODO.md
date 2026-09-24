@@ -115,7 +115,9 @@ this library to match:
 - The slew limit that the scanner applies (what the Siemens gradient system
   checks, and on which raster).
 - The gradient limits card.
-- A slew lane in the sequence diagram, next to the PNS lanes (planned).
+- A slew lane in the sequence diagram, next to the PNS lanes (planned). If
+  it shows `dgdt`, it also needs one of the two time conventions: pypulseq
+  and MATLAB Pulseq report the same `dgdt` value 10 µs apart.
 
 Record the answer, and the sources for it. If pypulseq's own limit checks and
 its SAFE model disagree in a way that matters, tell the pypulseq maintainers
