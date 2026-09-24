@@ -15,5 +15,9 @@ dist/
 # Generated sequence files
 *.seq
 
+# Local example data (for example real sequence files), never committed.
+# .worktree-links links it into each worktree.
+/data
+
 # Generated review reports
 *.report.html

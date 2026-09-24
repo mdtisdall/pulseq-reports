@@ -1,0 +1,4 @@
+# Git-ignored paths that dev-workflow start-task links from the main checkout
+# into each new worktree. This list replaces the default (.envrc.local).
+.envrc.local
+data
