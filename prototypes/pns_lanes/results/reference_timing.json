@@ -1,0 +1,66 @@
+[
+  {
+    "name": "rep_12s",
+    "build_s": 0.09018150006886572,
+    "reference_s": 0.22211287508253008,
+    "peak_rss_before_bytes": 136101888,
+    "peak_rss_after_bytes": 273121280,
+    "n_samples": 1199597,
+    "peak": 0.8262392198146357,
+    "peak_time_s": 1.5347350000000002
+  },
+  {
+    "name": "rep_60s",
+    "build_s": 0.4890904169296846,
+    "reference_s": 0.7999624159419909,
+    "peak_rss_before_bytes": 153681920,
+    "peak_rss_after_bytes": 322617344,
+    "n_samples": 5999983,
+    "peak": 0.8262392337356734,
+    "peak_time_s": 1.5347350000000002
+  },
+  {
+    "name": "rep_120s",
+    "build_s": 0.8868189170025289,
+    "reference_s": 1.5191346670035273,
+    "peak_rss_before_bytes": 176275456,
+    "peak_rss_after_bytes": 407240704,
+    "n_samples": 11999567,
+    "peak": 0.8262392498245034,
+    "peak_time_s": 1.5347350000000002
+  },
+  {
+    "name": "rep_370s_long",
+    "build_s": 0.3517201670911163,
+    "reference_s": 2.7541447919793427,
+    "peak_rss_before_bytes": 146882560,
+    "peak_rss_after_bytes": 349224960,
+    "n_samples": 36995774,
+    "peak": 0.8194310416398622,
+    "peak_time_s": 0.0012950000000000001
+  },
+  {
+    "name": "exvivo",
+    "build_s": 0.16696758300531656,
+    "reference_s": 2.900624290923588,
+    "peak_rss_before_bytes": 150159360,
+    "peak_rss_after_bytes": 356728832,
+    "n_samples": 36988897,
+    "peak": 0.13778776500357492,
+    "peak_time_s": 0.120175
+  },
+  {
+    "name": "rep_1000000blocks",
+    "build_s": 8.713167790905572,
+    "reference_s": 14.612393707968295,
+    "peak_rss_before_bytes": 535461888,
+    "peak_rss_after_bytes": 846594048,
+    "n_samples": 119799800,
+    "peak": 0.8262731544629746,
+    "peak_time_s": 1183.8169750000002,
+    "extrapolated_before_running": {
+      "estimated_total_s": 77.85361979948357,
+      "estimated_peak_rss_bytes": 408021893.12
+    }
+  }
+]

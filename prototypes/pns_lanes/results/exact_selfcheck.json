@@ -1,0 +1,375 @@
+{
+  "nodeVersion": "v24.20.0",
+  "generatedAt": "2026-09-24T15:26:59.693Z",
+  "worstMaxDiffOverPeak": 3.4969068772539417e-15,
+  "accuracy": [
+    {
+      "name": "spin_echo",
+      "numBlocks": 6,
+      "numSamples": 593,
+      "numGroups": 1,
+      "decodeMs": 0.4052079916000366,
+      "memAfterDecodeBytes": 44040192,
+      "bruteForceWholeFileMs": 1.3980419635772705,
+      "memAfterBruteForceBytes": 46678016,
+      "ranges": [
+        {
+          "label": "whole file",
+          "t0": 0,
+          "t1": 0.005935,
+          "samples": 593,
+          "exactViewMs": 0.8289579153060913,
+          "maxAbsDiff": 0,
+          "peak": 0.8659598160763131,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "single sample",
+          "t0": 0.002445,
+          "t1": 0.002445,
+          "samples": 1,
+          "exactViewMs": 0.0846250057220459,
+          "maxAbsDiff": 0,
+          "peak": 0.6485522067952434,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "end",
+          "t0": 0.003935,
+          "t1": 0.005935,
+          "samples": 200,
+          "exactViewMs": 0.33216702938079834,
+          "maxAbsDiff": 1.3010426069826053e-18,
+          "peak": 0.7597255298372879,
+          "maxDiffOverPeak": 1.7125166338180743e-18
+        }
+      ]
+    },
+    {
+      "name": "gre",
+      "numBlocks": 20,
+      "numSamples": 8000,
+      "numGroups": 1,
+      "decodeMs": 0.7202500104904175,
+      "memAfterDecodeBytes": 44875776,
+      "bruteForceWholeFileMs": 3.195667028427124,
+      "memAfterBruteForceBytes": 48578560,
+      "ranges": [
+        {
+          "label": "whole file",
+          "t0": 0,
+          "t1": 0.080005,
+          "samples": 8000,
+          "exactViewMs": 2.4332919120788574,
+          "maxAbsDiff": 0,
+          "peak": 0.8194523699054111,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "single sample",
+          "t0": 0.033015,
+          "t1": 0.033015,
+          "samples": 1,
+          "exactViewMs": 0.22070801258087158,
+          "maxAbsDiff": 5.963111948670274e-19,
+          "peak": 0.0007800987013705269,
+          "maxDiffOverPeak": 7.644048039297977e-16
+        },
+        {
+          "label": "end",
+          "t0": 0.078005,
+          "t1": 0.080005,
+          "samples": 200,
+          "exactViewMs": 0.9903749227523804,
+          "maxAbsDiff": 1.7618285302889447e-19,
+          "peak": 0.00012113746962108433,
+          "maxDiffOverPeak": 1.4544042696284729e-15
+        }
+      ]
+    },
+    {
+      "name": "arbitrary",
+      "numBlocks": 1,
+      "numSamples": 40,
+      "numGroups": 1,
+      "decodeMs": 0.29083406925201416,
+      "memAfterDecodeBytes": 43909120,
+      "bruteForceWholeFileMs": 0.22937500476837158,
+      "memAfterBruteForceBytes": 44122112,
+      "ranges": [
+        {
+          "label": "whole file",
+          "t0": 0,
+          "t1": 0.00040500000000000003,
+          "samples": 40,
+          "exactViewMs": 0.13604092597961426,
+          "maxAbsDiff": 0,
+          "peak": 0.061058120169603235,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "single sample",
+          "t0": 0.00016500000000000003,
+          "t1": 0.00016500000000000003,
+          "samples": 1,
+          "exactViewMs": 0.3408750295639038,
+          "maxAbsDiff": 0,
+          "peak": 0.056904241309719245,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "end",
+          "t0": 0.000005,
+          "t1": 0.00040500000000000003,
+          "samples": 40,
+          "exactViewMs": 0.05504202842712402,
+          "maxAbsDiff": 0,
+          "peak": 0.061058120169603235,
+          "maxDiffOverPeak": 0
+        }
+      ]
+    },
+    {
+      "name": "border",
+      "numBlocks": 3,
+      "numSamples": 44,
+      "numGroups": 1,
+      "decodeMs": 0.3322920799255371,
+      "memAfterDecodeBytes": 43892736,
+      "bruteForceWholeFileMs": 0.2490830421447754,
+      "memAfterBruteForceBytes": 44105728,
+      "ranges": [
+        {
+          "label": "whole file",
+          "t0": 0,
+          "t1": 0.0004450000000000001,
+          "samples": 44,
+          "exactViewMs": 0.14354205131530762,
+          "maxAbsDiff": 0,
+          "peak": 0.2852444598508332,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "single sample",
+          "t0": 0.00018500000000000002,
+          "t1": 0.00018500000000000002,
+          "samples": 1,
+          "exactViewMs": 0.3584580421447754,
+          "maxAbsDiff": 4.163336342344337e-17,
+          "peak": 0.12477907951900391,
+          "maxDiffOverPeak": 3.336566000000232e-16
+        },
+        {
+          "label": "end",
+          "t0": 0.000005,
+          "t1": 0.0004450000000000001,
+          "samples": 44,
+          "exactViewMs": 0.07145798206329346,
+          "maxAbsDiff": 0,
+          "peak": 0.2852444598508332,
+          "maxDiffOverPeak": 0
+        }
+      ]
+    },
+    {
+      "name": "rep_20trs",
+      "numBlocks": 100,
+      "numSamples": 11980,
+      "numGroups": 2,
+      "decodeMs": 1.190208911895752,
+      "memAfterDecodeBytes": 46252032,
+      "bruteForceWholeFileMs": 3.2602920532226562,
+      "memAfterBruteForceBytes": 50331648,
+      "ranges": [
+        {
+          "label": "whole file",
+          "t0": 0,
+          "t1": 0.11980500000000001,
+          "samples": 11980,
+          "exactViewMs": 2.9456249475479126,
+          "maxAbsDiff": 0,
+          "peak": 0.8246558530757616,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "single sample",
+          "t0": 0.049445,
+          "t1": 0.049445,
+          "samples": 1,
+          "exactViewMs": 0.3708750009536743,
+          "maxAbsDiff": 3.903127820947816e-18,
+          "peak": 0.26307943785962,
+          "maxDiffOverPeak": 1.4836308959389433e-17
+        },
+        {
+          "label": "end",
+          "t0": 0.117805,
+          "t1": 0.11980500000000001,
+          "samples": 200,
+          "exactViewMs": 0.29670798778533936,
+          "maxAbsDiff": 1.1102230246251565e-16,
+          "peak": 0.4788316028952602,
+          "maxDiffOverPeak": 2.318608500174553e-16
+        },
+        {
+          "label": "mid-file, across a group border",
+          "t0": 0.07537500000000001,
+          "t1": 0.07637500000000001,
+          "samples": 101,
+          "exactViewMs": 0.5774589776992798,
+          "maxAbsDiff": 3.469446951953614e-17,
+          "peak": 0.48791748803732327,
+          "maxDiffOverPeak": 7.11072473731095e-17
+        }
+      ]
+    },
+    {
+      "name": "rep_2000trs",
+      "numBlocks": 10000,
+      "numSamples": 1198000,
+      "numGroups": 157,
+      "decodeMs": 7.1192920207977295,
+      "memAfterDecodeBytes": 53690368,
+      "bruteForceWholeFileMs": 98.96341693401337,
+      "memAfterBruteForceBytes": 105283584,
+      "ranges": [
+        {
+          "label": "whole file",
+          "t0": 0,
+          "t1": 11.980005,
+          "samples": 1198000,
+          "exactViewMs": 114.08262503147125,
+          "maxAbsDiff": 0,
+          "peak": 0.8262392189815106,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "single sample",
+          "t0": 4.944145000000001,
+          "t1": 4.944145000000001,
+          "samples": 1,
+          "exactViewMs": 0.18291592597961426,
+          "maxAbsDiff": 6.938893903907228e-18,
+          "peak": 0.04239208094030356,
+          "maxDiffOverPeak": 1.6368372936630697e-16
+        },
+        {
+          "label": "end",
+          "t0": 11.978005000000001,
+          "t1": 11.980005,
+          "samples": 200,
+          "exactViewMs": 0.178583025932312,
+          "maxAbsDiff": 1.1102230246251565e-16,
+          "peak": 0.47835912448870105,
+          "maxDiffOverPeak": 2.320898604812503e-16
+        },
+        {
+          "label": "mid-file, across a group border",
+          "t0": 5.979005000000001,
+          "t1": 5.980005,
+          "samples": 101,
+          "exactViewMs": 0.17283308506011963,
+          "maxAbsDiff": 5.551115123125783e-17,
+          "peak": 0.6634675343201707,
+          "maxDiffOverPeak": 8.366822543643818e-17
+        }
+      ]
+    },
+    {
+      "name": "exvivo",
+      "numBlocks": 39304,
+      "numSamples": 36992000,
+      "numGroups": 615,
+      "decodeMs": 17.460582971572876,
+      "memAfterDecodeBytes": 55066624,
+      "bruteForceWholeFileMs": 2837.761916041374,
+      "memAfterBruteForceBytes": 1538211840,
+      "ranges": [
+        {
+          "label": "whole file",
+          "t0": 0,
+          "t1": 369.920005,
+          "samples": 36992000,
+          "exactViewMs": 3489.893165946007,
+          "maxAbsDiff": 0,
+          "peak": 0.13778776500358134,
+          "maxDiffOverPeak": 0
+        },
+        {
+          "label": "single sample",
+          "t0": 152.665985,
+          "t1": 152.665985,
+          "samples": 1,
+          "exactViewMs": 0.27925002574920654,
+          "maxAbsDiff": 6.352747104407253e-22,
+          "peak": 0.00004842012465874559,
+          "maxDiffOverPeak": 1.312005524393012e-17
+        },
+        {
+          "label": "end",
+          "t0": 369.91800500000005,
+          "t1": 369.920005,
+          "samples": 200,
+          "exactViewMs": 0.3087500333786011,
+          "maxAbsDiff": 2.0117032497289633e-21,
+          "peak": 5.752807610675403e-7,
+          "maxDiffOverPeak": 3.4969068772539417e-15
+        },
+        {
+          "label": "mid-file, across a group border",
+          "t0": 184.900055,
+          "t1": 184.901055,
+          "samples": 101,
+          "exactViewMs": 0.4882080554962158,
+          "maxAbsDiff": 8.131516293641283e-20,
+          "peak": 0.03322607438096346,
+          "maxDiffOverPeak": 2.4473298290995677e-18
+        }
+      ]
+    }
+  ],
+  "timing": [
+    {
+      "name": "exvivo",
+      "numBlocks": 39304,
+      "numSamples": 36992000,
+      "numGroups": 615,
+      "durationS": 369.92000000001565,
+      "decodeMs": 17.798334002494812,
+      "memAfterDecodeBytes": 54935552,
+      "views": [
+        {
+          "label": "~1.000s window at mid-file",
+          "samples": 100000,
+          "exactViewMs": 14.32212507724762
+        },
+        {
+          "label": "whole file",
+          "samples": 36992000,
+          "exactViewMs": 2987.203458070755
+        }
+      ]
+    },
+    {
+      "name": "rep_1000000blocks",
+      "numBlocks": 1000000,
+      "numSamples": 119800000,
+      "numGroups": 15625,
+      "durationS": 1197.999999988869,
+      "decodeMs": 264.8506669998169,
+      "memAfterDecodeBytes": 78987264,
+      "views": [
+        {
+          "label": "~1.000s window at mid-file",
+          "samples": 100000,
+          "exactViewMs": 13.5714590549469
+        },
+        {
+          "label": "whole file",
+          "skipped": true,
+          "reason": "119800000 samples exceeds MAX_WHOLE_FILE_SAMPLES (50000000); not timed here (task 4 measures zoomed-in speed at this scale properly)"
+        }
+      ]
+    }
+  ]
+}

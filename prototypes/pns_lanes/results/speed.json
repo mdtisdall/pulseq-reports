@@ -1,0 +1,212 @@
+[
+  {
+    "tablesPath": "/private/tmp/claude-501/-Users-dylan-dev-pulseq-reports/45cf8d58-d17a-495a-9bb4-3f5195b44223/scratchpad/pns_task4/exvivo_speed_tables.json",
+    "sequenceName": "exvivo",
+    "numBlocks": 39304,
+    "numSamples": 36992000,
+    "numGroups": 615,
+    "durationS": 369.92000000001565,
+    "dt": 1e-05,
+    "decodeMs": 17.65825,
+    "decodeOverBudget": false,
+    "memAfterDecodeBytes": {
+      "rss": 54034432,
+      "heapUsed": 4786032,
+      "arrayBuffers": 1715451
+    },
+    "memFinalBytes": {
+      "rss": 309411840,
+      "heapUsed": 3772472,
+      "arrayBuffers": 120928839
+    },
+    "elapsedMsTotal": 8900,
+    "lengths": [
+      {
+        "lengthS": 0.001,
+        "n": 100,
+        "medianMs": 0.20520850000000002,
+        "p95Ms": 0.426375,
+        "maxMs": 1.570792,
+        "minMs": 0.031666,
+        "meanSamplesPerView": 100
+      },
+      {
+        "lengthS": 0.01,
+        "n": 100,
+        "medianMs": 0.258521,
+        "p95Ms": 0.400333,
+        "maxMs": 0.421333,
+        "minMs": 0.110791,
+        "meanSamplesPerView": 1000
+      },
+      {
+        "lengthS": 0.1,
+        "n": 100,
+        "medianMs": 0.944354,
+        "p95Ms": 1.105083,
+        "maxMs": 1.195792,
+        "minMs": 0.790583,
+        "meanSamplesPerView": 10000
+      },
+      {
+        "lengthS": 1,
+        "n": 100,
+        "medianMs": 8.0556455,
+        "p95Ms": 8.570541,
+        "maxMs": 8.799541,
+        "minMs": 7.731458,
+        "meanSamplesPerView": 100000
+      },
+      {
+        "lengthS": 10,
+        "n": 100,
+        "medianMs": 79.1260835,
+        "p95Ms": 80.314792,
+        "maxMs": 83.1795,
+        "minMs": 77.969625,
+        "meanSamplesPerView": 1000000
+      }
+    ],
+    "longestLengthSWithP95Under50ms": 1
+  },
+  {
+    "tablesPath": "/private/tmp/claude-501/-Users-dylan-dev-pulseq-reports/45cf8d58-d17a-495a-9bb4-3f5195b44223/scratchpad/pns_task4/rep_1000000blocks_speed_tables.json",
+    "sequenceName": "rep_1000000blocks",
+    "numBlocks": 1000000,
+    "numSamples": 119800000,
+    "numGroups": 15625,
+    "durationS": 1197.999999988869,
+    "dt": 1e-05,
+    "decodeMs": 260.205417,
+    "decodeOverBudget": false,
+    "memAfterDecodeBytes": {
+      "rss": 79708160,
+      "heapUsed": 4770536,
+      "arrayBuffers": 13648487
+    },
+    "memFinalBytes": {
+      "rss": 301268992,
+      "heapUsed": 5881664,
+      "arrayBuffers": 132861875
+    },
+    "elapsedMsTotal": 9022,
+    "lengths": [
+      {
+        "lengthS": 0.001,
+        "n": 100,
+        "medianMs": 0.0444795,
+        "p95Ms": 0.13075,
+        "maxMs": 0.573584,
+        "minMs": 0.0205,
+        "meanSamplesPerView": 100
+      },
+      {
+        "lengthS": 0.01,
+        "n": 100,
+        "medianMs": 0.103083,
+        "p95Ms": 0.135833,
+        "maxMs": 0.181209,
+        "minMs": 0.087709,
+        "meanSamplesPerView": 1000
+      },
+      {
+        "lengthS": 0.1,
+        "n": 100,
+        "medianMs": 0.8038125,
+        "p95Ms": 0.880042,
+        "maxMs": 0.960167,
+        "minMs": 0.764042,
+        "meanSamplesPerView": 10000
+      },
+      {
+        "lengthS": 1,
+        "n": 100,
+        "medianMs": 7.8193755,
+        "p95Ms": 8.047875,
+        "maxMs": 8.261375,
+        "minMs": 7.5645,
+        "meanSamplesPerView": 100000
+      },
+      {
+        "lengthS": 10,
+        "n": 100,
+        "medianMs": 78.2365415,
+        "p95Ms": 80.503541,
+        "maxMs": 104.003167,
+        "minMs": 77.078791,
+        "meanSamplesPerView": 1000000
+      }
+    ],
+    "longestLengthSWithP95Under50ms": 1
+  },
+  {
+    "tablesPath": "/private/tmp/claude-501/-Users-dylan-dev-pulseq-reports/45cf8d58-d17a-495a-9bb4-3f5195b44223/scratchpad/pns_task4/rep_10000000blocks_speed_tables.json",
+    "sequenceName": "rep_10000000blocks",
+    "numBlocks": 10000000,
+    "numSamples": 1198000000,
+    "numGroups": 156250,
+    "durationS": 11980.000001174145,
+    "dt": 1e-05,
+    "decodeMs": 2492.916042,
+    "decodeOverBudget": false,
+    "memAfterDecodeBytes": {
+      "rss": 251527168,
+      "heapUsed": 6727504,
+      "arrayBuffers": 127016019
+    },
+    "memFinalBytes": {
+      "rss": 467206144,
+      "heapUsed": 6222824,
+      "arrayBuffers": 246557187
+    },
+    "elapsedMsTotal": 11335,
+    "lengths": [
+      {
+        "lengthS": 0.001,
+        "n": 100,
+        "medianMs": 0.0439375,
+        "p95Ms": 0.139958,
+        "maxMs": 2.001291,
+        "minMs": 0.019459,
+        "meanSamplesPerView": 100
+      },
+      {
+        "lengthS": 0.01,
+        "n": 100,
+        "medianMs": 0.1064585,
+        "p95Ms": 0.148833,
+        "maxMs": 0.183458,
+        "minMs": 0.0865,
+        "meanSamplesPerView": 1000
+      },
+      {
+        "lengthS": 0.1,
+        "n": 100,
+        "medianMs": 0.8063130000000001,
+        "p95Ms": 0.906584,
+        "maxMs": 1.024166,
+        "minMs": 0.774084,
+        "meanSamplesPerView": 10000
+      },
+      {
+        "lengthS": 1,
+        "n": 100,
+        "medianMs": 7.898562500000001,
+        "p95Ms": 8.19625,
+        "maxMs": 9.08375,
+        "minMs": 7.576,
+        "meanSamplesPerView": 100000
+      },
+      {
+        "lengthS": 10,
+        "n": 100,
+        "medianMs": 78.709875,
+        "p95Ms": 80.321,
+        "maxMs": 82.848125,
+        "minMs": 77.375417,
+        "meanSamplesPerView": 1000000
+      }
+    ],
+    "longestLengthSWithP95Under50ms": 1
+  }
+]
