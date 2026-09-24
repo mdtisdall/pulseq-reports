@@ -275,7 +275,7 @@ If a budget fails, stop and tell the user. Do not change a budget yourself.
 Use the dev-workflow Claude Code plugin skills, as in the earlier plans.
 
 1. Each phase is one branch, one worktree and one pull request in this
-   project. Phases 1 and 6 also have work in the fork (section 3.6).
+   project. Phase 1 also has work in the fork (section 3.6).
 2. Start each phase with the `dev-workflow:start-task` skill, from the latest
    `origin/main`. The branch prefix is `feature/`, `fix/`, `docs/` or
    `chore/`.
@@ -360,9 +360,10 @@ Rules:
 3. `TESTS.md`: each phase edits only its own sections. An unchanged heading
    line separates each pair of sections, so git merges the edits without a
    conflict. If a rebase gives a conflict in `TESTS.md`, keep both sides.
-4. `scripts/vb_parity.py` is in phases 3, 5 and 6. Each phase edits only its
-   own key of `ACCEPTED`, and only when the user accepts a difference
-   (section 3.5). Phases 3 and 5 can conflict there. Rebase the second one.
+4. `scripts/vb_parity.py` is in phases 3 and 5, and in phase 4 of
+   `docs/plans/diagram-lanes.md`. Each phase edits only its own keys of
+   `ACCEPTED`, and only when the user accepts a difference (section 3.5).
+   These phases can conflict there. Rebase each one that merges later.
 5. `tests/oracles/` is new in phase 3, 4 or 5, whichever is first. Each of
    them adds only its own file. Add an empty `tests/oracles/__init__.py` only
    if the imports need it. The first phase adds it, and the others rebase.
@@ -950,8 +951,8 @@ the other numbers do not change.
 
 ### Phase 7: scale check, documents and release
 
-Branch: `chore/cards-scale`. Parallel: no. It starts after phases 3 to 6 are
-merged. Tier of the phase: O, with H for the documents.
+Branch: `chore/cards-scale`. Parallel: no. It starts after phases 1, 3, 4
+and 5 are merged. Tier of the phase: O, with H for the documents.
 
 **Task 7.1: Measure all cards.** Tier O.
 
@@ -993,7 +994,7 @@ values. `TODO.md`, `docs/usage.md` and this plan are updated.
 |---|---|---|
 | 1 | 0, 1, 2 | The user approves this plan. Phase 1 also needs the fork (task 1.1). Phase 2 starts after phase 0 is merged. |
 | 2 | 3, 4, 5 | Phase 2 merged. At most three PRs open. |
-| 4 | 7 | Phases 3, 4, 5 and 6 merged. |
+| 3 | 7 | Phases 1, 3, 4 and 5 merged. |
 
 Tasks inside a phase that can run as parallel workers:
 

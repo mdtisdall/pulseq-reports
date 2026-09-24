@@ -7,7 +7,7 @@ Status: not started. The plan was written on 2026-09-24.
 
 ## 1. Goal
 
-Show the PNS prediction as lanes of the sequence diagram, on the same time
+Show the PNS prediction as a lane of the sequence diagram, on the same time
 axis as the RF, the ADC and the gradients. The goal is for each `.seq` file of
 up to 10^7 blocks:
 
@@ -16,7 +16,7 @@ up to 10^7 blocks:
    lanes (decision 9 of section 2.2).
 2. Zoom and pan work on the PNS lane as on the other lanes.
 3. When a view is short enough (section 4.5), the PNS lane shows the exact
-   values. When it is longer, they show the minimum and the maximum in time
+   values. When it is longer, it shows the minimum and the maximum in time
    bins, from values that Python stores in the page.
 4. The PNS card keeps only the summary: the peak, the peak time, the axis
    peaks, the hardware and the example-hardware warning. The PNS chart moves
@@ -379,8 +379,9 @@ Acceptance: the fork suite passes. `scripts/check` passes with the new pin.
 Branch: `feature/pns-levels`. Tier: S. Review: O.
 
 **Task 2.1: `pns_levels.py`.** Tier S. Section 4.1, item 2, and section 4.2.
-The dataclass `PnsLevels` holds `bin_samples`, `dt_s`, the 8 arrays, the
-summary and the hardware name.
+The dataclass `PnsLevels` holds `bin_samples`, `dt_s`, the stored level (2
+arrays: the minimum and the maximum of the total), the summary and the
+hardware name.
 
 **Task 2.2: Tests.** Tier S. `tests/test_pns_levels.py`:
 
