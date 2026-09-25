@@ -26,5 +26,11 @@ dev = [
     "ruff",
 ]
 
+# pypulseq 1.5.0.post1 with the SAFE PNS filter as a recursion (branch pns-lfilter of the
+# fork). See docs/plans/cards-at-scale.md, section 3.6. A project that depends on
+# pulseq-reports gets pypulseq from PyPI unless it adds the same source.
+[tool.uv.sources]
+pypulseq = { git = "https://github.com/mdtisdall/pypulseq", rev = "40f61d39c9360e40c5d9b096d185973ffb3e876d" }
+
 [tool.ruff]
 line-length = 100

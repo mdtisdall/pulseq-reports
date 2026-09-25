@@ -1959,6 +1959,76 @@ name, the peak and the peak time.
 
 **Assumptions:** None.
 
+#### `test_no_gradients_with_rf_and_adc`
+
+**Checks:** A sequence with RF and ADC events but no gradient events has no
+prediction, with the reason "no gradients".
+
+**How:** The test makes a sequence with a block pulse block and an ADC block,
+and checks the reason.
+
+**Assumptions:**
+
+- `pns.py` finds "no gradients" from the gradient columns of
+  `seq.block_events`. This test and `test_no_gradients` check that other
+  events do not count as gradients.
+
+#### `test_a_gradient_on_one_axis_has_a_prediction`
+
+**Checks:** A sequence with a gradient on one axis only, x, y or z, has a
+prediction.
+
+**How:** For each axis, the test makes a sequence with a delay block and a
+trapezoid block on that axis. There must be no reason, and the peak must be
+more than 0.
+
+**Assumptions:**
+
+- A gradient in a block after the first block counts. The delay block comes
+  first, so a check of the first block only would fail.
+
+#### `test_prediction_builds_the_gradients_one_time`
+
+**Checks:** The prediction builds the gradients of the sequence one time.
+
+**How:** The test replaces `get_gradients` of a synthetic spin echo sequence
+with a wrapper that counts the calls, and runs the prediction. There must be
+one call, the one in pypulseq's `calculate_pns`.
+
+**Assumptions:**
+
+- `calculate_pns` calls `get_gradients` one time. The "no gradients" check
+  of `pns.py` does not call it: it reads `seq.block_events`.
+
+#### `test_prediction_keeps_no_blocks_and_gives_back_the_cache_setting`
+
+**Checks:** The prediction does not fill pypulseq's block cache, and the
+cache setting of the sequence is the same after the prediction.
+
+**How:** For `use_block_cache` True and False, the test sets it on a
+synthetic spin echo sequence, empties `seq.block_cache`, and runs the
+prediction. After it, `use_block_cache` must have the same value and
+`seq.block_cache` must be empty.
+
+**Assumptions:**
+
+- `calculate_pns` reads every block with `get_block`, which keeps each block
+  in `seq.block_cache` when `use_block_cache` is True. An empty cache after
+  the prediction shows that the cache was off while it ran.
+
+#### `test_prediction_gives_back_the_cache_setting_after_an_error`
+
+**Checks:** When `calculate_pns` fails, the prediction still gives back the
+cache setting of the sequence, and the cache was off while it ran.
+
+**How:** The test sets `use_block_cache` to True on a synthetic spin echo
+sequence and replaces its `calculate_pns` with a function that records
+`use_block_cache` and raises `RuntimeError`. The prediction must raise the
+error, the recorded value must be False, and `use_block_cache` must be True
+after it.
+
+**Assumptions:** None.
+
 #### `test_peak_tr_window_finds_the_tr_with_the_peak`
 
 **Checks:** For each position of the peak TR (first, second or third) in the
