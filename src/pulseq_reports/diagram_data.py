@@ -1,13 +1,14 @@
 """The compact block and event tables that the diagram card sends to the browser.
 
-`diagram_tables` reads `seq.block_events` and `seq.block_durations` directly, in play
-order, and expands each unique RF, gradient and ADC event one time only, by
-`seq.get_block` on the first block that uses it (never once for each block). The
-offsets and values it stores are exactly those of `waveforms._block_events`.
-`encode_tables` and `decode_tables` are the gzip+base64 wire form of the tables and its
-inverse. `lane_meta` gives the lane titles, colors, domains, ticks and tick labels of
-`file_lanes`, computed from the tables instead of the expanded points, so it costs O(N)
-and O(unique events), not O(the file's points).
+`diagram_tables` reads `seq.block_events` and `seq.block_durations` through
+`seq_index.sequence_index`, in play order, without calling `get_block`. Each unique
+RF, gradient and ADC event is expanded one time only, by `seq_index.rf_events`,
+`grad_events` and `adc_events`, on the first block that uses it, with the block cache
+off (never once for each block). The offsets and values it stores are exactly those of
+`waveforms._block_events`. `encode_tables` and `decode_tables` are the gzip+base64 wire
+form of the tables and its inverse. `lane_meta` gives the lane titles, colors, domains,
+ticks and tick labels of `file_lanes`, computed from the tables instead of the expanded
+points, so it costs O(N) and O(unique events), not O(the file's points).
 """
 
 import base64
@@ -17,8 +18,9 @@ import math
 import numpy as np
 import pypulseq as pp
 
+from .seq_index import _index_dtype, adc_events, grad_events, rf_events, sequence_index
 from .seq_utils import GAMMA, gradient_offsets
-from .waveforms import _AXES, _rf_offsets, _timed_blocks, _value_domain
+from .waveforms import _AXES, _rf_offsets, _value_domain
 
 CHECKPOINT_BLOCKS = 1024
 
@@ -51,103 +53,37 @@ class _Pool:
         return np.concatenate(self._chunks)
 
 
-def _index_dtype(max_value: int):
-    """The smallest of uint8, uint16, uint32 that holds `max_value`."""
-    if max_value <= 0xFF:
-        return np.uint8
-    if max_value <= 0xFFFF:
-        return np.uint16
-    return np.uint32
-
-
 def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
     """The block table and the RF, gradient and ADC event tables of `seq` (section 4.2
     of `docs/plans/diagram-event-table.md`), as numpy arrays with the dtypes it lists.
 
-    Reads `seq.block_events` and `seq.block_durations` directly, in play order: it does
-    not call `get_block` for each block. `gx`, `gy` and `gz` share one dense gradient
-    index space, as `seq.grad_library` does. The checkpoints are the sequential sum of
-    `waveforms._timed_blocks`, sampled every `CHECKPOINT_BLOCKS` blocks.
+    Builds `seq_index.sequence_index(seq)` and reads its columns: the index itself
+    reads `seq.block_events` and `seq.block_durations` in play order, without calling
+    `get_block`. `gx`, `gy` and `gz` share one dense gradient index space in the index
+    (as `seq.grad_library` does), but each is cast here to its own narrowest dtype.
+    Each unique RF, gradient and ADC event is read one time, by
+    `seq_index.rf_events`/`grad_events`/`adc_events`, with the block cache off. The
+    checkpoints are the index's own block-start times (`start_s`, the sequential sum
+    of the durations), sampled every `CHECKPOINT_BLOCKS` blocks.
     """
-    block_events = seq.block_events
-    n = len(block_events)
+    index = sequence_index(seq)
+    n = index.num_blocks
 
-    duration_index = np.empty(n, dtype=np.uint32)
-    duration_map: dict[float, int] = {}
-    durations: list[float] = []
+    # The unique block durations, in the order of their first appearance in play
+    # order, matched by float equality (as the per-block dict of the former loop
+    # matched them): np.unique's sorted unique values, reordered by each value's
+    # first position, with the same reordering applied to the per-block index.
+    unique_durations, first_pos, inverse = np.unique(
+        index.duration_s, return_index=True, return_inverse=True
+    )
+    order = np.argsort(first_pos, kind="stable")
+    durations = unique_durations[order]
+    rank = np.empty(order.size, dtype=np.int64)
+    rank[order] = np.arange(order.size)
+    duration_index = rank[inverse].astype(_index_dtype(durations.size - 1 if durations.size else 0))
 
-    rf_index = np.empty(n, dtype=np.uint32)
-    rf_map: dict[int, int] = {}
-    rf_first: list[tuple[int, str]] = []
-
-    gx_index = np.empty(n, dtype=np.uint32)
-    gy_index = np.empty(n, dtype=np.uint32)
-    gz_index = np.empty(n, dtype=np.uint32)
-    grad_cols = (("gx", gx_index), ("gy", gy_index), ("gz", gz_index))
-    grad_map: dict[int, int] = {}
-    grad_first: list[tuple[int, str]] = []
-
-    adc_index = np.empty(n, dtype=np.uint32)
-    adc_map: dict[int, int] = {}
-    adc_first: list[tuple[int, str]] = []
-
-    checkpoints: list[float] = []
-
-    for i, (block_id, start, duration) in enumerate(_timed_blocks(seq)):
-        if i % CHECKPOINT_BLOCKS == 0:
-            checkpoints.append(start)
-
-        di = duration_map.get(duration)
-        if di is None:
-            di = len(durations)
-            duration_map[duration] = di
-            durations.append(duration)
-        duration_index[i] = di
-
-        ev = block_events[block_id]
-
-        rf_id = int(ev[1])
-        if rf_id:
-            dense = rf_map.get(rf_id)
-            if dense is None:
-                dense = len(rf_map) + 1
-                rf_map[rf_id] = dense
-                rf_first.append((block_id, "rf"))
-            rf_index[i] = dense
-        else:
-            rf_index[i] = 0
-
-        for col, (attr, arr) in zip((2, 3, 4), grad_cols):
-            gid = int(ev[col])
-            if gid:
-                dense = grad_map.get(gid)
-                if dense is None:
-                    dense = len(grad_map) + 1
-                    grad_map[gid] = dense
-                    grad_first.append((block_id, attr))
-                arr[i] = dense
-            else:
-                arr[i] = 0
-
-        adc_id = int(ev[5])
-        if adc_id:
-            dense = adc_map.get(adc_id)
-            if dense is None:
-                dense = len(adc_map) + 1
-                adc_map[adc_id] = dense
-                adc_first.append((block_id, "adc"))
-            adc_index[i] = dense
-        else:
-            adc_index[i] = 0
-
-    block_cache: dict[int, object] = {}
-
-    def block_at(block_id: int):
-        block = block_cache.get(block_id)
-        if block is None:
-            block = seq.get_block(block_id)
-            block_cache[block_id] = block
-        return block
+    # A copy, not a view: the index is kept for the sequence (sequence_index).
+    checkpoints = index.start_s[::CHECKPOINT_BLOCKS].copy()
 
     rf_delay: list[float] = []
     rf_mag_n: list[int] = []
@@ -160,8 +96,7 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
     rf_mag_pool = _Pool()
     rf_phase_offset_pool = _Pool()
     rf_phase_pool = _Pool()
-    for block_id, attr in rf_first:
-        rf = getattr(block_at(block_id), attr)
+    for _, rf in rf_events(seq, index):
         delay, mag_offsets, mag, phase_offsets, phase = _rf_offsets(rf)
         rf_delay.append(float(delay))
         rf_mag_n.append(mag_offsets.size)
@@ -177,8 +112,7 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
     grad_at: list[int] = []
     grad_offset_pool = _Pool()
     grad_value_pool = _Pool()
-    for block_id, attr in grad_first:
-        g = getattr(block_at(block_id), attr)
+    for _, g in grad_events(seq, index):
         delay, offsets, amp = gradient_offsets(g)
         grad_delay.append(float(delay))
         grad_n.append(offsets.size)
@@ -187,22 +121,19 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
 
     adc_delay: list[float] = []
     adc_length: list[float] = []
-    for block_id, attr in adc_first:
-        adc = getattr(block_at(block_id), attr)
+    for _, adc in adc_events(seq, index):
         adc_delay.append(float(adc.delay))
         adc_length.append(float(adc.num_samples * adc.dwell))
 
     return {
-        "duration_index": duration_index.astype(
-            _index_dtype(len(durations) - 1 if durations else 0)
-        ),
-        "durations": np.asarray(durations, dtype=np.float64),
-        "checkpoints": np.asarray(checkpoints, dtype=np.float64),
-        "rf": rf_index.astype(_index_dtype(len(rf_map))),
-        "gx": gx_index.astype(_index_dtype(int(gx_index.max()) if n else 0)),
-        "gy": gy_index.astype(_index_dtype(int(gy_index.max()) if n else 0)),
-        "gz": gz_index.astype(_index_dtype(int(gz_index.max()) if n else 0)),
-        "adc": adc_index.astype(_index_dtype(len(adc_map))),
+        "duration_index": duration_index,
+        "durations": durations,
+        "checkpoints": checkpoints,
+        "rf": index.rf.astype(_index_dtype(index.rf_first.size)),
+        "gx": index.gx.astype(_index_dtype(int(index.gx.max()) if n else 0)),
+        "gy": index.gy.astype(_index_dtype(int(index.gy.max()) if n else 0)),
+        "gz": index.gz.astype(_index_dtype(int(index.gz.max()) if n else 0)),
+        "adc": index.adc.astype(_index_dtype(index.adc_first.size)),
         "rf_delay": np.asarray(rf_delay, dtype=np.float64),
         "rf_mag_n": np.asarray(rf_mag_n, dtype=np.uint32),
         "rf_mag_offset_at": np.asarray(rf_mag_offset_at, dtype=np.uint32),

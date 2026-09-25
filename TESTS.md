@@ -3773,8 +3773,379 @@ inside `pytest.raises`.
 
 ### 2.22 Sequence index (`test_seq_index.py`)
 
-Phase 2 of `docs/plans/cards-at-scale.md` adds the entries.
+`test_seq_index.py` tests `seq_index.py` (section 4.1 of
+`docs/plans/cards-at-scale.md`): the dense RF, gradient and ADC event numbering of
+`sequence_index`, its block times, its dtypes and its cache; `block_cache_off`; and
+`rf_events`, `grad_events` and `adc_events`, which read each unique event one time with
+the block cache off. The
+reference numbering, `_reference_index`, is a plain loop over the blocks with one dict
+for each event kind: the loop that `diagram_data.diagram_tables` had before it used the
+index. Its `*_first` arrays hold play indexes, as `SequenceIndex` does (the old loop
+kept block ids). The tests load `build_repeating` and `build_worst` from
+`scripts/diagram_scale.py` by path, because that script is not part of the package.
+
+#### `test_dense_columns_and_first_arrays_match_the_reference_numbering`
+
+**Checks:** `sequence_index`'s `rf`, `gx`, `gy`, `gz` and `adc` columns, `rf_first`,
+`grad_first`, `grad_first_axis`, `adc_first` and `block_id` equal `_reference_index`'s,
+for a synthetic spin echo, gradient echo, empty and arbitrary-gradient sequence, and
+for `build_repeating`/`build_worst` at 50 TRs (250 blocks).
+
+**How:** The test is parametrized over the four synthetic builders and two lambdas
+wrapping `build_repeating(50)`/`build_worst(50)`. For each, it builds the sequence,
+computes `sequence_index(seq)` and `_reference_index(seq)`, and compares every one of
+those nine arrays with `numpy.array_equal` (the dense columns cast to `int64` first,
+since `sequence_index` narrows their dtype while the reference always uses `int64`).
+
+**Assumptions:** None.
+
+#### `test_grad_dense_numbering_follows_gx_then_gy_then_gz_within_a_block`
+
+**Checks:** The dense numbering of gradient events follows gx before gy before gz
+within one block, and reusing an already-numbered event on a different axis of a later
+block does not add a new dense index, with the expected numbers worked out by hand.
+
+**How:** The test builds a 3-block sequence by hand: block 0 has only a gz trapezoid;
+block 1 has a gx and a gy trapezoid, each a different amplitude; block 2 reuses block
+0's gz trapezoid object (a shallow copy with its `channel` changed to `"x"`) on gx. It
+checks `index.gx`, `gy`, `gz`, `grad_first` and `grad_first_axis` against the
+hand-worked values, then checks that `grad_events` yields the three events in dense
+order 1, 2, 3 with the expected amplitudes (1e5, 2e5, 3e5).
+
+**Assumptions:**
+
+- pypulseq's gradient library keys an event by its shape and amplitude data, not by
+  the channel it is later read from, so the same trapezoid object can be reused on a
+  different axis and keep the same library id. This was checked directly against
+  `seq.block_events` and `seq.grad_library` while writing this test; the test itself
+  then relies on it to make the hand-worked expected numbers correct.
+
+#### `test_start_s_is_the_sequential_sum_and_end_s_is_its_final_value`
+
+**Checks:** `index.start_s` is the sequential sum of the block durations from 0.0,
+`index.end_s` is that sum's final value, and `index.duration_s` is
+`seq.block_durations` in play order.
+
+**How:** The test builds `build_repeating(50)`, computes `sequence_index(seq)`, and
+independently walks `seq.block_events.keys()` with a running total `t` (starting at
+0.0, recording `t` before adding each block's own duration from
+`seq.block_durations`). It compares `index.start_s` to that running list with
+`numpy.array_equal`, `index.end_s` to the final `t` with `==`, and `index.duration_s`
+to a plain array of the `seq.block_durations` values in play order with
+`numpy.array_equal`.
+
+**Assumptions:** None.
+
+#### `test_dtype_is_uint8_for_a_sequence_with_few_unique_events`
+
+**Checks:** For a sequence with 255 or fewer unique events of each kind, every one of
+`sequence_index`'s dense columns (`rf`, `gx`, `gy`, `gz`, `adc`) has dtype `uint8`.
+
+**How:** The test builds `gre_sequence()` (the default 4 TRs), checks that
+`rf_first`, `grad_first` and `adc_first` each have at most 255 entries, and checks the
+dtype of each of the five dense columns.
+
+**Assumptions:** None.
+
+#### `test_dtype_widens_to_uint16_past_255_unique_gradient_events`
+
+**Checks:** Once a sequence has more than 255 unique gradient events, `gx`, `gy` and
+`gz` widen to `uint16`.
+
+**How:** The test builds `build_repeating(260)`. `build_repeating`'s phase-encode
+table has 256 amplitudes (`PE_STEPS`), so 260 TRs give more than 255 unique gradient
+events overall (the phase-encode events, plus the readout and the spoiler, each reused
+every TR). It checks that `grad_first` has more than 255 entries and that `gx`, `gy`
+and `gz` have dtype `uint16`.
+
+**Assumptions:**
+
+- `build_repeating`'s phase-encode table size (`PE_STEPS = 256` in
+  `scripts/diagram_scale.py`) is large enough, on its own, to push the total past 255
+  once combined with the readout and spoiler events; this is read from that script,
+  not re-derived here.
+
+#### `test_sequence_index_of_a_sequence_with_no_blocks`
+
+**Checks:** `sequence_index` of a `pp.Sequence` with no blocks added has `num_blocks`
+0, `end_s` 0.0, and every array (`block_id`, `start_s`, `duration_s`, `rf`, `gx`,
+`gy`, `gz`, `adc`, `rf_first`, `grad_first`, `grad_first_axis`, `adc_first`) empty.
+
+**How:** The test builds `pp.Sequence(SYSTEM)` with no `add_block` call, computes
+`sequence_index(seq)`, and checks `num_blocks`, `end_s`, and the size of each of the
+twelve arrays.
+
+**Assumptions:** None.
+
+#### `test_sequence_index_is_kept_for_one_sequence_object_and_rebuilt_after_add_block`
+
+**Checks:** `sequence_index(seq)` returns the same object on a second call for the
+same sequence, and a new, longer index after `add_block`.
+
+**How:** The test builds `gre_sequence()`, calls `sequence_index(seq)` twice and
+checks the two results are the same object (`is`), then calls
+`seq.add_block(pp.make_delay(1e-3))` and checks that a third call returns a different
+object whose `num_blocks` is one more than the first.
+
+**Assumptions:** None.
+
+#### `test_block_cache_off_restores_use_block_cache_true`
+
+**Checks:** `block_cache_off` sets `use_block_cache` to `False` inside the block, and
+restores it to `True` afterward when that was the value beforehand.
+
+**How:** The test sets `seq.use_block_cache = True`, checks it is `False` inside
+`block_cache_off`, and checks it is `True` again afterward.
+
+**Assumptions:** None.
+
+#### `test_block_cache_off_restores_use_block_cache_false`
+
+**Checks:** `block_cache_off` sets `use_block_cache` to `False` inside the block, and
+restores it to `False` afterward when that was already the value beforehand.
+
+**How:** The test sets `seq.use_block_cache = False`, checks it is still `False`
+inside `block_cache_off`, and checks it is `False` again afterward.
+
+**Assumptions:** None.
+
+#### `test_block_cache_off_restores_the_old_value_after_an_exception`
+
+**Checks:** `block_cache_off` restores the old `use_block_cache` value even when an
+exception is raised inside the block.
+
+**How:** The test sets `seq.use_block_cache = True`, raises a `ValueError` inside
+`block_cache_off` (after checking it reads `False` there), catches it with
+`pytest.raises`, and checks `use_block_cache` is `True` again afterward.
+
+**Assumptions:** None.
+
+#### `test_block_cache_off_does_not_remove_blocks_already_in_the_cache`
+
+**Checks:** `block_cache_off` does not remove a block that was already in
+`seq.block_cache` before it ran.
+
+**How:** The test builds `gre_sequence()`, calls `seq.get_block` on the first block id
+to populate the cache, checks it is in `seq.block_cache`, runs an empty
+`block_cache_off` block, and checks the block is still in `seq.block_cache` afterward.
+
+**Assumptions:** None.
+
+#### `test_rf_events_reads_each_unique_event_once_with_the_cache_off`
+
+**Checks:** `rf_events` calls `seq.get_block` exactly once for each unique RF event,
+with the block cache off during every call and restored afterward; it yields dense
+indexes 1 to K in order; and each yielded event equals the same block's `rf` event
+read separately.
+
+**How:** The test builds `spin_echo_sequence()` (two distinct RF events), wraps
+`seq.get_block` with a counting wrapper (monkeypatched onto the instance) that also
+records `seq.use_block_cache` at each call, sets `seq.use_block_cache = True`, and
+calls `rf_events(seq, index)`, collecting its results. It checks the call count
+against the number of unique first-use blocks (`numpy.unique(index.rf_first).size`),
+that every recorded cache flag is `False`, and that `use_block_cache` is `True` again
+afterward. It checks the yielded dense indexes are 1 to K in order, and, for each
+result, that its `delay`, `type` and `signal` equal the `rf` attribute of
+`seq.get_block(block_id)` read again through the saved, unwrapped `get_block`.
+
+**Assumptions:** None.
+
+#### `test_grad_events_reads_each_unique_first_use_block_once_with_the_cache_off`
+
+**Checks:** `grad_events` calls `seq.get_block` exactly once for each distinct
+first-use block, not once for each unique gradient event, when two axes of one block
+are both first uses; the block cache is off during every call and restored afterward;
+the yielded dense indexes are 1 to K in order; and each yielded event equals the
+corresponding axis attribute of that block, read separately.
+
+**How:** The test builds a 3-block sequence where block 1 introduces both a gx and a
+gy event (so it is the first-use block of two dense indexes at once), wraps
+`seq.get_block` as in the RF test, and calls `grad_events(seq, index)`. It checks the
+call count is 2 (the two distinct first-use blocks, not the three dense events), that
+every recorded cache flag is `False`, and that `use_block_cache` is restored to
+`True`. It checks the yielded dense indexes are 1, 2, 3 in order, and, for each, that
+its `delay`, `type` and `amplitude` equal the `gx`/`gy`/`gz` attribute (picked by
+`grad_first_axis`) of that block, read separately with the saved, unwrapped
+`get_block`.
+
+**Assumptions:** None.
+
+#### `test_adc_events_reads_each_unique_event_once_with_the_cache_off`
+
+**Checks:** `adc_events` calls `seq.get_block` exactly once for the sequence's one
+unique ADC event (reused every TR), with the block cache off during the call and
+restored afterward, and the yielded event equals that block's `adc` attribute read
+separately.
+
+**How:** The test builds `gre_sequence(num_trs=5)`, whose ADC event is the same
+object reused every TR, and repeats the wrapper technique of the RF and gradient
+tests. It checks the call count is 1, that the recorded cache flag is `False`, that
+`use_block_cache` is restored to `True`, and that the yielded event's `delay`,
+`num_samples` and `dwell` equal the `adc` attribute of that block read separately.
+
+**Assumptions:** None.
 
 ### 2.23 Raster sampler (`test_sampling.py`)
 
-Phase 2 of `docs/plans/cards-at-scale.md` adds the entries.
+`test_sampling.py` tests `sampling.py` (section 4.3 of
+`docs/plans/cards-at-scale.md`): `GradientSampler`, which gives the gradient waveform of one axis at sorted times, from
+the sequence index and the unique gradient events. The reference is pypulseq's
+`seq.get_gradients()`: `_assert_matches_pypulseq` compares `sample(axis, t)` with the
+`PPoly` of each axis at the same times, within a relative 1e-12 and an absolute 1e-12
+times the largest |value| of the reference (section 3.5, item 2, of the plan). They are
+not bit-exact: `seq_utils.gradient_offsets` adds a trapezoid's corner times in a
+different order than pypulseq's `waveforms()`, and `PPoly` evaluates a line segment with
+a different formula than `numpy.interp`. The comparison checks `GradientSampler`, not
+pypulseq.
+
+#### `test_whole_file_matches_pypulseq_for_synthetic_sequences`
+
+**Checks:** For each of the four synthetic sequence builders (a spin echo, a gradient
+echo, the arbitrary gradient, and the empty sequence), `GradientSampler.sample` gives
+the same three-axis waveform as `seq.get_gradients()`, sampled at the raster centres
+of the whole file.
+
+**How:** Parametrized over `spin_echo_sequence()`, `gre_sequence()`,
+`arbitrary_gradient_sequence()` and `empty_sequence()`. For each, `t` is
+`(k + 0.5) * grad_raster_time` for `k` in `range(ceil(duration / raster))`, with
+`duration` the sequence index's `end_s`; the test compares all three axes against
+`seq.get_gradients()` with `_assert_matches_pypulseq`.
+
+**Assumptions:**
+
+- None of these raster-centre times falls within `get_gradients()`'s excluded 1e-12 s
+  band around the first or last point of an axis (the `teps` zero points it adds); this
+  was not arranged, only observed to hold for these four sequences.
+
+#### `test_subrange_that_cuts_blocks_matches_pypulseq`
+
+**Checks:** A sample range that starts in the middle of one block and ends in the
+middle of another gives the same waveform as `seq.get_gradients()` on all three axes,
+including an axis whose only event in the file is entirely before the range.
+
+**How:** Builds `gre_sequence(num_trs=1)` (5 blocks: RF, phase-encode on y, readout on
+x with an ADC, spoiler on z, delay). `t` is 500 evenly spaced points from the middle of
+block 2 (the readout, which the range cuts) to the middle of block 4 (the delay, after
+the spoiler); the phase-encode event of block 1 is entirely before this range, so it
+also checks that gy is 0 for the rest of the file after its one event. Compares with
+`_assert_matches_pypulseq`.
+
+**Assumptions:** None.
+
+#### `test_subrange_inside_a_gap_matches_pypulseq`
+
+**Checks:** A sample range entirely inside a gap between two gradient events on the
+same axis (a block with no event of its own) still gives the pypulseq value: a
+straight line between the earlier event's last point and the later event's first
+point.
+
+**How:** Builds a trapezoid on x, a 2 ms delay block, and a second trapezoid on x. `t`
+is 200 evenly spaced points strictly inside the delay block, 50 µs in from each edge.
+Compares with `_assert_matches_pypulseq`.
+
+**Assumptions:** None.
+
+#### `test_single_sample_matches_pypulseq`
+
+**Checks:** `sample` gives the pypulseq value for a `t` array of length 1.
+
+**How:** Builds `gre_sequence(num_trs=1)`, samples at one time (the middle of the
+readout block), and compares with `_assert_matches_pypulseq`.
+
+**Assumptions:** None.
+
+#### `test_amplitude_continues_across_a_block_junction`
+
+**Checks:** Two extended trapezoids that together make one trapezoid, split into two
+blocks at the middle of the flat top so the amplitude continues unchanged from one
+block into the next, give the same waveform as `seq.get_gradients()` around the
+junction: the join rule's dropped point does not create a spurious step.
+
+**How:** `_junction_sequence(step_hz_per_m=0.0)` builds the two extended trapezoids
+from the rise, flat and fall of one area-1000 trapezoid, split at the middle of the
+flat top, and returns the junction time. `t` is 41 points evenly spaced over 40
+gradient-raster periods centred on the junction. Compares with
+`_assert_matches_pypulseq`.
+
+**Assumptions:** None.
+
+#### `test_tolerated_step_at_a_block_junction_matches_pypulseq`
+
+**Checks:** A step at a block junction that is inside what pypulseq's `add_block`
+accepts (up to `max_slew * grad_raster_time`) still gives the same waveform as
+`seq.get_gradients()`: the join rule keeps the value of the earlier event at the
+junction time even when the two events do not meet exactly.
+
+**How:** Same construction as `test_amplitude_continues_across_a_block_junction`, with
+`_junction_sequence`'s `step_hz_per_m` set to half of `max_slew * grad_raster_time`
+instead of 0. The test does not check that `add_block` accepts the step; that is
+pypulseq's own check, exercised here only because building the sequence requires it to
+pass.
+
+**Assumptions:** None.
+
+#### `test_triangle_trapezoid_matches_pypulseq`
+
+**Checks:** A trapezoid with no flat time (`make_trapezoid` gives `flat_time == 0.0`),
+whose `gradient_offsets` therefore has two points at the same time with the same
+value, gives the same waveform as `seq.get_gradients()`: the join rule's
+duplicate-point removal does not change the value.
+
+**How:** Builds a single-block sequence with one small-area trapezoid on x, asserts
+`flat_time == 0.0` to confirm the construction is the intended triangle, samples the
+whole file at the raster centres, and compares with `_assert_matches_pypulseq`.
+
+**Assumptions:** None.
+
+#### `test_axis_without_events_is_zero`
+
+**Checks:** An axis with no gradient event anywhere in the file (`get_gradients()`
+gives `None` for it) samples to exactly 0 at every time.
+
+**How:** Builds `spin_echo_sequence()` (gx and gy only), asserts
+`seq.get_gradients()[2] is None` to document that gz has no event, samples gz at the
+raster centres of the whole file, and checks the result against `numpy.zeros` with
+`numpy.testing.assert_array_equal` (an exact check, not a tolerance).
+
+**Assumptions:** None.
+
+#### `test_zero_before_the_first_event_and_after_the_last`
+
+**Checks:** The waveform is exactly 0 before the first gradient event of the file and
+after the last one.
+
+**How:** Builds a delay block, one trapezoid on x, and a second delay block. Samples
+50 points inside the first delay block (before the event) and 50 points inside the
+second delay block (after the event), and checks both against `numpy.zeros` exactly.
+
+**Assumptions:** None.
+
+#### `test_empty_sequence_is_zero_for_any_t`
+
+**Checks:** A sequence with no gradient event on any axis gives exactly 0 for any `t`,
+including a time past the sequence's own duration.
+
+**How:** Builds `empty_sequence()` (one delay block; no RF, gradients or ADC). Samples
+all three axes at `t = [0.0, 1e-3, 5.0]` (5.0 s is far past the sequence's 2 ms), and
+checks each result against `numpy.zeros` exactly, with `dtype == float64`.
+
+**Assumptions:** None.
+
+#### `test_empty_times_gives_empty_output`
+
+**Checks:** `sample` with an empty `t` returns an empty `float64` array, not an error.
+
+**How:** Builds `gre_sequence(num_trs=1)`, calls `sample("gx", numpy.array([]))`, and
+checks the result's dtype and shape.
+
+**Assumptions:** None.
+
+#### `test_invalid_axis_name_raises_value_error`
+
+**Checks:** `sample` raises `ValueError` for an axis name other than "gx", "gy" or
+"gz".
+
+**How:** Builds `gre_sequence(num_trs=1)`, calls `sample("gw", ...)` inside
+`pytest.raises(ValueError)`.
+
+**Assumptions:** None.
