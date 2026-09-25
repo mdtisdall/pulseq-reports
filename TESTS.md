@@ -3700,3 +3700,11 @@ of its own). For each, it calls the card with two named sequences, a plain
 inside `pytest.raises`.
 
 **Assumptions:** None.
+
+### 2.22 Sequence index (`test_seq_index.py`)
+
+Phase 2 of `docs/plans/cards-at-scale.md` adds the entries.
+
+### 2.23 Raster sampler (`test_sampling.py`)
+
+Phase 2 of `docs/plans/cards-at-scale.md` adds the entries.
