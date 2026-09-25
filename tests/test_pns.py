@@ -2,7 +2,7 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from pypulseq.utils.safe_pns_prediction import safe_example_hw
-from synthetic import SYSTEM, empty_sequence, spin_echo_sequence
+from synthetic import SYSTEM, block_pulse, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import pns
 
@@ -141,6 +141,65 @@ def test_no_gradients():
     assert p.hardware == pns.EXAMPLE_HARDWARE
     assert p.peak == 0
     assert p.peak_time_s is None
+
+
+def test_no_gradients_with_rf_and_adc():
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(block_pulse("excitation", np.pi / 2))
+    seq.add_block(
+        pp.make_adc(num_samples=64, dwell=20e-6, delay=SYSTEM.adc_dead_time, system=SYSTEM)
+    )
+    assert pns.pns_prediction(seq).reason == pns.NO_GRADIENTS
+
+
+@pytest.mark.parametrize("channel", ["x", "y", "z"])
+def test_a_gradient_on_one_axis_has_a_prediction(channel):
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(pp.make_delay(1e-3))
+    seq.add_block(pp.make_trapezoid(channel=channel, area=1000, system=SYSTEM))
+    p = pns.pns_prediction(seq)
+    assert p.reason is None
+    assert p.peak > 0
+
+
+def test_prediction_builds_the_gradients_one_time(monkeypatch):
+    seq = spin_echo_sequence()
+    calls = []
+    get_gradients = seq.get_gradients
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return get_gradients(*args, **kwargs)
+
+    monkeypatch.setattr(seq, "get_gradients", counted)
+    pns.pns_prediction(seq)
+    assert len(calls) == 1  # the one in calculate_pns
+
+
+@pytest.mark.parametrize("use_block_cache", [True, False])
+def test_prediction_keeps_no_blocks_and_gives_back_the_cache_setting(use_block_cache):
+    seq = spin_echo_sequence()
+    seq.use_block_cache = use_block_cache
+    seq.block_cache.clear()
+    pns.pns_prediction(seq)
+    assert seq.use_block_cache is use_block_cache
+    assert not seq.block_cache
+
+
+def test_prediction_gives_back_the_cache_setting_after_an_error(monkeypatch):
+    seq = spin_echo_sequence()
+    seq.use_block_cache = True
+    seen = []
+
+    def fail(*args, **kwargs):
+        seen.append(seq.use_block_cache)
+        raise RuntimeError("calculate_pns failed")
+
+    monkeypatch.setattr(seq, "calculate_pns", fail)
+    with pytest.raises(RuntimeError, match="calculate_pns failed"):
+        pns.pns_prediction(seq)
+    assert seen == [False]
+    assert seq.use_block_cache is True
 
 
 def _three_trs(peak_tr: int) -> pp.Sequence:

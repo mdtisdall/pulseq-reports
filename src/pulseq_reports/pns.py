@@ -102,13 +102,27 @@ def pns_prediction(seq: pp.Sequence, asc_path: str | Path | None = None) -> PnsP
         hw = asc_to_hw(asc)
         hardware, asc_file = hardware_name(asc), Path(asc_path).name
 
-    if all(g is None for g in seq.get_gradients()):
+    if not _has_gradients(seq):
         empty = np.zeros(0)
         return PnsPrediction(NO_GRADIENTS, hardware, asc_file, empty, empty)
 
-    _, norm, components, t = seq.calculate_pns(hw, do_plots=False)
+    # calculate_pns reads every block with get_block. With the block cache on, pypulseq
+    # keeps each of them in seq.block_cache, and nothing removes them.
+    use_block_cache = seq.use_block_cache
+    seq.use_block_cache = False
+    try:
+        _, norm, components, t = seq.calculate_pns(hw, do_plots=False)
+    finally:
+        seq.use_block_cache = use_block_cache
     axes = {axis: components[:, i] for i, axis in enumerate("xyz")}
     return PnsPrediction(None, hardware, asc_file, t, norm, axes)
+
+
+def _has_gradients(seq: pp.Sequence) -> bool:
+    """Whether a block of `seq` has a gradient event, from the gradient columns (2, 3 and 4)
+    of `seq.block_events`. `seq.get_gradients()` gives the same answer, but it builds the
+    gradients of the whole file."""
+    return any(ev[2] or ev[3] or ev[4] for ev in seq.block_events.values())
 
 
 def peak_tr_window(seq: pp.Sequence, peak_time_s: float | None) -> tuple[float, float] | None:

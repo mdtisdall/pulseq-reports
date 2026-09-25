@@ -617,7 +617,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy" },
-    { name = "pypulseq", specifier = ">=1.5.0.post1" },
+    { name = "pypulseq", git = "https://github.com/mdtisdall/pypulseq?rev=40f61d39c9360e40c5d9b096d185973ffb3e876d" },
     { name = "scipy" },
 ]
 
@@ -648,16 +648,12 @@ wheels = [
 [[package]]
 name = "pypulseq"
 version = "1.5.0.post1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/mdtisdall/pypulseq?rev=40f61d39c9360e40c5d9b096d185973ffb3e876d#40f61d39c9360e40c5d9b096d185973ffb3e876d" }
 dependencies = [
     { name = "coverage" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "scipy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/bb/2c/a8cd72c6ae8f38d93c01e1cfc624fa827e6fafcf55446ef6d2573c8b362a/pypulseq-1.5.0.post1.tar.gz", hash = "sha256:4b7f84906b7ca95fc602159b16af73973ca5e1e251b7e5070fa094ada3ec1059", size = 134641, upload-time = "2026-01-29T13:47:25.003Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5c/12/554c847fbffd9841e70c23d1736a610aba8208d575036d71f904b7ed005d/pypulseq-1.5.0.post1-py3-none-any.whl", hash = "sha256:235bd463530153db3fd00cd759315db87148c9c3cadb1dca1fc16347039fecdf", size = 138468, upload-time = "2026-01-29T13:47:23.511Z" },
 ]
 
 [[package]]
