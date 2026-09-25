@@ -172,10 +172,11 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 | 6 | `scripts/cards_scale.py` (only a `--pns-lanes` option), `TODO.md`, `docs/usage.md`, this plan file (status and results only) |
 
 Rules: as in `docs/plans/cards-at-scale.md`, section 3.4. Of the other plan,
-only phase 1 edits `pns.py` and `tests/test_pns.py`. This plan starts after
-that phase is merged. The former phase 6 of the other plan (PNS in chunks)
-moves to phases 1, 2 and 4 of this plan. So no phase of the other plan edits
-the PNS files at the same time as this plan.
+only phase 1 edits `pns.py`, `tests/test_pns.py` and `ACCEPTED["pns"]` of
+`scripts/vb_parity.py`. This plan starts after that phase is merged. The
+former phase 6 of the other plan (PNS in chunks) moves to phases 1, 2 and 4
+of this plan. So no phase of the other plan edits the PNS files at the same
+time as this plan.
 
 ### 3.5 The exactness rule
 
