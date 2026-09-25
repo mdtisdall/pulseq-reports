@@ -326,8 +326,9 @@ moved to `docs/plans/diagram-lanes.md`, which starts after phases 1 and 2 are
 merged.
 
 - Phase 1 starts at once. It does not need phase 0 or phase 2. Its
-  pulseq-reports part edits only the PNS files, `pyproject.toml`, `uv.lock`
-  and the PNS sections of `TESTS.md`.
+  pulseq-reports part edits only the PNS files, `pyproject.toml`, `uv.lock`,
+  `ACCEPTED["pns"]` of `scripts/vb_parity.py` and the PNS sections of
+  `TESTS.md`.
 - Phase 0 and phase 2 can run at the same time as phase 1.
 - Phase 2 needs phase 0 (its `TESTS.md` placeholder sections).
 - Phases 3, 4 and 5 start after phase 2 is merged. They edit different files
@@ -345,7 +346,7 @@ Tests: `tests/`.
 | Phase | Files that the phase creates or edits |
 |---|---|
 | 0 | `TESTS.md` (only: add two placeholder sections, task 0.1) |
-| 1 | In the fork: `src/pypulseq/utils/safe_pns_prediction.py` (only `safe_tau_lowpass`) and one test file in pypulseq's suite. In this project: `pyproject.toml` (only `[tool.uv.sources]`), `uv.lock`, `pns.py`, `tests/test_pns.py`, `TESTS.md` section 2.11 |
+| 1 | In the fork: `src/pypulseq/utils/safe_pns_prediction.py` (only `safe_tau_lowpass`) and one test file in pypulseq's suite. In this project: `pyproject.toml` (only `[tool.uv.sources]`), `uv.lock`, `pns.py`, `tests/test_pns.py`, `scripts/vb_parity.py` (only `ACCEPTED["pns"]`), `TESTS.md` section 2.11 |
 | 2 | `seq_index.py` (new), `sampling.py` (new), `diagram_data.py`, `tests/test_seq_index.py` (new), `tests/test_sampling.py` (new), `tests/test_diagram_data.py` (only if a test must change), `scripts/cards_scale.py` (new), `TESTS.md` sections 2.18, 2.22 and 2.23 |
 | 3 | `rf_exposure.py`, `cards/rf_exposure.py`, `tests/oracles/rf_exposure.py` (new), `tests/test_rf_exposure.py`, `tests/test_rf_exposure_card.py`, `scripts/vb_parity.py` (only `ACCEPTED["rf exposure"]`), `TESTS.md` sections 2.7 and 2.8 |
 | 4 | `grad_limits.py`, `cards/gradient_limits.py`, `tests/oracles/grad_limits.py` (new), `tests/test_grad_limits.py`, `tests/test_gradient_limits_card.py`, `TESTS.md` sections 2.13 and 2.14 |
@@ -360,10 +361,13 @@ Rules:
 3. `TESTS.md`: each phase edits only its own sections. An unchanged heading
    line separates each pair of sections, so git merges the edits without a
    conflict. If a rebase gives a conflict in `TESTS.md`, keep both sides.
-4. `scripts/vb_parity.py` is in phases 3 and 5, and in phase 4 of
+4. `scripts/vb_parity.py` is in phases 1, 3 and 5, and in phase 4 of
    `docs/plans/diagram-lanes.md`. Each phase edits only its own keys of
    `ACCEPTED`, and only when the user accepts a difference (section 3.5).
    These phases can conflict there. Rebase each one that merges later.
+   Phase 1 and phase 4 of `docs/plans/diagram-lanes.md` both own the key
+   `"pns"`. They do not overlap, because that plan starts after phase 1 is
+   merged.
 5. `tests/oracles/` is new in phase 3, 4 or 5, whichever is first. Each of
    them adds only its own file. Add an empty `tests/oracles/__init__.py` only
    if the imports need it. The first phase adds it, and the others rebase.
