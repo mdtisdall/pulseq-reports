@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
-  dragView} = require(
+  dragView, laneGroupMap, visibleLanes} = require(
   path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "chart_math.js")
 );
 
@@ -294,6 +294,51 @@ test("test_drag_view_is_null_for_a_zero_width_drag", () => {
 test("test_drag_view_widens_a_narrow_drag_to_min_span", () => {
   // drag width 2, widened about its centre (51) to minSpan 10.
   assert.deepEqual(dragView(50, 52, [0, 1000], 10), [46, 56]);
+});
+
+test("test_lane_group_map_maps_each_lane_id_to_its_group_id", () => {
+  const groups = [
+    {id: "rf", label: "RF", laneIds: ["rf_mag", "rf_phase"], visible: true},
+    {id: "grad", label: "Gradients", laneIds: ["gx", "gy", "gz"], visible: true},
+  ];
+  const map = laneGroupMap(groups);
+  assert.equal(map.get("rf_mag"), "rf");
+  assert.equal(map.get("rf_phase"), "rf");
+  assert.equal(map.get("gx"), "grad");
+  assert.equal(map.get("gy"), "grad");
+  assert.equal(map.get("gz"), "grad");
+  assert.equal(map.size, 5);
+});
+
+test("test_visible_lanes_keeps_lanes_of_a_visible_group_and_drops_the_rest", () => {
+  const groups = [
+    {id: "rf", label: "RF", laneIds: ["rf_mag", "rf_phase"], visible: true},
+    {id: "grad", label: "Gradients", laneIds: ["gx", "gy", "gz"], visible: false},
+  ];
+  const map = laneGroupMap(groups);
+  const lanes = [{id: "rf_mag"}, {id: "rf_phase"}, {id: "gx"}, {id: "gy"}, {id: "gz"}];
+  const result = visibleLanes(lanes, map, new Set(["rf"]));
+  assert.deepEqual(result.map(l => l.id), ["rf_mag", "rf_phase"]);
+});
+
+test("test_visible_lanes_always_keeps_a_lane_that_belongs_to_no_group", () => {
+  const groups = [{id: "grad", label: "Gradients", laneIds: ["gx"], visible: true}];
+  const map = laneGroupMap(groups);
+  const lanes = [{id: "gx"}, {id: "adc"}];
+  // The "grad" group is hidden (not in visibleGroupIds), but "adc" belongs to
+  // no group, so it stays.
+  const result = visibleLanes(lanes, map, new Set());
+  assert.deepEqual(result.map(l => l.id), ["adc"]);
+});
+
+test("test_visible_lanes_drops_a_lane_a_provider_returns_for_a_hidden_group", () => {
+  // Even if a lanesFor provider ignores visibleGroupIds and returns a lane of
+  // a hidden group anyway, visibleLanes still drops it (lane_chart.js's
+  // safety net, docs/plans/diagram-lanes.md section 4.5 item 3).
+  const groups = [{id: "pns", label: "PNS", laneIds: ["pns_total"], visible: false}];
+  const map = laneGroupMap(groups);
+  const result = visibleLanes([{id: "pns_total"}], map, new Set());
+  assert.deepEqual(result, []);
 });
 
 test("test_view_functions_do_not_change_their_arguments", () => {

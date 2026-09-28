@@ -179,7 +179,31 @@ const ChartMath = (() => {
     return clampView([Math.min(x0, x1), Math.max(x0, x1)], extent, minSpan);
   }
 
+  // Returns a Map from lane id to group id, from a `groups` list of
+  // {id, laneIds, ...} (the `groups` option of `laneChart`, docs/plans/
+  // diagram-lanes.md section 4.5 item 3). `laneChart` builds this once, when
+  // the chart is made, and reads it on every render through `visibleLanes`.
+  function laneGroupMap(groups) {
+    const map = new Map();
+    for (const group of groups) {
+      for (const laneId of group.laneIds) map.set(laneId, group.id);
+    }
+    return map;
+  }
+
+  // Returns the lanes of `lanes` (each with an `id`) that either belong to no
+  // group in `groupMap` (a lane no group claims is always drawn), or belong
+  // to a group whose id is in `visibleGroupIds`. Used by `laneChart` to drop
+  // the lanes of a hidden group, including one a `lanesFor` provider returns
+  // despite being told which groups are visible.
+  function visibleLanes(lanes, groupMap, visibleGroupIds) {
+    return lanes.filter(lane => {
+      const groupId = groupMap.get(lane.id);
+      return groupId === undefined || visibleGroupIds.has(groupId);
+    });
+  }
+
   return {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
-    dragView};
+    dragView, laneGroupMap, visibleLanes};
 })();
 if (typeof module !== "undefined") module.exports = ChartMath;

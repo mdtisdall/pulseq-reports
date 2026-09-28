@@ -622,7 +622,7 @@ test("test_lanes_for_exact_branch_is_percent_and_matches_the_plain_recursion", (
 
 test("test_lanes_for_pyramid_branch_matches_brute_force_of_overlapping_level_bins", () => {
   const { model } = buildPyramidModel(8);
-  const t0 = 0, t1 = 2.0; // > EXACT_MAX_S: the pyramid branch
+  const t0 = 0, t1 = 20.0; // > EXACT_MAX_S: the pyramid branch
   const bins = 100;
   assert.ok(t1 - t0 > PnsLanes.EXACT_MAX_S);
 
@@ -669,7 +669,7 @@ test("test_lanes_for_pyramid_branch_matches_brute_force_of_overlapping_level_bin
 test("test_lanes_for_gap_true_when_even_the_stored_level_is_too_coarse", () => {
   const { model } = buildPyramidModel(8);
   const B0 = model.levels[0].binSamples * model.dt;
-  const t0 = 0, t1 = 2.0; // > EXACT_MAX_S
+  const t0 = 0, t1 = 20.0; // > EXACT_MAX_S
   const span = t1 - t0;
   // bins chosen so that D / 2 < B0 for every level (level 0 is the
   // smallest bin, so if it does not fit, none do): D = span / bins,
@@ -719,11 +719,38 @@ test("test_on_raster_false_never_uses_the_exact_view", () => {
   assert.equal(result.lane.minmax, true);
 
   // A long span (already past EXACT_MAX_S on its own) still works.
-  const long = PnsLanes.lanesFor(model, LANE_META, [0, 2000], 100);
+  const long = PnsLanes.lanesFor(model, LANE_META, [0, PnsLanes.EXACT_MAX_S * 1000 * 2], 100);
   assert.equal(long.exact, false);
 });
 
-// ---- 9. An empty file, and a file with no gradient event ---------------------
+// ---- 9. gradScale (decision 14) ---------------------------------------------
+
+test("test_grad_scale_multiplies_every_gradient_sample", () => {
+  // A model decoded with gradScale 2 must equal, within the peak tolerance,
+  // a model of the same tables with every grad_value doubled and no
+  // gradScale (decision 14: `grad_value / 1000 * gradScale` in T/m). This
+  // is not required to be bit-exact: the two models take different code
+  // paths to the same number (one scale multiply per sample against a
+  // pre-doubled input table), so 1e-12 of the peak is the bound (rule 2 of
+  // the worker spec, as in section 1 above).
+  const tables = buildPnsTables(60, 29, { durationOptionsDt: [15, 25], noEventProb: 0.3 });
+  const doubledTables = { ...tables, grad_value: Float64Array.from(tables.grad_value, (v) => v * 2) };
+  const scaledModel = decodeModel(tables, { gradScale: 2 });
+  const doubledModel = decodeModel(doubledTables); // gradScale missing: defaults to 1.0
+  const scaledTotals = collectPlainRecursion(scaledModel);
+  const doubledTotals = collectPlainRecursion(doubledModel);
+  assertWithinPeakTol(scaledTotals, doubledTotals, 1e-12, "gradScale 2 vs doubled grad_value");
+
+  // A missing gradScale equals an explicit gradScale: 1.0 exactly: the same
+  // code path, and multiplying a T/m value by 1.0 rounds to itself.
+  const defaultModel = decodeModel(tables); // no gradScale key
+  const explicitModel = decodeModel(tables, { gradScale: 1.0 });
+  const defaultTotals = collectPlainRecursion(defaultModel);
+  const explicitTotals = collectPlainRecursion(explicitModel);
+  assert.deepEqual(Array.from(defaultTotals), Array.from(explicitTotals));
+});
+
+// ---- 10. An empty file, and a file with no gradient event ---------------------
 
 test("test_empty_file_has_no_samples_and_no_exact_view_crash", () => {
   const tables = {
@@ -777,4 +804,93 @@ test("test_file_with_no_gradient_event_is_all_zero", () => {
   for (let k = 0; k < view.total.length; k++) {
     assert.equal(view.total[k], 0, `sample ${k}`);
   }
+});
+
+// ---- 11. laneMeta and statusText (task 4.3, the two pure helpers the diagram
+// card script uses) -----------------------------------------------------------
+
+test("test_lane_meta_has_the_fixed_lane_fields_and_the_peak_dependent_domain", () => {
+  // Fixed fields: unchanged by the summary.
+  const meta = PnsLanes.laneMeta({ peak: 0.5, peak_time_s: 0.01, axis_peaks: { x: 0.1, y: 0.2, z: 0.3 } });
+  assert.equal(meta.id, "pns");
+  assert.equal(meta.title, "PNS");
+  assert.equal(meta.unit, "%");
+  // "ink-2": a color token of report.css (the old PNS card's chart used it;
+  // there is no "pns" token, so the chart's `var(--${lane.color})` must
+  // resolve to an existing custom property).
+  assert.equal(meta.color, "ink-2");
+  assert.equal(meta.kind, "line");
+  assert.deepEqual(meta.ticks, [0, 100]);
+  assert.deepEqual(meta.tick_labels, ["0", "100"]);
+  assert.equal(meta.empty, false);
+  assert.equal(meta.fill, 0.0);
+
+  // domain[0] is always 0; domain[1] is 1.1 * max(100, 100 * peak) (plan
+  // section 4.5, item 4, and the worker spec): a peak below the limit still
+  // gives the [0, 110] domain the old PNS card's chart used, and a peak
+  // above the limit widens the domain to show it. 1.1 * 100 is not exact in
+  // float64, so these compare within a tiny tolerance, not with deepEqual.
+  const domainOf = peak => PnsLanes.laneMeta({ peak }).domain;
+  const assertDomain = (peak, hi) => {
+    const [lo, got] = domainOf(peak);
+    assert.equal(lo, 0, `peak=${peak}`);
+    assert.ok(Math.abs(got - hi) < 1e-9, `peak=${peak}: expected ~${hi}, got ${got}`);
+  };
+  assertDomain(0.5, 110);
+  assertDomain(0.86, 110);
+  assertDomain(1.0, 110);
+  assertDomain(1.5, 165);
+});
+
+test("test_status_text_exact", () => {
+  // "PNS: exact." whenever result.exact is true, whatever onRaster is (a
+  // file that is not on the raster never reaches lanesFor's exact branch,
+  // so this case is defensive, not one lanesFor itself produces).
+  assert.equal(PnsLanes.statusText({ exact: true, binMs: null, gap: false }, true), "PNS: exact.");
+});
+
+test("test_status_text_bins_with_a_sensible_digit_count", () => {
+  // The bin width is formatted to 3 significant figures (a sensible digit
+  // count), not printed with pns_lanes.js's own float64 precision.
+  assert.equal(
+    PnsLanes.statusText({ exact: false, binMs: 6.15, gap: false }, true),
+    "PNS: minimum and maximum in bins of 6.15 ms."
+  );
+  assert.equal(
+    PnsLanes.statusText({ exact: false, binMs: 393.6, gap: false }, true),
+    "PNS: minimum and maximum in bins of 394 ms."
+  );
+  assert.equal(
+    PnsLanes.statusText({ exact: false, binMs: 1574.4, gap: false }, true),
+    "PNS: minimum and maximum in bins of 1570 ms."
+  );
+});
+
+test("test_status_text_gap_adds_the_zoom_in_sentence", () => {
+  assert.equal(
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: true }, true),
+    `PNS: minimum and maximum in bins of 24.6 ms. Zoom in to ${PnsLanes.EXACT_MAX_S} s or less for the exact values.`
+  );
+  // No gap: no extra sentence.
+  assert.equal(
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: false }, true),
+    "PNS: minimum and maximum in bins of 24.6 ms."
+  );
+});
+
+test("test_status_text_off_raster_replaces_the_gap_sentence", () => {
+  // onRaster false: the "not on the raster" sentence, never the "zoom in"
+  // sentence, even when gap is also true (plan section 4.5, item 2, and the
+  // worker spec's "instead"): zooming in would not reach an exact view for
+  // such a file, so telling the reader to do it would be wrong.
+  assert.equal(
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: true }, false),
+    "PNS: minimum and maximum in bins of 24.6 ms. The file is not on the gradient raster, " +
+      "so there is no exact view."
+  );
+  assert.equal(
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: false }, false),
+    "PNS: minimum and maximum in bins of 24.6 ms. The file is not on the gradient raster, " +
+      "so there is no exact view."
+  );
 });

@@ -641,7 +641,11 @@ picks the points of one line segment that the chart must actually draw for
 the current view, `clampView` moves and, if needed, widens a view so it fits
 inside a chart's extent, `zoomView` zooms a view by a factor about an
 anchor, `panView` shifts a view by a fixed amount, and `dragView` turns the
-two ends of a drag into a view. The report page (`page.py`) puts
+two ends of a drag into a view. `laneGroupMap` turns a `laneChart` `groups`
+option into a Map from lane id to group id, and `visibleLanes` filters a
+list of lanes down to those of a visible group (`lane_chart.js`'s
+lane-group support, `docs/plans/diagram-lanes.md` section 4.5 item 3). The
+report page (`page.py`) puts
 `chart_math.js` and `lane_chart.js` first among its scripts, each in its own
 `<script>` element, before any card scripts, the extra scripts and
 `page.js`. `lane_chart.js` has `PulseqReport.laneChart`, which calls these
@@ -1111,6 +1115,59 @@ the drag's own centre.
 **How:** The test calls `dragView(50, 52, [0, 1000], 10)`. The 2-wide drag
 is widened about its centre, 51, to the minimum span 10, which gives the
 result `[46, 56]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_lane_group_map_maps_each_lane_id_to_its_group_id`
+
+**Checks:** `laneGroupMap` builds a Map from each lane id named in a
+group's `laneIds` to that group's own id.
+
+**How:** The test calls `laneGroupMap` with two groups, "rf" (`laneIds:
+["rf_mag", "rf_phase"]`) and "grad" (`laneIds: ["gx", "gy", "gz"]`), and
+checks that the returned Map maps each of the 5 lane ids to its group's
+id, and that the Map has exactly 5 entries.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_visible_lanes_keeps_lanes_of_a_visible_group_and_drops_the_rest`
+
+**Checks:** `visibleLanes` keeps the lanes whose group id is in
+`visibleGroupIds` and drops the others.
+
+**How:** The test builds a `groupMap` from two groups, "rf" and "grad"
+(the "grad" group is marked `visible: false`, though `visibleLanes` itself
+only reads the Set of visible ids it is given, not the `visible` field).
+It calls `visibleLanes` with 5 lanes (2 "rf", 3 "grad") and
+`visibleGroupIds = new Set(["rf"])`, and checks that only the 2 "rf" lanes
+come back, in order.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_visible_lanes_always_keeps_a_lane_that_belongs_to_no_group`
+
+**Checks:** `visibleLanes` keeps a lane whose id is in no group's
+`laneIds`, regardless of `visibleGroupIds` (`lane_chart.js`'s comment
+above `laneChart`: "a lane whose id is in no group's `laneIds` is always
+drawn").
+
+**How:** The test builds a `groupMap` from one group, "grad" (`laneIds:
+["gx"]`), and calls `visibleLanes` with two lanes, "gx" and "adc", and an
+empty `visibleGroupIds`. "grad" is hidden, so "gx" is dropped, but "adc"
+belongs to no group and stays.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_visible_lanes_drops_a_lane_a_provider_returns_for_a_hidden_group`
+
+**Checks:** `visibleLanes` drops a lane of a hidden group even when it is
+given one anyway, the safety net of `docs/plans/diagram-lanes.md` section
+4.5 item 3 for a `lanesFor` provider that does not itself honour
+`visibleGroupIds`.
+
+**How:** The test builds a `groupMap` from one group, "pns" (`laneIds:
+["pns_total"]`), and calls `visibleLanes` with the single lane
+"pns_total" and an empty `visibleGroupIds`. The result is empty.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -1847,8 +1904,17 @@ renders the page, and checks that the literal registration call
 
 ### 2.11 PNS prediction (`test_pns.py`)
 
-`test_pns.py` tests `pns.py`: the PNS prediction, which runs pypulseq's SAFE
-model, and `peak_tr_window`, the start and end of the TR that holds the
+`test_pns.py` tests `pns.py`. `PnsPrediction` is now summary-only (`reason`,
+`hardware`, `asc_file`, `peak`, `peak_time_s`, `axis_peaks`; no `t_s`,
+`norm` or `axes`), built by `pns_prediction` from `pns_levels_for(seq,
+asc_path)` — the SAFE model itself (`pns_levels.pns_levels`, the pinned
+pypulseq fork's chunked SAFE recursion) has moved there. `pns_levels_for`
+keeps one `PnsLevels` for each (sequence object, asc path), the rule of
+`seq_index.sequence_index` for staleness (rebuilt when the number of
+blocks or the last block id changes, or when the given asc path differs
+from the kept one), so that a page with both the PNS summary card and the
+diagram's PNS lane for one sequence runs the SAFE model once.
+`peak_tr_window` is the start and end of the TR that holds the
 prediction's peak, counted from the sequence start in steps of the TR
 definition. Without a gradient `.asc` file, the prediction uses pypulseq's
 example hardware, which is not a real scanner.
@@ -1880,61 +1946,60 @@ PNS.
 
 #### `test_example_hardware_for_spin_echo`
 
-**Checks:** For the synthetic spin echo sequence on the example hardware, the
-prediction is below the stimulation limit, is highest on y, has one curve for
-each axis, and has a peak time inside the sequence.
+**Checks:** For the synthetic spin echo sequence on the example hardware, the summary
+equals `pns_levels.pns_levels` of the same sequence and hardware, is below the
+stimulation limit, and is highest on y.
 
-**How:** The test runs the prediction without an `.asc` file. It checks that
-there is no reason, that the hardware is the example hardware, and that there
-is no `.asc` file name. It checks that the axes are x, y and z, and that the
-peak is more than 0 and less than 1 (100 % of the limit). The axis with the
-highest peak must be y, where the crushers are. Each axis curve must have the
-same length as the all-axes curve, and the all-axes curve must be at least
-each axis curve at every time. The peak time must be inside the time range.
+**How:** The test runs the prediction without an `.asc` file (the module-scoped
+`example` fixture) and, separately, `pns_levels.pns_levels` on the same sequence
+object. It checks that there is no reason, that the hardware is the example hardware,
+and that there is no `.asc` file name. It checks that the axis peaks are keyed x, y and
+z, and that the peak is more than 0 and less than 1 (100 % of the limit). The axis with
+the highest peak must be y, where the crushers are. `peak`, `peak_time_s` and
+`axis_peaks` must equal `pns_levels`'s own fields exactly.
 
 **Assumptions:**
 
-- The all-axes value is the root-sum-of-squares of the axes, so it is at least
-  each axis.
 - "Below the limit" is for the example hardware only.
-- The crushers (on y) give the synthetic sequence's highest per-axis PNS.
-  This was checked against a direct run of the prediction, not derived by
-  hand.
+- The crushers (on y) give the synthetic sequence's highest per-axis PNS. This was
+  checked against a direct run of the prediction, not derived by hand.
+- `pns_prediction` and a fresh `pns_levels.pns_levels` call on the same sequence and
+  hardware give bit-identical numbers (no randomness in the pipeline), so the
+  comparison is exact equality, not a tolerance.
 
 #### `test_asc_file_with_the_example_parameters`
 
-**Checks:** An `.asc` file with the example hardware's parameters gives the
-same prediction as the example hardware, and the file's hardware name and
-file name.
+**Checks:** An `.asc` file with the example hardware's parameters gives the same
+prediction as the example hardware, and the file's hardware name and file name.
 
 **How:** The test writes a test `.asc` file with scale factor 1 and runs the
-prediction with it. There must be no reason, the hardware name must be the
-name in the file, and the file name must be the name of the file. The
-all-axes curve must be equal to the example hardware curve within a relative
+prediction with it. There must be no reason, the hardware name must be the name in the
+file, and the file name must be the name of the file. `peak`, `peak_time_s` and each
+axis of `axis_peaks` must equal the example hardware's own summary within a relative
 10⁻⁹.
 
 **Assumptions:**
 
-- The test file has only the fields that pypulseq's `.asc` reader needs for
-  PNS. A real file has many more fields, in the same format.
+- The test file has only the fields that pypulseq's `.asc` reader needs for PNS. A
+  real file has many more fields, in the same format.
 
 #### `test_asc_file_that_includes_the_pns_parameters`
 
-**Checks:** A main `.asc` file that includes the PNS parameters from a second
-file with `$INCLUDE` gives the same prediction as the example hardware, and
-the hardware name in `asCOMP[0].tName`.
+**Checks:** A main `.asc` file that includes the PNS parameters from a second file
+with `$INCLUDE` gives the same prediction as the example hardware, and the hardware
+name in `asCOMP[0].tName`.
 
-**How:** The test writes a test `.asc` file with the scanner layout and scale
-factor 1, and runs the prediction with the main file. There must be no reason,
-the hardware name must be the name in the main file, and the file name must be
-the name of the main file. The all-axes curve must be equal to the example
-hardware curve within a relative 10⁻⁹.
+**How:** The test writes a test `.asc` file with the scanner layout and scale factor
+1, and runs the prediction with the main file. There must be no reason, the hardware
+name must be the name in the main file, and the file name must be the name of the main
+file. `peak`, `peak_time_s` and each axis of `axis_peaks` must equal the example
+hardware's own summary within a relative 10⁻⁹.
 
 **Assumptions:**
 
-- The layout is the layout of the `MP_GradSys_K2309_2250V_951A_XR_AS82.asc`
-  files from the XA60 IDEA installation: the `$INCLUDE` line names a file in
-  the same directory, without quotes. Other software versions are not tested.
+- The layout is the layout of the `MP_GradSys_K2309_2250V_951A_XR_AS82.asc` files from
+  the XA60 IDEA installation: the `$INCLUDE` line names a file in the same directory,
+  without quotes. Other software versions are not tested.
 
 #### `test_asc_file_with_a_missing_include`
 
@@ -1988,21 +2053,6 @@ relative 10⁻⁹, and more than 1.
 - In the SAFE model, the prediction is inversely proportional to the
   stimulation limit.
 
-#### `test_peak_time_is_the_first_sample_at_the_peak_within_rounding`
-
-**Checks:** The peak time is the first sample within a relative 10⁻⁶ of the
-peak, and a real, larger increase moves it.
-
-**How:** The test makes a prediction by hand with five samples. Sample 1 is
-0.5 × (1 − 10⁻¹²) and sample 3 is 0.5. The peak must be 0.5 and the peak time
-must be sample 1. The test then sets sample 3 to 0.5 × (1 + 10⁻³). The peak
-time must be sample 3.
-
-**Assumptions:**
-
-- Identical TRs give PNS values that differ only by rounding. The tolerance
-  puts the peak in the first of them.
-
 #### `test_no_gradients`
 
 **Checks:** A sequence without gradients has no prediction, with the reason
@@ -2042,18 +2092,21 @@ more than 0.
 - A gradient in a block after the first block counts. The delay block comes
   first, so a check of the first block only would fail.
 
-#### `test_prediction_builds_the_gradients_one_time`
+#### `test_prediction_does_not_build_the_gradients_for_an_on_raster_sequence`
 
-**Checks:** The prediction builds the gradients of the sequence one time.
+**Checks:** The prediction never calls `seq.get_gradients()` for an on-raster sequence.
 
-**How:** The test replaces `get_gradients` of a synthetic spin echo sequence
-with a wrapper that counts the calls, and runs the prediction. There must be
-one call, the one in pypulseq's `calculate_pns`.
+**How:** The test replaces `get_gradients` of a synthetic spin echo sequence with a
+wrapper that counts the calls, and runs the prediction. There must be no calls.
 
 **Assumptions:**
 
-- `calculate_pns` calls `get_gradients` one time. The "no gradients" check
-  of `pns.py` does not call it: it reads `seq.block_events`.
+- `pns_levels.pns_levels` samples an on-raster sequence with
+  `GradientSampler.block_samples`, not `seq.get_gradients()`/`seq.calculate_pns` (that
+  was the old, now-removed, implementation, which is why the old test expected exactly
+  one call). `test_pns_levels.py` and `test_sampling.py` test `block_samples` and its
+  agreement with `sample`/`get_gradients()` directly; this test only checks that the
+  fast path is actually taken from `pns_prediction`.
 
 #### `test_prediction_keeps_no_blocks_and_gives_back_the_cache_setting`
 
@@ -2071,18 +2124,24 @@ prediction. After it, `use_block_cache` must have the same value and
   in `seq.block_cache` when `use_block_cache` is True. An empty cache after
   the prediction shows that the cache was off while it ran.
 
-#### `test_prediction_gives_back_the_cache_setting_after_an_error`
+#### `test_prediction_propagates_an_error_and_keeps_the_cache_setting`
 
-**Checks:** When `calculate_pns` fails, the prediction still gives back the
-cache setting of the sequence, and the cache was off while it ran.
+**Checks:** An error deep inside the SAFE model propagates out of `pns_prediction`, and
+the sequence's block-cache setting and contents are unaffected.
 
-**How:** The test sets `use_block_cache` to True on a synthetic spin echo
-sequence and replaces its `calculate_pns` with a function that records
-`use_block_cache` and raises `RuntimeError`. The prediction must raise the
-error, the recorded value must be False, and `use_block_cache` must be True
-after it.
+**How:** The test sets `use_block_cache` to True on a synthetic spin echo sequence and
+replaces `pns_levels._safe_gwf_to_pns_chunk` (the pinned fork's chunk function) with a
+function that raises `RuntimeError`. The prediction must raise the error,
+`use_block_cache` must be True and `seq.block_cache` must be empty afterward.
 
-**Assumptions:** None.
+**Assumptions:**
+
+- The block cache is touched only inside `seq_index.block_cache_off`'s own
+  `try`/`finally`, which has already restored `use_block_cache` by the time the chunk
+  function runs (`GradientSampler` is built, with the block cache off, before the
+  chunk loop starts). So this test checks that the error propagates and that nothing
+  else in `pns_levels_for`/`pns_prediction` touches the cache setting outside that
+  narrower guarantee, not that the guarantee itself is new.
 
 #### `test_peak_tr_window_finds_the_tr_with_the_peak`
 
@@ -2130,17 +2189,53 @@ with `peak_time_s=None`. The result must be None.
 
 **Assumptions:** None.
 
+#### `test_pns_levels_for_shares_one_computation_with_the_pns_card_and_the_diagram`
+
+**Checks:** For one sequence, the PNS summary card (`cards.pns.pns_data`) and the
+diagram's PNS lane (`cards.diagram.diagram_card(..., pns=True)`) together run the SAFE
+model once, not twice; adding a block makes the next call recompute
+(`docs/plans/diagram-lanes.md`, section 4.6).
+
+**How:** The test patches `pns_levels.pns_levels` with a wrapper that records one entry
+for each call (patching the module attribute reaches `pns.pns_levels_for`, which
+imports it inside the function body on every call, to avoid a circular import with
+`pns_levels.py`). It calls `cards.pns.pns_data(seq)` and then
+`cards.diagram.diagram_card([named], [full_window([named])], pns=True)` for the same
+sequence object and checks there was 1 call. It adds a delay block to the sequence and
+calls `pns_data` again, and checks there are then 2 calls.
+
+**Assumptions:**
+
+- `seq_index.sequence_index`'s staleness rule (block count and last block id) is
+  already tested elsewhere (`docs/plans/cards-at-scale.md`'s suite); this test only
+  checks that `pns_levels_for` uses the same rule for its own cache.
+
+#### `test_pns_levels_for_recomputes_for_a_different_asc_path`
+
+**Checks:** `pns_levels_for` keeps one result for each (sequence, asc path): a
+different `.asc` file for the same sequence recomputes, and going back to an earlier
+path recomputes again (a 1-entry cache, not a cache of every path seen).
+
+**How:** The test patches `pns_levels.pns_levels` the same way as the test above, and
+calls `pns.pns_levels_for(seq, path)` for two different `.asc` files (`path_a`,
+`path_b`) built by the file's `write_gradient_asc` fixture, in the order a, a, b, a. It
+checks the call count is 1, 1 (cached), 2 (a different path), 3 (back to `path_a`, but
+recomputed, not restored from a 2-entry cache).
+
+**Assumptions:** None.
+
 ### 2.12 PNS card (`test_pns_card.py`)
 
-`test_pns_card.py` tests `cards/pns.py`. `pns_data` gives
-`pns.pns_prediction` as a JSON-ready dict, in ms and percent of the
-stimulation limit, with one lane for all axes and one for each of Gx, Gy and
-Gz, and the start and end (ms) of the TR that holds the peak
-(`pns.peak_tr_window`) when the sequence has a TR definition and more than
-one TR. `pns_card` builds the "PNS prediction" `Card`, with that data, the
-`_pns_html` body (the result, the table, the chart and its explanation, or a
-note that there is no prediction, with "full sequence" and "peak TR" view
-buttons when there is a TR to zoom to), and the `"pns"` script.
+`test_pns_card.py` tests `cards/pns.py`. `pns_data` is now `pns.pns_prediction`'s
+summary as a JSON-ready dict only (`reason`, `hardware`, `asc_file`, `example`,
+`peak_percent`, `peak_time_ms`, `axis_peaks_percent`); it no longer has `lanes`,
+`end_ms` or `peak_tr_ms`. `pns_card` keeps the status line, the table of peaks and
+the hardware note; it has no chart and no script (`Card.script` is `None`): the
+stimulation over time is now the PNS lane of the sequence diagram
+(`cards.diagram.diagram_card(..., pns=...)`), which shares its `PnsLevels`
+computation with this card through `pns.pns_levels_for`. A caller that wants the
+old "TR with the highest PNS" zoomed view adds `pns.peak_tr_window(seq, ...)` to
+the diagram card's own windows instead.
 
 Most of the tests use the synthetic spin echo sequence
 (`tests/synthetic.py`'s `spin_echo_sequence`) or the three-TR sequence built
@@ -2155,166 +2250,82 @@ in this file (`_three_trs`, the same sequence as in `test_pns.py`: three
 
 #### `test_pns_data_for_spin_echo`
 
-**Checks:** For the synthetic spin echo sequence, the PNS data uses the
-example hardware, has a peak between 0 % and 100 % that is at least each axis
-peak, has lanes for all axes, Gx, Gy and Gz in percent with a range of 0 % to
-110 % and not too many points, draws the peak, ends at the last sample, and
-has no TR zoom.
+**Checks:** For the synthetic spin echo sequence, the PNS data has exactly the
+summary-only keys, uses the example hardware, has a peak between 0 % and 100 % that is
+at least each axis peak, and has axis peaks keyed x, y and z.
 
-**How:** The test makes the PNS data. It checks that there is no reason, that
-the example hardware is used with no `.asc` file, that the peak is more than
-0 % and less than 100 %, and that it is at least each axis peak. The lanes
-must be all axes, Gx, Gy and Gz. Each lane must be in percent, with a range of
-0 % to 110 %, and have more than 0 and at most 100000 points. The highest
-point of the all-axes lane must be the peak within 0.01 %, and its last point
-must be at the end time. There must be no TR zoom range.
-
-**Assumptions:**
-
-- The range is 110 % of the larger of 100 % and the peak. For a peak below
-  100 %, that is 0 % to 110 %.
-- With one TR and no TR definition, there is nothing to zoom to.
-
-#### `test_max_envelope_keeps_the_maximum_of_each_run`
-
-**Checks:** Reducing a curve to at most 4000 points keeps its maximum and its
-start time.
-
-**How:** The test makes a curve of 10001 zeros with one value of 3 at sample
-7777, and reduces it to at most 4000 points. The result must have at most
-4000 points, the same number of times and values, a maximum of 3, and a first
-time of 0.
-
-**Assumptions:**
-
-- Each point of the result is the maximum of a run of samples, at the time of
-  the run's first sample. So a short peak is kept, but its time can move by up
-  to one run.
-
-#### `test_pns_data_zooms_to_the_tr_with_the_highest_pns`
-
-**Checks:** For each position of the peak TR (first, second or third), the
-PNS data's TR zoom range is that whole TR, and the peak time is inside it.
-
-**How:** For peak TR k = 0, 1 and 2, the test makes the PNS data for
-`_three_trs(k)`. The zoom range must be 50k ms to 50(k + 1) ms, and the peak
-time must be inside it.
-
-**Assumptions:**
-
-- TRs are counted from the start of the sequence, in steps of the TR
-  definition.
-
-#### `test_pns_data_without_a_tr_definition_has_no_zoom`
-
-**Checks:** Without a TR definition, the PNS data has no TR zoom.
-
-**How:** The test makes the three-TR sequence, removes its TR definition, and
-makes the PNS data. There must be no zoom range.
+**How:** The test makes the PNS data and checks its key set against the 7 summary
+keys. It checks that there is no reason, that the example hardware is used with no
+`.asc` file, that the peak is more than 0 % and less than 100 % and is at least each
+axis peak, and that the axis peaks are keyed x, y and z.
 
 **Assumptions:** None.
 
-#### `test_pns_lanes_keep_every_sample_above_the_floor`
+#### `test_pns_data_matches_pns_prediction`
 
-**Checks:** A PNS lane keeps every raw sample whose value is above the zero
-floor, and still has fewer points than the raw sequence has samples.
+**Checks:** `pns_data`'s numbers are `pns.pns_prediction`'s own fields, converted to
+percent and ms.
 
-**How:** The test uses the three-TR sequence with the peak in the second TR.
-It runs the PNS prediction directly and makes the PNS data. For each lane, it
-takes the raw samples whose value is above the zero floor, rounded the same
-way as the lane's own points. Every one of those rounded samples must be
-among the lane's points, and the lane must have fewer points than the raw
-sequence has samples.
+**How:** The test computes `pns.pns_prediction(seq)` and `pns_data(seq)` for the
+synthetic spin echo sequence and checks `peak_percent`, `peak_time_ms` and each axis of
+`axis_peaks_percent` against the prediction's `peak`, `peak_time_s` and `axis_peaks`
+(scaled and converted), within the rounding the card applies.
 
-**Assumptions:**
+**Assumptions:** None.
 
-- The test checks only that the above-floor samples survive and that the lane
-  has fewer points than the raw sequence. It does not check that the lane
-  keeps exactly the points that the reduction is meant to keep, such as the
-  neighbors of each above-floor sample or the ends of each zero run.
-  `test_active_samples_keep_the_ends_of_zero_runs` checks that for the
-  reduction function alone, with a short made-up curve.
+#### `test_pns_data_for_each_tr_position`
 
-#### `test_active_samples_keep_the_ends_of_zero_runs`
+**Checks:** For each position of the peak TR (first, second or third) in the
+three-TR sequence, the card still reports the right peak time.
 
-**Checks:** Reducing a PNS lane keeps the samples above the floor, their
-neighbors, and the first and last sample, and drops the inside of each run at
-or below the floor.
-
-**How:** The test uses 10 samples with values 0, 0, 0, 1, 2, 0, 0, 0, 0, 0
-and a floor of 0.01. The kept samples must be 0, 2, 3, 4, 5 and 9, with
-values 0, 0, 1, 2, 0 and 0.
+**How:** For peak TR k = 0, 1 and 2, the test makes `_three_trs(k)`, computes
+`pns.pns_prediction` and `pns_data`, and checks that `peak_time_ms` matches the
+prediction's own `peak_time_s` (converted) and falls inside the TR `[50k, 50(k + 1)]`
+ms.
 
 **Assumptions:**
 
-- A run at or below the floor is drawn as a straight line between its ends,
-  so dropping its inside does not change the chart.
-
-#### `test_report_has_peak_tr_buttons`
-
-**Checks:** For the three-TR sequence with the peak in the second TR, the
-card has a "Full sequence" button that is selected and a "TR with the highest
-PNS (50–100 ms)" button that is not, and the note on how TRs are counted.
-
-**How:** The test builds the card and checks its body for the full-sequence
-button, selected, the zoom button, not selected, and the text "counted from
-the sequence start in steps of the TR definition".
-
-**Assumptions:** None beyond the file's assumptions.
+- TRs are counted from the start of the sequence, in steps of the TR definition (as in
+  `test_pns.py`'s `peak_tr_window` tests).
 
 #### `test_report_has_pns_card`
 
-**Checks:** For the synthetic spin echo sequence, the card has the id
-`"pns"`, the title "PNS prediction" and the script name `"pns"`; its body has
-the below-limit result, the example hardware warning, the hardware and peak
-rows, and the chart, and no zoom buttons (one TR, no TR definition); and
-`render_page` accepts it, with the title and the id that the script and the
-data element key on.
+**Checks:** For the synthetic spin echo sequence, the card has the id `"pns"`, the
+title "PNS prediction" and no script (`script is None`); its body has the below-limit
+result, the example hardware warning, the hardware and peak rows, and no chart, no SVG
+and no PNS view buttons; and `render_page` accepts it, with the title.
 
-**How:** The test builds the card and checks its `id`, `title` and `script`.
-It checks the body for the title, "is below the 100 % limit", "Example
-hardware, not a real scanner.", a cell with the example hardware name, the
-rows for the peak of all axes, Gx, Gy and Gz, and the chart element, and that
-the body has no PNS zoom buttons. It renders the page and checks for the
-section element with the card's id and script, and the title.
+**How:** The test builds the card and checks its `id`, `title` and `script`. It checks
+the body for the status text, "Example hardware, not a real scanner.", a cell with the
+example hardware name, the rows for the peak of all axes, Gx, Gy and Gz, and that the
+body has no `<div class="chart">`, no `<svg` and no `data-pns-view`. It renders the
+page and checks for the section element with the card's id (with no
+`data-card-script` attribute, since `Card.script` is `None`) and the title.
 
 **Assumptions:**
 
 - "Below the limit" is for the example hardware only.
 
-#### `test_report_without_gradients_has_no_pns_chart`
+#### `test_report_without_gradients_has_no_pns_table`
 
-**Checks:** For a sequence without gradients, the card says that there is no
-PNS prediction and has no PNS chart, on its own and inside a rendered page.
+**Checks:** For a sequence without gradients, the card says that there is no PNS
+prediction and has no table, inside a rendered page.
 
-**How:** The test builds the card for the synthetic sequence with only a
-delay block and renders the page. It checks for the note "No PNS prediction:
-no gradients." and that there is no PNS chart element.
-
-**Assumptions:** None.
-
-#### `test_card_ids_start_with_card_id`
-
-**Checks:** With a non-default `card_id`, every id in the card's body (the
-chart, the SVG, the tip and the zoom button group's `data-zoom-for`) starts
-with that `card_id`, so two PNS cards can be on one page.
-
-**How:** The test builds the card with `card_id="pns-b"` and checks that the
-card's own id is `"pns-b"`, its script is still `"pns"`, and that
-`"pns-b-diagram"`, `"pns-b-chart"` and `"pns-b-tip"` each appear as an
-element id, and `"pns-b-diagram"` appears as `data-zoom-for`. It then removes
-every occurrence of `"pns-b-diagram"` from the body and checks that
-`"pns-diagram"` (the default card id's chart id) does not appear, so no id
-from the default `card_id` leaked in.
+**How:** The test builds the card for the synthetic sequence with only a delay block
+and renders the page. It checks for the note "No PNS prediction: no gradients." and
+that there is no `<table>` element.
 
 **Assumptions:** None.
 
-#### `test_render_page_includes_pns_script_once`
+#### `test_card_id_is_used_for_the_section_and_data_element`
 
-**Checks:** `render_page` includes the `pns` card script exactly one time.
+**Checks:** With a non-default `card_id`, the card's own id follows it, and its JSON
+data element key is that id too, so two PNS cards can be on one page without an id
+clash.
 
-**How:** The test builds the card, renders a page with it, and checks that
-the page's text has exactly one copy of `page.card_asset("pns")`.
+**How:** The test builds the card with `card_id="pns-b"` and checks that the card's own
+id and script (`None`) are as given, and that the rendered page has the section
+`id="pns-b"` and the data element `id="pns-b-data"`.
 
 **Assumptions:** None.
 
@@ -3041,6 +3052,155 @@ once.
 
 **Assumptions:** None beyond the file's assumptions.
 
+#### `test_pns_false_by_default_adds_no_pns_key`
+
+**Checks:** Without `pns` (the default, `False`), a file entry has no `"pns"` key.
+
+**How:** The test builds a diagram card for the synthetic spin echo sequence with no
+`pns` argument and checks that `"pns"` is not a key of the one file entry.
+
+**Assumptions:** None.
+
+#### `test_pns_true_adds_the_pns_key_with_the_example_hardware`
+
+**Checks:** With `pns=True`, the file entry gets a `"pns"` key with the example
+hardware, the SAFE parameters, the gradient raster, `gradScale`, `binSamples`, the
+summary and the stored level, all with the keys the plan's data section lists.
+
+**How:** The test builds a diagram card with `pns=True` for the synthetic spin echo
+sequence, and checks the `"pns"` entry's key set, that `hardware` is
+`pns.EXAMPLE_HARDWARE`, `example` is True and `asc_file` is None, that `hw` has x, y, z
+each with the 8 SAFE fields, that `dtS` equals the sequence's own gradient raster time,
+that `gradScale` is exactly 1.0 (a proton sequence), that `binSamples` is positive,
+that the summary has `peak`, `peak_time_s` and `axis_peaks` with a peak between 0 and 1
+and a peak time, and that `levels` has `min` and `max` tables of dtype `float32`.
+
+**Assumptions:** None.
+
+#### `test_pns_asc_path_uses_the_gradient_asc_hardware`
+
+**Checks:** With `pns` set to a gradient `.asc` path, the `"pns"` entry uses that
+file's hardware, not the example hardware.
+
+**How:** The test writes a minimal gradient `.asc` file with pypulseq's example
+hardware's own PNS parameters (a local helper, the same technique as `test_pns.py`'s
+`write_gradient_asc` fixture: the real files are confidential), builds a diagram card
+with `pns` set to that path, and checks that the `"pns"` entry's `hardware` is the
+file's name, `example` is False and `asc_file` is the file's name.
+
+**Assumptions:** None.
+
+#### `test_pns_grad_scale_for_a_sequence_with_another_gyromagnetic_ratio`
+
+**Checks:** `gradScale = seq_utils.GAMMA / seq.system.gamma` (decision 14): not 1.0 for
+a sequence built with a non-proton gyromagnetic ratio.
+
+**How:** The test builds a one-block x-trapezoid sequence on a system with
+`gamma=11.262e6` (sodium, the same value the golden test of task 4.5 uses), builds a
+diagram card with `pns=True`, and checks the `"pns"` entry's `gradScale` equals
+`seq_utils.GAMMA / seq.system.gamma` and is not 1.0.
+
+**Assumptions:** None.
+
+#### `test_pns_without_gradients_adds_no_pns_key`
+
+**Checks:** A file with no gradient event gets no `"pns"` key even when `pns` is not
+False.
+
+**How:** The test builds a diagram card with `pns=True` for the synthetic sequence
+with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks that
+`"pns"` is not a key of the one file entry.
+
+**Assumptions:** None.
+
+#### `test_pns_levels_decode_back_to_pns_levels_for_exactly`
+
+**Checks:** The `"levels"` key of the `"pns"` entry, decoded, equals
+`pns.pns_levels_for(seq)`'s own `level_min`/`level_max` exactly.
+
+**How:** The test builds a diagram card with `pns=True` for the synthetic spin echo
+sequence, decodes the `"pns"` entry's `"levels"` with `diagram_data.decode_tables`, and
+compares the two arrays' dtype (`float32`) and values (`numpy.array_equal`) against
+`pns.pns_levels_for(seq).level_min`/`level_max`.
+
+**Assumptions:**
+
+- `diagram_card` and the direct `pns_levels_for` call read the same cached `PnsLevels`
+  for this sequence object (`pns.pns_levels_for`'s own cache, `test_pns.py`), so the
+  comparison is exact, not merely close.
+
+#### `test_group_controls_container_is_between_the_window_buttons_and_the_zoom_controls`
+
+**Checks:** The lane-group toggle buttons (RF/ADC/Gradients/PNS, `docs/plans/
+diagram-lanes.md` section 4.5 item 3) go above the chart, after the time-window
+buttons and before `_zoom_controls`, so the existing "zoom controls directly
+before the chart" test still holds.
+
+**How:** The test builds a diagram card for the synthetic spin echo sequence and
+checks that the group-controls container (`<div class="controls" role="group"
+aria-label="Lanes" id="diagram-groups"></div>`) appears exactly once in the
+body, and that its position is after the time-window buttons' container and
+before `markup._zoom_controls("diagram-diagram")`.
+
+**Assumptions:** None.
+
+#### `test_group_controls_container_id_starts_with_the_given_card_id`
+
+**Checks:** With a non-default `card_id`, the group-controls container's id
+starts with it.
+
+**How:** The test builds a diagram card with `card_id="my-diagram"` and checks
+that `id="my-diagram-groups"` appears on the group-controls container.
+
+**Assumptions:** None.
+
+#### `test_group_controls_container_present_even_without_pns_data`
+
+**Checks:** The group-controls container is present even when the card has no
+PNS lane: it is not conditional on `pns`, since the RF, ADC and gradient groups
+can be toggled regardless, and the card script fills it in the browser with one
+button for each group that applies to the file's own data.
+
+**How:** The test builds a diagram card with no `pns` argument (`pns=False`, the
+default) and checks that the empty group-controls container is present in the
+body.
+
+**Assumptions:** None.
+
+#### `test_pns_explanation_sentence_present_when_the_card_has_pns_data`
+
+**Checks:** With `pns=True` and a sequence with gradients, the card's body has
+the PNS lane's explanation sentence (naming the PNS lane, that it is a percent
+of the SAFE stimulation limit, and the "10 s or less" exact-view span).
+
+**How:** The test builds a diagram card with `pns=True` for the synthetic spin
+echo sequence and checks that each of the three phrases ("PNS lane", "percent
+of the SAFE stimulation limit", "10 s or less") appears in the body.
+
+**Assumptions:** None.
+
+#### `test_pns_explanation_sentence_absent_by_default`
+
+**Checks:** Without `pns` (the default, `False`), the explanation sentence is
+absent.
+
+**How:** The test builds a diagram card with no `pns` argument and checks that
+none of the three explanation phrases appears in the body.
+
+**Assumptions:** None.
+
+#### `test_pns_explanation_sentence_absent_without_gradients_even_with_pns_true`
+
+**Checks:** A file with no gradient event gets no `"pns"` key even when `pns` is
+not False, so it gets no explanation sentence either: the sentence is keyed on
+the data (`has_pns`), not on the `pns` argument alone.
+
+**How:** The test builds a diagram card with `pns=True` for the synthetic
+sequence with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and
+checks that none of the three explanation phrases appears in the body.
+
+**Assumptions:** None.
+
 ### 2.17 Block table card (`test_blocks_card.py`)
 
 `test_blocks_card.py` tests `cards/blocks.py`. `blocks_card` builds a
@@ -3187,6 +3347,23 @@ that the decoded dict has the same keys and that each array's dtype and
 values (`numpy.array_equal`) match the original.
 
 **Assumptions:** None.
+
+#### `test_encode_then_decode_accepts_float32`
+
+**Checks:** `decode_tables(encode_tables(tables))` keeps a `float32` array's dtype and
+(for values representable exactly in `float32`) its values.
+
+**How:** The test builds a small `float32` array (0.0, 1.5, −2.25 and the largest
+finite `float32`), round-trips it through `encode_tables`/`decode_tables` as the
+`"level_min"` table, and checks the decoded array's dtype is `float32` and its values
+equal the original (`numpy.array_equal`).
+
+**Assumptions:**
+
+- The chosen values are exactly representable in `float32`, so the round trip is exact
+  equality, not a tolerance; `pns_levels.py`'s own `_cast_outward` (tested in
+  `test_pns_levels.py`) is what turns an arbitrary float64 minimum/maximum into a
+  float32 that still bounds it — this test only checks the wire form's round trip.
 
 #### `test_index_dtype_widths`
 
@@ -4737,7 +4914,9 @@ the prototype (`prototypes/pns_lanes/pns_lanes.js` on the unmerged branch
 blocks), not a per-sample recursion over the whole file; `levels` builds the coarser
 pyramid levels of a stored level; `lanesFor` picks between the exact view and the
 pyramid for one render, as `SeqLanes.lanesFor` picks between the exact and the
-minimum/maximum view.
+minimum/maximum view; `laneMeta` and `statusText` are the two pure helpers the
+diagram card script (`assets/cards/diagram.js`) uses to build the PNS lane's
+metadata and its status-line text (task 4.3).
 
 The tests load `pns_lanes.js` directly, with Node's `require`, from
 `src/pulseq_reports/assets/pns_lanes.js`, the same way `test_seq_lanes.js` loads
@@ -4942,7 +5121,7 @@ bins that overlap it (the `floor`/`ceil` index range of the interface doc);
 `binMs` is that level's bin width in ms; `gap` is `false` when a level fits.
 
 **How:** Uses the same `buildPyramidModel(8)` model as the previous test, with a
-view `[0, 2]` s (longer than `EXACT_MAX_S`) and 100 bins. It finds the expected
+view `[0, 20]` s (longer than `EXACT_MAX_S`) and 100 bins. It finds the expected
 level independently, by reading the model's own public `levels` array (not a
 private helper) and applying the documented formula, then computes each display
 bin's expected minimum/maximum by hand from that level's `min`/`max` arrays, and
@@ -4963,7 +5142,7 @@ bins longer than half the display bin (plan section 4.2's "gap": zooming in
 further would not show anything the stored data does not already show at this
 resolution), and `binMs` then reports level 0's own bin width.
 
-**How:** Uses `buildPyramidModel(8)` again, with a view `[0, 2]` s (longer than
+**How:** Uses `buildPyramidModel(8)` again, with a view `[0, 20]` s (longer than
 `EXACT_MAX_S`) and a bin count chosen so that `(span / bins) / 2` is smaller than
 level 0's own bin width (`bins = ceil(span / (2 * B0)) + 1000`, comfortably past
 the threshold). Checks `exact: false`, `gap: true`, and `binMs === B0 * 1000`.
@@ -4988,6 +5167,31 @@ case of the pyramid tests above). It checks `exact: false`, `gap: false` and
 `minmax: true`. A second call with a
 span already longer than `EXACT_MAX_S` is checked only for not throwing and
 `exact: false`, since that path does not depend on `onRaster` at all.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_grad_scale_multiplies_every_gradient_sample`
+
+**Checks:** `PnsLanes.decode` reads `pns.gradScale` and multiplies every
+gradient sample by it before the SAFE model (`grad_value / 1000 * gradScale`
+in T/m): a model decoded with `gradScale: 2` agrees, within 1e-12 of the
+peak, with a model of the same tables with every `grad_value` doubled and no
+`gradScale` key. A missing `gradScale` defaults to exactly `1.0`: a model
+decoded with no `gradScale` key gives bit-identical totals to one decoded
+with an explicit `gradScale: 1.0`.
+
+**How:** Builds a 60-block pseudo-random model (`buildPnsTables(60, 29,
+{durationOptionsDt: [15, 25], noEventProb: 0.3})`), decodes it once with
+`gradScale: 2` and once, from a copy of the tables with every `grad_value`
+doubled, with no `gradScale` key, and compares the two whole-file totals
+(`collectPlainRecursion`) with `assertWithinPeakTol` at `1e-12` (the two take
+different code paths to the same number: one scale multiply per sample
+against a pre-doubled input table, so this is rule 2 of the worker spec, not
+bit-exactness). It then decodes the original tables twice more, once with no
+`gradScale` key and once with `gradScale: 1.0`, and checks the two totals
+arrays with `assert.deepEqual` (exact equality: multiplying a T/m value by
+`1.0` rounds to itself in IEEE 754 arithmetic, so this is the same code path
+both times).
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -5021,6 +5225,146 @@ finite coefficient, which stays exactly `0` in IEEE 754 arithmetic).
 
 **Assumptions:** None beyond the file's assumptions.
 
+#### `test_lane_meta_has_the_fixed_lane_fields_and_the_peak_dependent_domain`
+
+**Checks:** `PnsLanes.laneMeta` gives the PNS lane's fixed fields (`id: "pns"`,
+`title: "PNS"`, `unit: "%"`, `color: "ink-2"`, `kind: "line"`, `ticks: [0, 100]`,
+`tick_labels: ["0", "100"]`, `empty: false`, `fill: 0.0`), and a `domain` whose low
+end is always 0 and whose high end is `1.1 * max(100, 100 * peak)` (plan section
+4.5, item 4): the same `[0, 110]` the old PNS card's chart used for a peak at or
+below the limit, widened to show a peak above it.
+
+**How:** Calls `PnsLanes.laneMeta` with a summary object and checks each fixed
+field. For `domain`, it calls `laneMeta` with peak 0.5, 0.86, 1.0 and 1.5 and
+checks the low end is exactly 0 and the high end is within 1e-9 of 110, 110, 110
+and 165 (a tolerance, since `1.1 * 100` is not exact in float64).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_status_text_exact`
+
+**Checks:** `PnsLanes.statusText` gives "PNS: exact." whenever `result.exact` is
+true.
+
+**How:** Calls `PnsLanes.statusText({exact: true, binMs: null, gap: false}, true)`
+and checks the result.
+
+**Assumptions:**
+
+- A file that is not on the gradient raster never reaches `lanesFor`'s exact
+  branch, so passing `onRaster: false` alongside `exact: true` is not a case
+  `lanesFor` itself produces; the test only checks that `statusText` reads
+  `exact` first.
+
+#### `test_status_text_bins_with_a_sensible_digit_count`
+
+**Checks:** For the minimum/maximum branch, `statusText` formats the bin width to
+3 significant figures, not with the module's own float64 precision.
+
+**How:** Calls `PnsLanes.statusText` with `binMs` of 6.15, 393.6 and 1574.4 (`gap:
+false`, `onRaster: true`) and checks the result is "PNS: minimum and maximum in
+bins of 6.15 ms.", "...394 ms." and "...1570 ms." respectively.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_status_text_gap_adds_the_zoom_in_sentence`
+
+**Checks:** `gap: true` adds a sentence naming `PnsLanes.EXACT_MAX_S` as the span
+to zoom in to for exact values; `gap: false` adds nothing.
+
+**How:** Calls `PnsLanes.statusText({exact: false, binMs: 24.6, gap: true}, true)`
+and checks the result is the bins sentence followed by "Zoom in to
+`${PnsLanes.EXACT_MAX_S}` s or less for the exact values.". It then calls the same
+with `gap: false` and checks the result is only the bins sentence.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_status_text_off_raster_replaces_the_gap_sentence`
+
+**Checks:** `onRaster: false` gives the "not on the gradient raster" sentence
+instead of the "zoom in" sentence, even when `gap` is also true (plan section
+4.5, item 2): zooming in would not reach an exact view for such a file, so
+telling the reader to do it would be wrong.
+
+**How:** Calls `PnsLanes.statusText({exact: false, binMs: 24.6, gap: true},
+false)` and `PnsLanes.statusText({exact: false, binMs: 24.6, gap: false}, false)`
+and checks both give the bins sentence followed by "The file is not on the
+gradient raster, so there is no exact view." with no "zoom in" sentence in either
+case.
+
+**Assumptions:** None beyond the file's assumptions.
+
 ### 2.26 PNS lane against Python (`test_pns_lanes_golden.py`)
 
-Phase 4 of `docs/plans/diagram-lanes.md` adds the entries.
+The golden test of task 4.5 of `docs/plans/diagram-lanes.md`: the browser module
+`PnsLanes` (`src/pulseq_reports/assets/pns_lanes.js`) against the Python
+`pns_levels.pns_levels` pipeline, as `test_seq_lanes_golden.py` checks `SeqLanes`
+against a Python reference. `_run_golden` writes one sequence's diagram tables and its
+`pns` object (plan section 4.4, including `gradScale`, decision 14) to a JSON file,
+runs `tests/js/golden_pns_lanes.js` with Node on it, and reads back the JSON result:
+`PnsLanes.decode`, one `exactView` call for the whole file (forced to the "samples"
+kind by a bin count far larger than the sample count, so every sample comes back,
+never a minimum/maximum reduction), and the decoded pyramid (`model.levels`).
+
+The Python reference (`_python_reference_totals`) is the same pipeline `pns_levels`
+itself runs (its own docstring, items 1 to 3), built again independently in this
+file, in a single call instead of `pns_levels`'s chunks: `GradientSampler.block_samples`
+of gx, gy and gz for the whole file, divided by `seq.system.gamma`, through pypulseq's
+`_safe_gwf_to_pns_chunk` (one chunk, `state=None`, example hardware), scaled by 0.01
+and combined as `sqrt(x^2 + y^2 + z^2)`. The pinned fork's chunk function is exact for
+any chunk size (`test_pns_levels.py`'s `test_result_does_not_depend_on_chunk_samples`;
+lean on pypulseq, decision 6: not re-tested here), so the test also asserts
+`pns_levels(seq).peak == totals.max()` exactly, as a check that this file's one-call
+reference really is `pns_levels`'s own computation, not a second implementation of
+PNS.
+
+#### `test_pns_lanes_exact_view_and_levels_match_the_python_pipeline`
+
+**Checks:** `PnsLanes.decode` and `exactView`, run through Node on one sequence's real
+diagram tables and `pns` object, give the same whole-file PNS total, at the same
+sample times, as the Python `pns_levels` pipeline, within a relative 1e-12 of the peak
+(plan section 3.5, item 1); the stored level (`pns_levels`'s `level_min`/`level_max`)
+bounds every one of those JS exact samples in its own bin (plan section 4.2), within
+the same relative 1e-12 slack (the stored level comes from Python's chunked SAFE
+filter, the JS samples from the block maps -- different code paths over the same
+model); and each level of the decoded pyramid (`PnsLanes.levels`) is exactly the
+minimum/maximum of the 4 bins of the level below it (no rounding: a min/max reduction
+of already-float32 values).
+
+**How:** Parametrized over six sequences: the three synthetic builders of
+`tests/synthetic.py` that have a gradient event (`spin_echo_sequence`,
+`gre_sequence`, `arbitrary_gradient_sequence`; the empty sequence has no PNS bins to
+compare); a "border" sequence of two extended trapezoids whose gradient is not zero
+at the block junction, built again in this file (not imported from
+`test_pns_levels.py`'s `_border_sequence`, so the two files need no cross-import); a
+repeating sequence of 225 blocks (45 TRs of `gre_sequence`'s 5 blocks each), more
+than `3 * PnsLanes.GROUP_BLOCKS` (192), so the test crosses more than 3 of the
+JavaScript block map's checkpoint groups; and a sequence built with
+`pp.Opts(gamma=11.262e6)` (sodium), with a small trapezoid on every axis (areas
+scaled down from the proton sequences', since sodium's smaller gamma gives a smaller
+max-gradient area in 1/m for the same mT/m hardware limit), so a wrong `gradScale`
+would show on all three axes.
+
+For each sequence: `_run_golden` builds the diagram tables, `pns_levels(seq)`, and
+`gradScale = seq_utils.GAMMA / seq.system.gamma`, writes them as the `pns` object of
+plan section 4.4 (`levels` encoded with `diagram_data.encode_tables`, as float32),
+and runs `golden_pns_lanes.js`. The JS sample times are checked against
+`(k + 0.5) * dt` with exact array equality; the JS totals against the Python
+reference with `max(|diff|) <= 1e-12 * peak`; each stored bin's `level_min`/`max`
+against the min/max of the JS samples in that bin, with the same tolerance; and the
+pyramid level by level, with exact equality, against the level below it.
+
+**Assumptions:**
+
+- `golden_pns_lanes.js`'s `t0`/`t1`/`bins` (`-1.0`, `numSamples * dt + 1.0`,
+  `numSamples * 2 + 16`) force `exactView`'s "samples" kind for the whole file: the
+  range covers every sample regardless of the file's own duration (`sampleRangeFor`
+  clamps to `[0, numSamples - 1]`), and the bin count is always more than half the
+  sample count.
+- All six sequences are on the gradient raster (`PnsLanes.exactView` refuses a file
+  that is not, and `GradientSampler.block_samples` raises for it); the test asserts
+  `onRaster` is `true` as a guard, not as its own coverage goal (off-raster PNS is
+  `test_pns_levels.py`'s concern, per `docs/plans/diagram-lanes.md` section 4.1, item
+  3).
+- The `sodium_gamma` case needs `PnsLanes.decode` to read `pns.gradScale`
+  (decision 14 of `docs/plans/diagram-lanes.md`).

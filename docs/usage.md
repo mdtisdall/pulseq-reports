@@ -27,6 +27,25 @@ uv add "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.1.0"
 To move to a later tag, change `@v0.1.0` and run `uv lock --upgrade-package
 pulseq-reports` (or the equivalent command of your tool).
 
+The PNS summary card and the diagram card's PNS lane need a chunked SAFE
+recursion that stock pypulseq does not have: `pns_levels.py` imports a
+private function of a pypulseq fork, `_safe_gwf_to_pns_chunk`. So
+`pulseq-reports` pins a branch of that fork, `mdtisdall/pypulseq` at
+`pns-chunked`, in its own `[tool.uv.sources]`. uv uses `[tool.uv.sources]`
+only for this project's own environment: a project that depends on
+`pulseq-reports` gets stock pypulseq from PyPI unless it adds the same
+source line itself, and then a call into the PNS card or the PNS lane fails
+with an `ImportError`. Add this to the consumer's own `pyproject.toml`, with
+the same commit as `pulseq-reports`'s own `pyproject.toml`:
+
+```toml
+[tool.uv.sources]
+pypulseq = { git = "https://github.com/mdtisdall/pypulseq", rev = "<the commit pulseq-reports pins>" }
+```
+
+This paragraph applies while `pulseq-reports` pins a fork commit instead of
+a pypulseq release (`docs/plans/cards-at-scale.md`, section 3.6, item 7).
+
 ## 2. One sequence, every card
 
 This example builds a page for one sequence with every library card. It uses
@@ -43,6 +62,12 @@ comes from the PNS prediction: run `pns.pns_prediction` to get the peak time,
 then `pns.peak_tr_window` to get the window. `peak_tr_window` returns `None`
 when the sequence has no `TR` definition or is not longer than one TR, so
 check for that before you add the window.
+
+`PnsPrediction` is a summary only (`reason`, `hardware`, `asc_file`, `peak`,
+`peak_time_s`, `axis_peaks`): it has no `t_s`, `norm` or `axes` array, unlike
+in `v0.1.0`. A caller that wants the per-sample values of a short sequence
+calls `seq.calculate_pns` directly; with the pinned pypulseq fork, its
+memory is near the size of its result, about 40 bytes for each sample.
 
 ```python
 from pulseq_reports import pns
@@ -73,7 +98,7 @@ if peak_window is not None:
 cards = [
     timing_card(seqs),
     rf_exposure_card(seqs),
-    diagram_card(seqs, windows),
+    diagram_card(seqs, windows, pns=True),
     spectrum_card(seqs),
     pns_card(named),
     gradient_limits_card(seqs),
@@ -92,6 +117,10 @@ write_page(
 `pns_card` takes one `NamedSequence`, not a list, because the SAFE-model
 prediction is defined for one sequence. Every other card in this example
 takes the list `seqs`.
+
+`pns_card` and `diagram_card`'s PNS lane (`pns=True` here) share one PNS
+computation for each sequence (`pns.pns_levels_for`), so this page runs the
+SAFE model once for `named`, not twice.
 
 The card order above is a suggestion, not a requirement: `write_page` puts
 the cards on the page in the order of the `cards` list.
@@ -157,9 +186,38 @@ the RF phase lane; no peak and no ADC window is lost. A status line under the
 chart says which of the two the current view shows. Windows are only
 shortcut buttons: they do not change what a view shows, only where it starts.
 
-This card works for a file of up to 10^7 blocks. The other cards (PNS, RF
-exposure, gradient limits, gradient spectrum) are not built for that size
-yet.
+`diagram_card`'s `pns` argument adds a PNS lane next to the gradients, for a
+file that has a gradient event: `False` (the default) adds no PNS lane and
+computes no PNS; `True` predicts with pypulseq's example hardware; the path
+of a gradient `.asc` file predicts with that hardware. A file with no
+gradient event gets no PNS lane, whatever `pns` is.
+
+The PNS lane shows the total predicted stimulation (the root-sum-of-squares
+of the three axes) as a percent of the SAFE stimulation limit. It is exact
+for a view of 10 s or less. A longer view shows the minimum and the maximum
+in stored bins instead, 6.15 ms wide, or a coarser pyramid of them for a
+still longer view; no peak is lost. The status line under the chart says
+which: "PNS: exact." or "PNS: minimum and maximum in bins of X ms." A file
+longer than about 3.4 hours gets coarser stored bins, so that their number
+stays bounded; for such a file, a view longer than 10 s but not much longer
+shows bins wider than the usual 6.15 ms, and the status line adds "Zoom in
+to 10 s or less for the exact values." to say so. For a file with a block
+that is not a whole number of gradient-raster samples, there is no exact
+view at any zoom, and the status line says so instead.
+
+Above the chart, after the window buttons, one toggle button for each lane
+group shows or hides that group: RF, ADC, Gradients, and PNS when at least
+one file has PNS data. A hidden group costs no computation: hiding the PNS
+group, for example, stops the PNS lane from being computed on the next
+render.
+
+`pns=True` or a path costs the SAFE model's own time: about 3 s of Python
+for a 370 s file, about 100 s at 10^7 blocks. The stored level added to the
+page is small after compression, even at that size.
+
+This card, the PNS lane, the PNS summary card, the gradient limits card and
+the gradient spectrum card work for a file of up to 10^7 blocks. The RF
+exposure card is not built for that size yet.
 
 The diagram card needs the browser's `DecompressionStream` with the "gzip"
 format: Chrome 80, Edge 80, Firefox 113, Safari 16.4 or later (MDN
@@ -259,6 +317,7 @@ hover tooltip, and returns `{setView, setLanes, setWindow}`.
 |---|---|
 | `svg`, `chart`, `tip` | Existing DOM elements: the chart's `<svg>` (needs a unique `id`), its wrapping element, and the tooltip element. |
 | `lanes` | The lanes to draw, in the JSON format below. |
+| `lanesFor(view, bins, visibleGroupIds)` | Called at the start of each render, with the current view, `bins` (the plot width in points) and the Set of currently visible group ids; its return is drawn instead of `lanes` for that render. Without `groups`, ignore the third argument, and the result must always have the same number of lanes. Without `lanesFor`, `lanes` is drawn as given to `laneChart`, `setLanes` or `setWindow`. |
 | `xDomain` | The initial view, `[lo, hi]`. |
 | `extent` | The widest view a zoom or pan can reach. Defaults to `xDomain`. |
 | `minSpan` | The narrowest view width. Defaults to a millionth of `extent`. |
@@ -267,15 +326,17 @@ hover tooltip, and returns `{setView, setLanes, setWindow}`.
 | `cursorText(value)` | Formats the x value shown in the tooltip header. |
 | `bands` | A list of `[lo, hi]` x ranges to shade, for example acoustic resonance bands. |
 | `bandStyle` | The CSS `style` of a shaded band. |
+| `groups` | A list of lane groups, `{id, label, laneIds, visible}`. A lane (of `lanes`, and of a `lanesFor` result) whose id is in no group's `laneIds` is always drawn; `groups` itself does not change after `laneChart` is called, not even through `setWindow`. |
+| `groupControls` | An existing DOM element. With `groups` also given, one `<button type="button">` is rendered into it for each group, to show or hide that group; without `groupControls`, a group's own `visible` flag still governs it, but nothing in the page can change it. |
 
 The returned `setView(view)` changes the view without calling
 `onViewChange`. `setLanes(lanes)` replaces the lanes, keeping their number
 the same. `setWindow({lanes, xDomain, extent})` replaces the lanes (any
 number), the initial view and the widest view together, and resets to the
-new `xDomain`; the PNS card's "peak TR" button and the diagram card's window
-buttons both use it. `PulseqReport.el` and `PulseqReport.text` are small
-helpers for building SVG elements directly, for a card that does not use
-`laneChart`.
+new `xDomain`; the diagram card's window buttons use it, including to
+switch to another file's model. `PulseqReport.el` and `PulseqReport.text`
+are small helpers for building SVG elements directly, for a card that does
+not use `laneChart`.
 
 ### Lane JSON format
 
@@ -300,9 +361,9 @@ one of:
 | `cards.definitions.definitions_card(seqs)` | The Pulseq `Definitions` of each sequence, one table row for each key. |
 | `cards.rf_exposure.rf_exposure_card(seqs, periodic=True, window_s=10.0)` | Peak B1, RF energy and B1+rms, per file, and a combined "All files" table for more than one file. |
 | `cards.spectrum.spectrum_card(seqs, resonances=PRISMA_AS82_RESONANCES, scanner_label=...)` | The gradient spectrum of each axis and their root-sum-of-squares, against a gradient coil's acoustic resonance bands. |
-| `cards.pns.pns_card(seq, gradient_asc=None)` | The SAFE-model PNS prediction over time for one sequence, with a "peak TR" view when the sequence has a `TR` definition and more than one TR. |
+| `cards.pns.pns_card(seq, gradient_asc=None)` | The SAFE-model PNS prediction summary for one sequence: a status line, a table of the peaks (all axes, Gx, Gy, Gz) and the hardware note. No chart: the stimulation over time is `diagram_card`'s PNS lane. |
 | `cards.gradient_limits.gradient_limits_card(seqs, window=None, limits=None)` | Peak amplitude, peak slew rate and RMS amplitude of each logical axis and of the three-axis vector, as a percent of the hardware limits. |
-| `cards.diagram.diagram_card(seqs, windows)` | RF magnitude and phase, the ADC gate, and Gx, Gy, Gz against time, with one button for each window. |
+| `cards.diagram.diagram_card(seqs, windows, pns=False)` | RF magnitude and phase, the ADC gate, Gx, Gy, Gz and, when `pns` is not `False`, a PNS lane, against time, with one button for each window. |
 | `cards.blocks.blocks_card(seqs, windows=None, max_rows=500)` | A collapsed, block-by-block table: block id, start, duration and events. |
 
 All eight functions take `card_id` with a default, so a page can hold two
