@@ -15,6 +15,14 @@ const SeqLanes = (() => {
   const EXACT_POINT_LIMIT = 20000;
   const CHECKPOINT_BLOCKS = 1024; // section 4.2: one checkpoint for each 1024 blocks
 
+  // The factor from the diagram's gradient values (mT/m, computed by
+  // diagram_data.diagram_tables as Hz/m / seq_utils.GAMMA * 1e3, with the
+  // proton gamma GAMMA = 42.576e6 Hz/T) back to Hz/m: GAMMA * 1e-3, which is
+  // 42576 (docs/plans/rf-profiles.md, section 4.1). The integer literal is
+  // exact; a value converted back differs from pypulseq's Hz/m only by the
+  // rounding of the division in Python.
+  const GRAD_HZ_PER_VALUE = 42576;
+
   // The table names of section 4.2. `decode` accepts only these (and
   // requires all of them), so that a page with data for a later format
   // (section 4.6, for example a `rotation` table) fails loudly instead of
@@ -374,6 +382,76 @@ const SeqLanes = (() => {
     // for a model built by `decode`. Kept as a defensive fallback.
     const j = Math.max(0, Math.min(N - 1, lo * GROUP_BLOCKS));
     return [j, blockStart(model, j)];
+  }
+
+  // ---- sequenceView (section 4.1 of docs/plans/rf-profiles.md) ----
+
+  // Throws a RangeError for a block index `i` outside [0, model.numBlocks).
+  function _checkBlockIndex(model, i) {
+    if (i < 0 || i >= model.numBlocks) {
+      throw new RangeError(
+        `SeqLanes.sequenceView: block ${i} is out of range [0, ${model.numBlocks})`);
+    }
+  }
+
+  // Throws a RangeError for an event index `k` outside [1, count] (`count`
+  // is the length of that event's own table: `grad_n`, `adc_delay` or
+  // `rf_delay`).
+  function _checkEventIndex(k, count, kind) {
+    if (k < 1 || k > count) {
+      throw new RangeError(`SeqLanes.sequenceView: ${kind} event ${k} is out of range [1, ${count}]`);
+    }
+  }
+
+  // A read-only view of one decoded file (`model`, from `decode`), for a
+  // card to publish in its `sequence` message (section 4.1). A subscriber
+  // uses only this object: never `model` or `model.tables` directly, so it
+  // never depends on how a model is built or laid out. `gradEvent` hands out
+  // subarray views straight over the gradient pools (no copy): a caller must
+  // not change `offsetsS` or `values`.
+  function sequenceView(model) {
+    const tb = model.tables;
+    return Object.freeze({
+      numBlocks: model.numBlocks,
+      durationS: model.durationS,
+      blockAt(tS) {
+        return blockAt(model, tS);
+      },
+      blockStart(i) {
+        _checkBlockIndex(model, i);
+        return blockStart(model, i);
+      },
+      blockDuration(i) {
+        _checkBlockIndex(model, i);
+        return tb.durations[tb.duration_index[i]];
+      },
+      events(i) {
+        _checkBlockIndex(model, i);
+        return {rf: tb.rf[i], gx: tb.gx[i], gy: tb.gy[i], gz: tb.gz[i], adc: tb.adc[i]};
+      },
+      gradEvent(k) {
+        _checkEventIndex(k, tb.grad_n.length, "gradient");
+        const idx = k - 1;
+        const n = tb.grad_n[idx];
+        const offsetAt = tb.grad_offset_at[idx];
+        const at = tb.grad_at[idx];
+        return {
+          delayS: tb.grad_delay[idx],
+          offsetsS: tb.grad_offset.subarray(offsetAt, offsetAt + n),
+          values: tb.grad_value.subarray(at, at + n),
+        };
+      },
+      gradHzPerValue: GRAD_HZ_PER_VALUE,
+      adcEvent(k) {
+        _checkEventIndex(k, tb.adc_delay.length, "ADC");
+        const idx = k - 1;
+        return {delayS: tb.adc_delay[idx], lengthS: tb.adc_length[idx]};
+      },
+      rfDelayS(k) {
+        _checkEventIndex(k, tb.rf_delay.length, "RF");
+        return tb.rf_delay[k - 1];
+      },
+    });
   }
 
   // Calls `fn(i, start, duration)` for each block `i` whose closed interval
@@ -1123,6 +1201,6 @@ const SeqLanes = (() => {
   }
 
   return {decode, blockStart, blockAt, exactLanes, minMaxLanes, lanesFor, pointsIn,
-    EXACT_POINT_LIMIT};
+    sequenceView, EXACT_POINT_LIMIT, GRAD_HZ_PER_VALUE};
 })();
 if (typeof module !== "undefined") module.exports = SeqLanes;

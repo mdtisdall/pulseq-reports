@@ -1026,3 +1026,169 @@ test("test_lanes_for_switches_from_exact_to_min_max_at_the_point_limit", () => {
   assert.equal(overLimit.exact, false);
   assert.deepEqual(overLimit.lanes, SeqLanes.minMaxLanes(model, 0, tOverLimit, bins));
 });
+
+// ---- sequenceView (docs/plans/rf-profiles.md, section 4.1) ----------------
+//
+// `sequenceView` is the read-only object that a diagram card publishes in
+// its `sequence` message, for another card to read a decoded file through
+// instead of `model` or `model.tables`. These tests check each of its
+// members against the hand model (`buildHandModel`, worked out on paper
+// above) and, for the gradient pool sharing, against `buildRandomModel`,
+// whose fixed event tables give three gradient events that all share one
+// offset pool slice.
+
+test("test_sequence_view_num_blocks_and_duration_s", () => {
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  assert.equal(view.numBlocks, model.numBlocks);
+  assert.equal(view.numBlocks, 5);
+  assert.equal(view.durationS, model.durationS);
+  assert.equal(view.durationS, 0.01);
+});
+
+test("test_sequence_view_block_at_and_block_start_match_seq_lanes", () => {
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  for (const t of [-0.001, 0, 0.0019, 0.002, 0.005, 0.0075, 0.0086, 0.01, 0.02]) {
+    assert.equal(view.blockAt(t), SeqLanes.blockAt(model, t), `blockAt(${t})`);
+  }
+  for (let i = 0; i < model.numBlocks; i++) {
+    assert.equal(view.blockStart(i), SeqLanes.blockStart(model, i), `blockStart(${i})`);
+  }
+});
+
+test("test_sequence_view_block_duration", () => {
+  // tables.durations[tables.duration_index[i]], the same values the hand
+  // model's block comment gives (0.002, 0.003, 0.0025, 0.001, 0.0015).
+  const {tables, model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  for (let i = 0; i < model.numBlocks; i++) {
+    assert.equal(view.blockDuration(i), tables.durations[tables.duration_index[i]], `block ${i}`);
+  }
+});
+
+test("test_sequence_view_events_for_blocks_with_and_without_each_event", () => {
+  // block0: RF only. block1: gx only. block2: gy only. block3: ADC only.
+  // block4: nothing (an empty delay-only block), so every key is 0 and every
+  // other block leaves at least one key at 0 too.
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  assert.deepEqual(view.events(0), {rf: 1, gx: 0, gy: 0, gz: 0, adc: 0});
+  assert.deepEqual(view.events(1), {rf: 0, gx: 1, gy: 0, gz: 0, adc: 0});
+  assert.deepEqual(view.events(2), {rf: 0, gx: 0, gy: 2, gz: 0, adc: 0});
+  assert.deepEqual(view.events(3), {rf: 0, gx: 0, gy: 0, gz: 0, adc: 1});
+  assert.deepEqual(view.events(4), {rf: 0, gx: 0, gy: 0, gz: 0, adc: 0});
+});
+
+test("test_sequence_view_grad_event_delay_and_exact_slices", () => {
+  // grad event 1 (used as gx in block1): delay 0.0001, offsets
+  // [0, 0.0005, 0.0015, 0.002], values [0, 10, 10, 0] mT/m (the trapezoid of
+  // `test_exact_lanes_trapezoid_gradient_block`). grad event 2 (used as gy
+  // in block2): delay 0.00005, offsets [0, 0.0004, 0.0012, 0.002], values
+  // [0, -3, -6, 0] mT/m (`test_exact_lanes_arbitrary_gradient_block`).
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+
+  const g1 = view.gradEvent(1);
+  assert.equal(g1.delayS, 0.0001);
+  assert.deepEqual(Array.from(g1.offsetsS), [0, 0.0005, 0.0015, 0.002]);
+  assert.deepEqual(Array.from(g1.values), [0, 10, 10, 0]);
+
+  const g2 = view.gradEvent(2);
+  assert.equal(g2.delayS, 0.00005);
+  assert.deepEqual(Array.from(g2.offsetsS), [0, 0.0004, 0.0012, 0.002]);
+  assert.deepEqual(Array.from(g2.values), [0, -3, -6, 0]);
+});
+
+test("test_sequence_view_grad_event_offsets_are_subarray_views_not_copies", () => {
+  // `offsetsS` and `values` must be views over the model's own pools (so a
+  // page never copies a pool it already has), not new arrays: writing
+  // through the view must be visible in the table the model was built from.
+  const {tables, model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  const g1 = view.gradEvent(1);
+  assert.equal(g1.offsetsS.buffer, tables.grad_offset.buffer);
+  assert.equal(g1.values.buffer, tables.grad_value.buffer);
+  const original = g1.values[1];
+  g1.values[1] = original + 1;
+  assert.equal(tables.grad_value[0 + 1], original + 1);
+  g1.values[1] = original; // restore, so later tests of the same model are unaffected
+});
+
+test("test_sequence_view_grad_event_offsets_shared_across_events", () => {
+  // `buildRandomModel`'s three gradient events all have grad_offset_at = 0
+  // and grad_n = 4: their offsets are the same slice of the offset pool
+  // (`_Pool.add` in diagram_data.py reuses the position of an equal array
+  // already there), even though their delays and values differ. `gradEvent`
+  // must hand out that same slice for each of them, unchanged.
+  const {tables, model} = buildRandomModel(5, 1);
+  const view = SeqLanes.sequenceView(model);
+  assert.equal(tables.grad_offset_at[0], 0);
+  assert.equal(tables.grad_offset_at[1], 0);
+  assert.equal(tables.grad_offset_at[2], 0);
+
+  const e1 = view.gradEvent(1), e2 = view.gradEvent(2), e3 = view.gradEvent(3);
+  const wantOffsets = [0, 1e-4, 6e-4, 7e-4];
+  assert.deepEqual(Array.from(e1.offsetsS), wantOffsets);
+  assert.deepEqual(Array.from(e2.offsetsS), wantOffsets);
+  assert.deepEqual(Array.from(e3.offsetsS), wantOffsets);
+
+  assert.equal(e1.delayS, 0);
+  assert.equal(e2.delayS, 5e-5);
+  assert.equal(e3.delayS, 1e-4);
+  assert.deepEqual(Array.from(e1.values), [0, 15, 15, 0]);
+  assert.deepEqual(Array.from(e2.values), [0, -22, -22, 0]);
+  assert.deepEqual(Array.from(e3.values), [0, 9, 9, 0]);
+});
+
+test("test_sequence_view_grad_hz_per_value", () => {
+  // The diagram tables store gradient values as Hz/m / GAMMA * 1e3
+  // (seq_utils.GAMMA = 42.576e6 Hz/T, mT/m). The inverse factor is exactly
+  // GAMMA * 1e-3.
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  assert.equal(view.gradHzPerValue, 42.576e6 * 1e-3);
+  assert.equal(SeqLanes.GRAD_HZ_PER_VALUE, 42.576e6 * 1e-3);
+});
+
+test("test_sequence_view_adc_event_and_rf_delay", () => {
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  assert.deepEqual(view.adcEvent(1), {delayS: 0.00002, lengthS: 0.0006});
+  assert.equal(view.rfDelayS(1), 0.0002);
+});
+
+test("test_sequence_view_block_index_out_of_range_throws", () => {
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  for (const i of [-1, 5, 100]) {
+    assert.throws(() => view.blockStart(i), RangeError, `blockStart(${i})`);
+    assert.throws(() => view.blockDuration(i), RangeError, `blockDuration(${i})`);
+    assert.throws(() => view.events(i), RangeError, `events(${i})`);
+  }
+});
+
+test("test_sequence_view_event_index_out_of_range_throws", () => {
+  // count = grad_n.length (2), adc_delay.length (1) and rf_delay.length (1)
+  // for the hand model: k must be in [1, count].
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  for (const k of [0, -1, 3]) {
+    assert.throws(() => view.gradEvent(k), RangeError, `gradEvent(${k})`);
+  }
+  for (const k of [0, -1, 2]) {
+    assert.throws(() => view.adcEvent(k), RangeError, `adcEvent(${k})`);
+    assert.throws(() => view.rfDelayS(k), RangeError, `rfDelayS(${k})`);
+  }
+});
+
+test("test_sequence_view_is_frozen", () => {
+  const {model} = buildHandModel();
+  const view = SeqLanes.sequenceView(model);
+  assert.equal(Object.isFrozen(view), true);
+  assert.throws(() => {
+    "use strict";
+    view.numBlocks = 999;
+  }, TypeError);
+  assert.equal(view.numBlocks, model.numBlocks);
+});
