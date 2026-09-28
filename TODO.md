@@ -165,3 +165,37 @@ its SAFE model disagree in a way that matters, tell the pypulseq maintainers
 
 **When.** Before the slew lane of the sequence diagram is built. Until then,
 keep both definitions as they are.
+
+## Validate every card against external references
+
+**Why.** The first cards moved from vb-pulseq, and `scripts/vb_parity.py` checked
+that each of them gave the same data as vb-pulseq at `3a1c7dd`. That checked the
+move, not the physics: vb-pulseq and this library share their authors, so an
+error in both passes. On 2026-09-28 the user decided that validation uses
+external references, not vb-pulseq (decision 5 of `docs/plans/rf-profiles.md`),
+and retired `scripts/vb_parity.py`. Until a card has external references, its
+own tests and the oracles in `tests/oracles/` (also written in this project) are
+its only checks.
+
+**What.** For each card, find external references, and add fixtures and tests
+with the method of phase 2b of `docs/plans/rf-profiles.md`: a script outside CI
+makes small committed fixtures that record the tool, its version and the inputs,
+and a pytest compares the library with them, with the reason for each tolerance.
+Candidates to check (none is verified yet):
+
+- PNS: pypulseq's `calculate_pns` and MATLAB Pulseq's SAFE model
+  (`docs/notes/slew-definitions.md` already compares their slew parts).
+- Gradient limits and timing: pypulseq's and MATLAB Pulseq's own checks.
+- Sequence diagram: pypulseq `Sequence.waveforms` and MATLAB Pulseq
+  `waveforms_and_times`.
+- Gradient spectrum: a gradient spectrum function of MATLAB Pulseq, if there
+  is one, or a published forbidden-band example.
+- RF exposure: an analytic pulse train, and pypulseq's SAR code if its
+  quantities are the same.
+
+Some docstrings and `TESTS.md` entries still say that a format is the same as
+vb-pulseq's ("parity"). They say where a format came from; replace them with the
+external reference when a card gets one.
+
+**When.** After phase 2b of `docs/plans/rf-profiles.md` shows the method. The user
+decides the order of the cards.
