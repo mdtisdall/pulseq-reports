@@ -3,10 +3,10 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: in progress. The plan was written on 2026-09-23. Phases 0, 1 and 2
-are merged (#27, #28, #29). On 2026-09-27 the fork branches moved onto
-upstream `master`, and the pin moves to the fork branch `pns-chunked`
-(section 3.6, and `docs/plans/diagram-lanes.md` section 2.6).
+Status: complete (2026-09-28). The plan was written on 2026-09-23. The
+results are in section 8. On 2026-09-27 the fork branches moved onto upstream
+`master`, and the pin moved to the fork branch `pns-chunked` (section 3.6, and
+`docs/plans/diagram-lanes.md` section 2.6).
 
 ## 1. Goal
 
@@ -1067,3 +1067,75 @@ Tasks inside a phase that can run as parallel workers:
    `v0.2.0` with the pin, or to wait. The pin is now on upstream `master`
    (section 3.6, item 2), so `v0.2.0` with the pin also has upstream changes
    that no pypulseq release has.
+
+## 8. Results (2026-09-28)
+
+### 8.1 Pull requests
+
+| Phase | PR | Content |
+|---|---|---|
+| 0 | #27 | `TESTS.md` sections 2.22 and 2.23 |
+| 1 | #28 | The fork with `safe_tau_lowpass` on `lfilter`, pinned (`40f61d3`); `pns.py` without the double gradient build and with the block cache off |
+| 2 | #29 | `seq_index.py`, `block_cache_off`, `sampling.py`, `scripts/cards_scale.py` |
+| 3 | #41 | RF exposure on the index, with the candidate window search |
+| 4 | #38 | Gradient limits on the index, with the junction steps |
+| 5 | #37 | The gradient spectrum on the sampler |
+| 7 | this PR | The scale check, `TODO.md`, `docs/usage.md`, this section |
+
+Plan changes during the work: #24, #26, #30. The pin moved to `20b9e5e`
+(branch `pns-chunked`) in #31, phase 1 of `docs/plans/diagram-lanes.md`. The
+PNS card at 10^7 blocks came from that plan (#39, #42).
+
+### 8.2 Fork commits
+
+| Branch | Commit | Change |
+|---|---|---|
+| `pns-lfilter` | `e476200` (was `40f61d3` on 1.5.0.post1) | `safe_tau_lowpass` as a recursion |
+| `pns-chunked` | `20b9e5e` | `calc_pns` in chunks, and `_safe_gwf_to_pns_chunk` |
+
+Neither is proposed upstream yet (`TODO.md`, "Move from the pypulseq fork to a
+pypulseq release").
+
+### 8.3 Decisions made during the work
+
+1. **Tolerances against the oracles** (the user, 2026-09-28). The rule of
+   section 3.5, item 2 (1e-12) stays for short sequences. Two oracles round
+   absolute times differently from the new code, so two phases use a
+   tolerance derived from the rounding:
+   - Phase 5, the spectrum on long sequences: `1e-12 × max(1, duration in
+     s)`. The sampler places a corner at `(block start + delay) + offset`,
+     and `get_gradients()` adds the segment durations one at a time.
+   - Phase 4, gradient limits: `1e-12 + 4 × eps × duration / shortest
+     segment`. The old code adds the block start before it takes a slope.
+2. **The RF window search is exact** (phase 3). It computes each sample time
+   with the float operations of a search over every sample, so it makes the
+   same comparisons as the old code, also at a tie.
+3. **The oracles** are in `tests/oracles/` without an `__init__.py` (a
+   namespace package).
+4. **Parity runs** use `uv run --with-editable <vb-pulseq> --with-editable
+   <fork checkout>`: with vb-pulseq alone, uv installs pypulseq from PyPI
+   over the pin.
+
+### 8.4 Measurements (task 7.1)
+
+`scripts/cards_scale.py --card all`, each card in a fresh process, a Mac with
+10 cores and 64 GB. Time of the card call, and the added RSS (the peak during
+the card minus the RSS after the build). The PNS card is the summary card of
+`docs/plans/diagram-lanes.md`.
+
+| Card | 370 s file (4 × 10^4 blocks) | 10^5 worst-case blocks | 10^7 repeating blocks | Budget (10^7) |
+|---|---|---|---|---|
+| PNS | 2.9 s, 15 MB | 1.8 s, 23 MB | 103 s, 0.43 GB | `docs/plans/diagram-lanes.md` (≤ 600 s, ≤ 2 GB) |
+| RF exposure | 0.03 s, 2 MB | 1.8 s, 0.66 GB | 6.7 s, 0.85 GB | ≤ 120 s, ≤ 2 GB |
+| Gradient limits | 0.04 s, 5 MB | 0.64 s, 22 MB | 7.6 s, 1.34 GB | ≤ 120 s, ≤ 2 GB |
+| Gradient spectrum | 3.9 s, 0.16 GB | 1.7 s, 0.16 GB | 131 s, 0.31 GB | ≤ 300 s, ≤ 2 GB |
+| Diagram (no PNS lane) | 0.04 s, 4 MB | 5.2 s, 1.33 GB | 10 s, 0.58 GB | second plan |
+
+Every budget of section 2.6 passes. Building the sequence of 10^7 blocks in
+pypulseq takes about 91 s. A page with every card for the 370 s file builds in
+4.3 s (0.76 MB) and draws in the browser in both themes with no console error
+(task 7.1, item 2).
+
+Before this plan (section 2.2), the PNS card of the 370 s file ran for more
+than 3 minutes, and at 10^7 blocks it would need about 240 GB.
+

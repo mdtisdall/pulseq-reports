@@ -215,9 +215,27 @@ render.
 for a 370 s file, about 100 s at 10^7 blocks. The stored level added to the
 page is small after compression, even at that size.
 
-This card, the PNS lane, the PNS summary card, the gradient limits card and
-the gradient spectrum card work for a file of up to 10^7 blocks. The RF
-exposure card is not built for that size yet.
+The diagram, PNS, RF exposure, gradient limits and gradient spectrum cards
+work for a file of up to 10^7 blocks. The time and the added memory of each,
+measured on 2026-09-28 (a Mac with 10 cores and 64 GB,
+`scripts/cards_scale.py`, synthetic repeating sequences; building the
+sequence in pypulseq takes longer than any card at 10^7 blocks: about 90 s and
+3.8 GB):
+
+| Card | 370 s file (4 × 10^4 blocks) | 10^7 blocks (3.3 h) |
+|---|---|---|
+| Sequence diagram, without the PNS lane | 0.04 s, 4 MB | 10 s, 0.58 GB |
+| PNS (summary card, or the PNS lane) | 2.9 s, 15 MB | 103 s, 0.43 GB |
+| RF exposure | 0.03 s, 2 MB | 6.7 s, 0.85 GB |
+| Gradient limits | 0.04 s, 5 MB | 7.6 s, 1.34 GB |
+| Gradient spectrum | 3.9 s, 0.16 GB | 131 s, 0.31 GB |
+
+The PNS computation is shared: the PNS card and the PNS lane of one sequence
+run it one time. The blocks card reads only the rows that it shows, and the
+definitions card only the definitions. The timing card runs pypulseq's
+`check_timing`, which reads every block: about 9 µs for each block (0.9 s at
+10^5 blocks), so about 90 s at 10^7 blocks; its time and memory at that size
+were not measured.
 
 The diagram card needs the browser's `DecompressionStream` with the "gzip"
 format: Chrome 80, Edge 80, Firefox 113, Safari 16.4 or later (MDN
