@@ -4,8 +4,8 @@
 // src/pulseq_reports/assets/seq_lanes.js and pns_lanes.js: one global `GLanes`,
 // `module.exports = GLanes` in Node.
 //
-// This is the prototype's `gMagMinMax` (prototypes/pns_lanes/slew_g.js on the unmerged
-// branch `chore/pns-lanes-prototype`, its "|G|" section only; the slew half of that file
+// This is the prototype's `gMagMinMax` (prototypes/pns_lanes/slew_g.js in the tag
+// `archive/pns-lanes-prototype`, its "|G|" section only; the slew half of that file
 // is not part of this plan) made into library code: `decode` builds the per-block and
 // per-group extrema and the trees, one time, from a `SeqLanes.decode` model; `minMax`
 // gives the exact minimum and maximum of |G| in each of a view's time bins, and
