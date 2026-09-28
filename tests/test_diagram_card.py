@@ -370,6 +370,26 @@ def test_pns_explanation_sentence_absent_by_default():
         assert phrase not in card.body_html, phrase
 
 
+_G_EXPLANATION_PHRASES = ("|G| lane", "magnitude of the gradient vector")
+
+
+def test_g_lane_explanation_sentence_always_present():
+    """The |G| lane (`docs/plans/diagram-lanes.md`, phase 5) needs no extra data from
+    `diagram_card` (it is computed in the browser from the tables already sent), so its
+    explanation sentence is unconditional, unlike the PNS sentence."""
+    named = _named(spin_echo_sequence())
+    card = diagram_card([named], [full_window([named])])  # pns=False (the default)
+    for phrase in _G_EXPLANATION_PHRASES:
+        assert phrase in card.body_html, phrase
+
+
+def test_g_lane_explanation_sentence_present_even_without_gradients():
+    named = _named(empty_sequence())
+    card = diagram_card([named], [full_window([named])])
+    for phrase in _G_EXPLANATION_PHRASES:
+        assert phrase in card.body_html, phrase
+
+
 def test_pns_explanation_sentence_absent_without_gradients_even_with_pns_true():
     """A file with no gradient event gets no `"pns"` key (`_diagram_data`) even when
     `pns` is not False, so it gets no PNS sentence either: the explanation is keyed

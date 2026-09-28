@@ -148,8 +148,12 @@ def diagram_card(
     A group-controls container (`{card_id}-groups`) sits above the chart, after the
     window buttons: the card script (`assets/cards/diagram.js`) fills it with one
     toggle button for each lane group (RF, ADC, Gradients, and PNS when at least one
-    file has PNS data), so any of them can be hidden. The explanation paragraph under
-    the chart gets one more sentence about the PNS lane when the card has PNS data.
+    file has PNS data), so any of them can be hidden. The Gradients group also has a
+    |G| lane (`docs/plans/diagram-lanes.md`, phase 5): the exact minimum and maximum of
+    the gradient vector's magnitude in each time bin, computed in the browser
+    (`assets/g_lanes.js`) from the same tables as Gx, Gy and Gz, no extra data from this
+    function. The explanation paragraph under the chart always gets one sentence about
+    the |G| lane, and one more about the PNS lane when the card has PNS data.
 
     Raises `ValueError` when `windows` is empty, or a window names no file or ends
     before it starts. Raises `NotImplementedError` (`extensions.refuse_rotations`) for
@@ -172,6 +176,10 @@ def diagram_card(
     # present, above the chart and after the window buttons, so that the RF, ADC and
     # gradient groups can be hidden even when the file has no PNS data. It is empty
     # here: the card script fills it with one toggle button for each group.
+    g_note = (
+        " The |G| lane shows the magnitude of the gradient vector (the root-sum-of-squares "
+        "of Gx, Gy and Gz), as the exact minimum and maximum in each time bin."
+    )
     pns_note = (
         " The PNS lane shows the total predicted stimulation (the root-sum-of-squares "
         "of the three axes) as a percent of the SAFE stimulation limit. It is exact "
@@ -193,6 +201,7 @@ def diagram_card(
         '<p class="muted">Hover the diagram, or focus it and use the arrow keys, to read '
         "values.\nRF phase is drawn where |B1| is above 1% of that pulse's peak.\n"
         "Click the chart to mark the centre for the zoom buttons. Drag across the chart to "
-        f"zoom to that range. Hold Shift and drag, or scroll sideways, to pan.{pns_note}</p>"
+        f"zoom to that range. Hold Shift and drag, or scroll sideways, to pan.{g_note}"
+        f"{pns_note}</p>"
     )
     return Card(id=card_id, title="Sequence diagram", body_html=body, data=data, script="diagram")
