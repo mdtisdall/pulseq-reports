@@ -1,14 +1,20 @@
-import numpy as np
 import pypulseq as pp
 import pytest
 from synthetic import SYSTEM, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page, pns
-from pulseq_reports.cards.pns import _active_samples, _max_envelope, pns_card, pns_data
+from pulseq_reports.cards.pns import pns_card, pns_data
 from pulseq_reports.seq_utils import NamedSequence
 
-_PNS_MAX_POINTS = 100_000
-_PNS_ZERO_PERCENT = 0.01
+_DATA_KEYS = {
+    "reason",
+    "hardware",
+    "asc_file",
+    "example",
+    "peak_percent",
+    "peak_time_ms",
+    "axis_peaks_percent",
+}
 
 
 @pytest.fixture(scope="module")
@@ -36,89 +42,49 @@ def _three_trs(peak_tr: int) -> pp.Sequence:
 
 
 def test_pns_data_for_spin_echo(default_seq):
+    """`pns_data` is `pns.pns_prediction`'s summary as a JSON-ready dict: no `lanes`,
+    `end_ms` or `peak_tr_ms` any more (`docs/plans/diagram-lanes.md`, section 4.6). The
+    PNS chart moved into the diagram's PNS lane, which this card no longer computes."""
     data = pns_data(default_seq)
+    assert set(data) == _DATA_KEYS
     assert data["reason"] is None
     assert data["example"] is True
     assert data["asc_file"] is None
     assert data["hardware"] == pns.EXAMPLE_HARDWARE
     assert 0 < data["peak_percent"] < 100
     assert data["peak_percent"] >= max(data["axis_peaks_percent"].values())
-    assert [lane["id"] for lane in data["lanes"]] == ["pns", "gx", "gy", "gz"]
-    for lane in data["lanes"]:
-        assert lane["unit"] == "%"
-        assert lane["domain"] == [0.0, pytest.approx(110)]
-        assert 0 < len(lane["segments"][0]) <= _PNS_MAX_POINTS
-    all_axes = data["lanes"][0]["segments"][0]
-    assert max(v for _, v in all_axes) == pytest.approx(data["peak_percent"], abs=0.01)
-    assert all_axes[-1][0] == data["end_ms"]
-    # One TR, and no TR definition: nothing to zoom to.
-    assert data["peak_tr_ms"] is None
+    assert set(data["axis_peaks_percent"]) == {"x", "y", "z"}
 
 
-def test_max_envelope_keeps_the_maximum_of_each_run():
-    t = np.arange(10_001) * 1e-5
-    values = np.zeros(10_001)
-    values[7_777] = 3.0
-    et, ev = _max_envelope(t, values, 4000)
-    assert len(ev) == len(et) <= 4000
-    assert ev.max() == 3.0
-    assert et[0] == 0
+def test_pns_data_matches_pns_prediction(default_seq):
+    """`pns_data`'s numbers are `pns.pns_prediction`'s own fields, in percent and ms,
+    rounded the same way as the old chart-bearing card rounded them."""
+    p = pns.pns_prediction(default_seq)
+    data = pns_data(default_seq)
+    assert data["peak_percent"] == pytest.approx(100 * p.peak, abs=0.01)
+    assert data["peak_time_ms"] == pytest.approx(1e3 * p.peak_time_s, abs=1e-4)
+    for axis in "xyz":
+        assert data["axis_peaks_percent"][axis] == pytest.approx(100 * p.axis_peaks[axis], abs=0.01)
 
 
 @pytest.mark.parametrize("peak_tr", [0, 1, 2])
-def test_pns_data_zooms_to_the_tr_with_the_highest_pns(peak_tr):
-    data = pns_data(_three_trs(peak_tr))
-    lo, hi = 50 * peak_tr, 50 * (peak_tr + 1)
-    assert data["peak_tr_ms"] == pytest.approx([lo, hi])
-    assert lo <= data["peak_time_ms"] <= hi
-
-
-def test_pns_data_without_a_tr_definition_has_no_zoom():
-    seq = _three_trs(1)
-    del seq.definitions["TR"]
-    data = pns_data(seq)
-    assert data["peak_tr_ms"] is None
-
-
-def test_pns_lanes_keep_every_sample_above_the_floor():
-    seq = _three_trs(1)
+def test_pns_data_for_each_tr_position(peak_tr):
+    """The card still reports the right peak for a sequence whose highest PNS is in a
+    different TR (the TR-zoom feature itself moved to the diagram card's windows,
+    `pns.peak_tr_window`, so it is not tested here any more)."""
+    seq = _three_trs(peak_tr)
     p = pns.pns_prediction(seq)
     data = pns_data(seq)
-    by_id = {lane["id"]: lane for lane in data["lanes"]}
-    lane_values = {"pns": p.norm, "gx": p.axes["x"], "gy": p.axes["y"], "gz": p.axes["z"]}
-    for lane_id, values in lane_values.items():
-        lane_points = set(map(tuple, by_id[lane_id]["segments"][0]))
-        expected = {
-            (round(float(t) * 1e3, 4), round(float(100 * v), 2))
-            for t, v in zip(p.t_s, values)
-            if 100 * v > _PNS_ZERO_PERCENT
-        }
-        assert expected <= lane_points
-        assert len(lane_points) < p.t_s.size
-
-
-def test_active_samples_keep_the_ends_of_zero_runs():
-    t = np.arange(10.0)
-    values = np.array([0, 0, 0, 1, 2, 0, 0, 0, 0, 0.0])
-    kept_t, kept_v = _active_samples(t, values, 0.01)
-    assert list(kept_t) == [0, 2, 3, 4, 5, 9]
-    assert list(kept_v) == [0, 0, 1, 2, 0, 0]
-
-
-def test_report_has_peak_tr_buttons():
-    card = pns_card(NamedSequence("three-trs", _three_trs(1)))
-    body = card.body_html
-    label = "TR with the highest PNS (50–100 ms)</button>"
-    assert '<button type="button" data-pns-view="full" aria-pressed="true">' in body
-    assert f'<button type="button" data-pns-view="peak-tr" aria-pressed="false">{label}' in body
-    assert "counted from the sequence start in steps of the TR definition" in body
+    assert data["peak_time_ms"] == pytest.approx(1e3 * p.peak_time_s, abs=1e-4)
+    lo, hi = 50 * peak_tr, 50 * (peak_tr + 1)
+    assert lo <= data["peak_time_ms"] <= hi
 
 
 def test_report_has_pns_card(default_seq):
     card = pns_card(NamedSequence("vb-spin-echo", default_seq))
     assert card.id == "pns"
     assert card.title == "PNS prediction"
-    assert card.script == "pns"
+    assert card.script is None
 
     body = card.body_html
     assert "is below the 100 % limit" in body
@@ -126,37 +92,34 @@ def test_report_has_pns_card(default_seq):
     assert f"<td>{pns.EXAMPLE_HARDWARE}</td>" in body
     for label in ("Peak, all axes (%)", "Peak, Gx (%)", "Peak, Gy (%)", "Peak, Gz (%)"):
         assert f"<td>{label}</td>" in body
-    assert 'id="pns-diagram"' in body
-    assert "data-pns-view" not in body  # one TR, no TR definition
+    # No chart any more: it moved into the diagram's PNS lane.
+    assert '<div class="chart"' not in body
+    assert "<svg" not in body
+    assert "data-pns-view" not in body
 
-    # render_page accepts the card, with its title and the id that the script and the
-    # data element key on.
+    # render_page accepts the card, with no card script (script is None): the section
+    # tag has no "data-card-script" attribute (page.py only adds it when Card.script
+    # is not None; page.js's own source, always in the page, does say
+    # "data-card-script" in a comment and a selector, so the check is the exact tag).
     result = page.render_page("Title", "Subtitle", [card])
-    assert '<section class="card" id="pns" data-card-script="pns">' in result
+    assert '<section class="card" id="pns">' in result
     assert "<h2>PNS prediction</h2>" in result
 
 
-def test_report_without_gradients_has_no_pns_chart():
+def test_report_without_gradients_has_no_pns_table():
     card = pns_card(NamedSequence("no-gradients", empty_sequence()))
     result = page.render_page("Title", "Subtitle", [card])
     assert '<p class="muted">No PNS prediction: no gradients.</p>' in result
-    assert 'id="pns-diagram"' not in result
+    assert "<table>" not in result
 
 
-def test_card_ids_start_with_card_id(default_seq):
-    """With a non-default `card_id`, every id in the card's body starts with it, so two
-    PNS cards can be on one page."""
-    card = pns_card(NamedSequence("vb-spin-echo", default_seq), card_id="pns-b")
+def test_card_id_is_used_for_the_section_and_data_element():
+    """With a non-default `card_id`, the card's own id follows it (so two PNS cards,
+    for example for two sequences, can be on one page without an id clash), and its
+    JSON data element key is that id too."""
+    card = pns_card(NamedSequence("vb-spin-echo", spin_echo_sequence()), card_id="pns-b")
     assert card.id == "pns-b"
-    assert card.script == "pns"
-    for element_id in ("pns-b-diagram", "pns-b-chart", "pns-b-tip"):
-        assert f'id="{element_id}"' in card.body_html
-    assert 'data-zoom-for="pns-b-diagram"' in card.body_html
-    # No id from the default card_id leaks in.
-    assert "pns-diagram" not in card.body_html.replace("pns-b-diagram", "")
-
-
-def test_render_page_includes_pns_script_once(default_seq):
-    card = pns_card(NamedSequence("vb-spin-echo", default_seq))
+    assert card.script is None
     result = page.render_page("Title", "Subtitle", [card])
-    assert result.count(page.card_asset("pns")) == 1
+    assert '<section class="card" id="pns-b">' in result
+    assert 'id="pns-b-data"' in result

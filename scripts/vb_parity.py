@@ -83,8 +83,27 @@ ACCEPTED = {
             "The example-hardware note names the gradient_asc argument, not vb's "
             "seq-report --gradient-asc command."
         ),
+        (
+            "The card is a summary: no chart and no peak-TR view, so the data has no "
+            "lanes, end_ms or peak_tr_ms, and the HTML has no chart, TR buttons or chart "
+            "note. The PNS lane is in the sequence diagram, and the peak-TR view is a "
+            "diagram window (decision 15 and section 4.6 of docs/plans/diagram-lanes.md). "
+            "This script compares the data without those keys, and the HTML up to the end "
+            "of the table of peaks."
+        ),
     ],
 }
+
+# The PNS card data keys and HTML that only vb-pulseq's card has (ACCEPTED["pns"]).
+PNS_DROPPED_KEYS = ("end_ms", "lanes", "peak_tr_ms")
+PNS_TABLE_END = "</table></div>"
+
+
+def pns_summary_html(card_html: str) -> str:
+    """The status line, the hardware note and the table of peaks of a PNS card body: the
+    text up to the end of its first table, or the whole text when it has no table."""
+    end = card_html.find(PNS_TABLE_END)
+    return card_html if end < 0 else card_html[: end + len(PNS_TABLE_END)]
 
 
 class Difference(Exception):
@@ -306,7 +325,8 @@ def check_sequence(name: str) -> bool:
         compare_text(vb_spectrum._spectrum_html(vb), lib_html)
 
     def pns_check():
-        compare(vb_pns_data, pns_cards.pns_data(seq))
+        vb_summary = {k: v for k, v in vb_pns_data.items() if k not in PNS_DROPPED_KEYS}
+        compare(vb_summary, pns_cards.pns_data(seq))
         lib_html = pns_cards.pns_card(named[0]).body_html
         lib_html = lib_html.replace(
             "Give the gradient .asc file of your scanner (<code>gradient_asc</code>) for a "
@@ -314,7 +334,7 @@ def check_sequence(name: str) -> bool:
             "Run <code>seq-report</code> with <code>--gradient-asc PATH</code> and the "
             "gradient .asc file of your scanner for a real prediction.",
         )
-        compare_text(vb_pns._pns_html(vb_pns_data), lib_html)
+        compare_text(pns_summary_html(vb_pns._pns_html(vb_pns_data)), pns_summary_html(lib_html))
 
     checks = {
         "timing": timing_check,

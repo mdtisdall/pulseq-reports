@@ -12,7 +12,8 @@ const PulseqReport = (() => {
     return node;
   };
   const text = (attrs, content, parent) => { el("text", attrs, parent).textContent = content; };
-  const {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, zoomView, panView, dragView} = ChartMath;
+  const {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, zoomView, panView, dragView,
+    laneGroupMap, visibleLanes} = ChartMath;
   // A line segment draws at most 4 * BUCKETS + 2 of its points in the view (see visiblePoints).
   const BUCKETS = 2 * PLOT_W;
   // A drag shorter than this, in CSS px, is a click and does not zoom.
@@ -28,31 +29,77 @@ const PulseqReport = (() => {
   // zoom, pan or reset changes the view; `isInitial` is true for a reset to `xDomain`.
   // Zoom: drag in the plot, the zoom buttons, or the + = - keys; 0 resets. Pan: Shift+drag
   // or horizontal scroll.
-  // `lanesFor(view, bins)`, when given, is called at the start of each render, with the
-  // current view and `bins = PLOT_W`, and its result is drawn instead of `lanes`; it must
-  // always return the same number of lanes. `lanes` is then only the initial lanes, shown
-  // by the first render before a view change. Without `lanesFor`, `lanes` is drawn as
-  // given to `laneChart` or to `setLanes`/`setWindow`, as before.
+  // `lanesFor(view, bins, visibleGroupIds)`, when given, is called at the start of each
+  // render, with the current view, `bins = PLOT_W` and the third argument described below,
+  // and its result is drawn instead of `lanes`; without `groups`, it must always return the
+  // same number of lanes. `lanes` is then only the initial lanes, shown by the first render
+  // before a view change. Without `lanesFor`, `lanes` is drawn as given to `laneChart` or to
+  // `setLanes`/`setWindow`, as before.
+  // `groups`, when given, is a list of lane groups: {id, label, laneIds: [...], visible}.
+  // Each lane (of `lanes`, and of a `lanesFor` result) has an `id`; a lane whose id is in no
+  // group's `laneIds` is always drawn. `visibleGroupIds`, the third argument `lanesFor` gets,
+  // is the Set of ids of the currently visible groups, so that a provider computes nothing
+  // for a hidden group; the chart also drops any lane of a hidden group that a provider
+  // returns anyway. The SVG height follows the number of lanes actually drawn. `groups`
+  // itself does not change after `laneChart` is called (not even through `setWindow`).
+  // `groupControls`, an existing DOM element, is required to show or hide a group: with both
+  // `groups` and `groupControls` given, one `<button type="button" aria-pressed="...">` is
+  // rendered into it for each group (its text is the group's `label`); a click toggles that
+  // group's visibility and re-renders. Without `groupControls`, a group's own `visible` flag
+  // still governs it, but nothing in the page can change it. Without `groups`, `laneChart`
+  // behaves exactly as it did before `groups` existed.
   // Returns {setView, setLanes, setWindow}: setView changes the view without calling
   // onViewChange. setWindow replaces the lanes, `xDomain` and `extent` together, and keeps
-  // `lanesFor` if one was given.
-  function laneChart({svg, chart, tip, lanes, lanesFor, xDomain, extent = xDomain,
+  // `lanesFor` and `groups` if they were given.
+  function laneChart({svg, chart, tip, lanes, lanesFor, groups, groupControls,
+                      xDomain, extent = xDomain,
                       minSpan: minSpanOption, onViewChange = () => {},
                       xLabel, cursorText, bands = [],
                       bandStyle = "fill:var(--ink);fill-opacity:0.05"}) {
     // `minSpan` when it is given, else a millionth of the extent.
     const spanOf = ext => minSpanOption ?? (ext[1] - ext[0]) / 1e6;
     let minSpan = spanOf(extent);
-    // The SVG height depends on the number of lanes. setWindow changes it.
+
+    // Lane groups (comment above `laneChart`). `groupMap` and `filterLanes` are built once;
+    // `visibleGroupIds` changes when a group control is clicked. Without `groups`,
+    // `filterLanes` is the identity function, so `lanes.length` and the lanes actually drawn
+    // never differ from what `laneChart` was given, as before `groups` existed.
+    const groupMap = groups ? laneGroupMap(groups) : null;
+    let visibleGroupIds = groups
+      ? new Set(groups.filter(g => g.visible).map(g => g.id)) : null;
+    const filterLanes = groups ? ls => visibleLanes(ls, groupMap, visibleGroupIds) : ls => ls;
+
+    // The SVG height depends on the number of lanes actually drawn. setWindow changes it;
+    // with `groups`, `render` also changes it, since the visible lanes can then change
+    // without a `setWindow` call (a group control click).
     let H, PLOT_BOTTOM;
-    function setHeight() {
-      H = TOP + lanes.length * (LANE_H + LANE_GAP) - LANE_GAP + AXIS_H;
+    function setHeight(n) {
+      H = TOP + n * (LANE_H + LANE_GAP) - LANE_GAP + AXIS_H;
       PLOT_BOTTOM = H - AXIS_H;
       svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     }
-    setHeight();
+    setHeight(filterLanes(lanes).length);
     const clipId = `${svg.id}-clip`;
     svg.setAttribute("data-zoomable", "");
+
+    // One toggle button for each group, when there is somewhere to put them. A click shows
+    // or hides that group's lanes and re-renders (`render` recomputes the height).
+    if (groups && groupControls) {
+      groupControls.replaceChildren();
+      for (const group of groups) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("aria-pressed", String(visibleGroupIds.has(group.id)));
+        button.textContent = group.label;
+        button.addEventListener("click", () => {
+          if (visibleGroupIds.has(group.id)) visibleGroupIds.delete(group.id);
+          else visibleGroupIds.add(group.id);
+          button.setAttribute("aria-pressed", String(visibleGroupIds.has(group.id)));
+          render();
+        });
+        groupControls.appendChild(button);
+      }
+    }
 
     let view = xDomain.slice();
     let cursor = null;
@@ -73,8 +120,16 @@ const PulseqReport = (() => {
 
     const x = t => LEFT + (t - view[0]) / (view[1] - view[0]) * PLOT_W;
 
+    // The lanes actually drawn by the last render (after `filterLanes`); setCursor reads it
+    // for the tooltip, both from render itself and from pointer/keyboard handlers that run
+    // between renders. Without `groups`, this is always `lanes` (filterLanes is the identity
+    // function), exactly as when `lanes` itself was read directly.
+    let drawnLanes = filterLanes(lanes);
+
     function render() {
-      if (lanesFor) lanes = lanesFor(view, PLOT_W);
+      if (lanesFor) lanes = lanesFor(view, PLOT_W, visibleGroupIds);
+      drawnLanes = filterLanes(lanes);
+      if (groups) setHeight(drawnLanes.length);
       if (frame !== null) {
         cancelAnimationFrame(frame);
         frame = null;
@@ -96,7 +151,7 @@ const PulseqReport = (() => {
           height: PLOT_BOTTOM - TOP, style: bandStyle}, bg);
       }
 
-      lanes.forEach((lane, i) => {
+      drawnLanes.forEach((lane, i) => {
         const top = TOP + i * (LANE_H + LANE_GAP);
         const [lo, hi] = lane.domain;
         const y = v => top + LANE_H - (v - lo) / (hi - lo) * LANE_H;
@@ -200,7 +255,7 @@ const PulseqReport = (() => {
       head.className = "t";
       head.textContent = cursorText(cursor);
       tip.appendChild(head);
-      for (const lane of lanes) {
+      for (const lane of drawnLanes) {
         const row = document.createElement("div");
         row.className = "row";
         const name = document.createElement("span");
@@ -425,7 +480,7 @@ const PulseqReport = (() => {
         view = xDomain.slice();
         cursor = null;
         anchor = null;
-        setHeight();
+        setHeight(filterLanes(lanes).length);
         render();
       },
     };

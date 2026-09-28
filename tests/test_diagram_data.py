@@ -178,6 +178,19 @@ def test_encode_then_decode_gives_the_same_arrays_and_dtypes():
         assert np.array_equal(decoded[name], arr), name
 
 
+def test_encode_then_decode_accepts_float32():
+    """`encode_tables`/`decode_tables` accept `float32`, not only the dtypes
+    `diagram_tables` itself produces (`docs/plans/diagram-lanes.md`, section 4.4: the
+    PNS lane's stored level, `pns_levels.PnsLevels.level_min`/`level_max`, is
+    `float32`). The round trip keeps the dtype and, for values a `float32` can hold
+    exactly, the values too."""
+    values = np.array([0.0, 1.5, -2.25, np.float32(3.4028235e38)], dtype=np.float32)
+    tables = {"level_min": values}
+    decoded = diagram_data.decode_tables(diagram_data.encode_tables(tables))
+    assert decoded["level_min"].dtype == np.float32
+    assert np.array_equal(decoded["level_min"], values)
+
+
 @pytest.mark.parametrize(
     "max_value, expected_dtype",
     [(0, np.uint8), (255, np.uint8), (256, np.uint16), (65535, np.uint16), (65536, np.uint32)],

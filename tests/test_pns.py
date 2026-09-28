@@ -5,6 +5,12 @@ from pypulseq.utils.safe_pns_prediction import safe_example_hw
 from synthetic import SYSTEM, block_pulse, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import pns
+from pulseq_reports import pns_levels as pns_levels_module
+from pulseq_reports.cards.diagram import diagram_card
+from pulseq_reports.cards.pns import pns_data
+from pulseq_reports.pns import pns_levels_for
+from pulseq_reports.seq_utils import NamedSequence
+from pulseq_reports.waveforms import full_window
 
 
 @pytest.fixture
@@ -66,17 +72,20 @@ def example(default_seq):
     return pns.pns_prediction(default_seq)
 
 
-def test_example_hardware_for_spin_echo(example):
+def test_example_hardware_for_spin_echo(example, default_seq):
+    """The summary equals `pns_levels.pns_levels` of the same sequence and hardware
+    (task 4.4 of `docs/plans/diagram-lanes.md`: `PnsPrediction` is now built from
+    `PnsLevels`)."""
+    ref = pns_levels_module.pns_levels(default_seq)
     assert example.reason is None
     assert example.hardware == pns.EXAMPLE_HARDWARE
     assert example.asc_file is None
-    assert list(example.axes) == ["x", "y", "z"]
+    assert list(example.axis_peaks) == ["x", "y", "z"]
     assert 0 < example.peak < 1
     assert max(example.axis_peaks, key=example.axis_peaks.get) == "y"  # the crushers
-    for values in example.axes.values():
-        assert values.shape == example.norm.shape
-        assert np.all(example.norm >= values - 1e-12)
-    assert example.t_s[0] <= example.peak_time_s <= example.t_s[-1]
+    assert example.peak == ref.peak
+    assert example.peak_time_s == ref.peak_time_s
+    assert example.axis_peaks == ref.axis_peaks
 
 
 def test_asc_file_with_the_example_parameters(default_seq, example, write_gradient_asc):
@@ -85,7 +94,10 @@ def test_asc_file_with_the_example_parameters(default_seq, example, write_gradie
     assert p.reason is None
     assert p.hardware == "MP_GPA_TEST"
     assert p.asc_file == path.name
-    np.testing.assert_allclose(p.norm, example.norm, rtol=1e-9)
+    assert p.peak == pytest.approx(example.peak, rel=1e-9)
+    assert p.peak_time_s == pytest.approx(example.peak_time_s, rel=1e-9)
+    for axis in "xyz":
+        assert p.axis_peaks[axis] == pytest.approx(example.axis_peaks[axis], rel=1e-9)
 
 
 def test_asc_file_that_includes_the_pns_parameters(default_seq, example, write_gradient_asc):
@@ -94,7 +106,10 @@ def test_asc_file_that_includes_the_pns_parameters(default_seq, example, write_g
     assert p.reason is None
     assert p.hardware == "MP_GPA_TEST"
     assert p.asc_file == path.name
-    np.testing.assert_allclose(p.norm, example.norm, rtol=1e-9)
+    assert p.peak == pytest.approx(example.peak, rel=1e-9)
+    assert p.peak_time_s == pytest.approx(example.peak_time_s, rel=1e-9)
+    for axis in "xyz":
+        assert p.axis_peaks[axis] == pytest.approx(example.axis_peaks[axis], rel=1e-9)
 
 
 def test_asc_file_with_a_missing_include(write_gradient_asc):
@@ -124,17 +139,6 @@ def test_prediction_scales_with_the_stimulation_limit(default_seq, example, writ
     assert p.peak > 1
 
 
-def test_peak_time_is_the_first_sample_at_the_peak_within_rounding():
-    t = np.arange(5) * 1e-3
-    norm = np.array([0.0, 0.5 * (1 - 1e-12), 0.1, 0.5, 0.2])
-    p = pns.PnsPrediction(None, pns.EXAMPLE_HARDWARE, None, t, norm)
-    assert p.peak == 0.5
-    assert p.peak_time_s == pytest.approx(1e-3)
-    # A real increase, larger than the tolerance, moves the peak time.
-    norm[3] = 0.5 * (1 + 1e-3)
-    assert p.peak_time_s == pytest.approx(3e-3)
-
-
 def test_no_gradients():
     p = pns.pns_prediction(empty_sequence())
     assert p.reason == pns.NO_GRADIENTS
@@ -162,7 +166,10 @@ def test_a_gradient_on_one_axis_has_a_prediction(channel):
     assert p.peak > 0
 
 
-def test_prediction_builds_the_gradients_one_time(monkeypatch):
+def test_prediction_does_not_build_the_gradients_for_an_on_raster_sequence(monkeypatch):
+    """`pns_prediction` (`pns_levels.pns_levels`) samples an on-raster sequence with
+    `GradientSampler.block_samples`, not `seq.get_gradients()` (unlike the old
+    `seq.calculate_pns`-based prediction), so `get_gradients` is never called."""
     seq = spin_echo_sequence()
     calls = []
     get_gradients = seq.get_gradients
@@ -173,7 +180,7 @@ def test_prediction_builds_the_gradients_one_time(monkeypatch):
 
     monkeypatch.setattr(seq, "get_gradients", counted)
     pns.pns_prediction(seq)
-    assert len(calls) == 1  # the one in calculate_pns
+    assert calls == []
 
 
 @pytest.mark.parametrize("use_block_cache", [True, False])
@@ -186,20 +193,23 @@ def test_prediction_keeps_no_blocks_and_gives_back_the_cache_setting(use_block_c
     assert not seq.block_cache
 
 
-def test_prediction_gives_back_the_cache_setting_after_an_error(monkeypatch):
+def test_prediction_propagates_an_error_and_keeps_the_cache_setting(monkeypatch):
+    """An error deep inside the SAFE model (the pinned fork's chunk function)
+    propagates out of `pns_prediction`, and the sequence's block-cache setting and
+    contents are unaffected: the block cache is only ever touched inside
+    `seq_index.block_cache_off`'s own `try`/`finally`, which has already restored it
+    by the time the chunk function runs (`GradientSampler` is built first)."""
     seq = spin_echo_sequence()
     seq.use_block_cache = True
-    seen = []
 
     def fail(*args, **kwargs):
-        seen.append(seq.use_block_cache)
-        raise RuntimeError("calculate_pns failed")
+        raise RuntimeError("chunk failed")
 
-    monkeypatch.setattr(seq, "calculate_pns", fail)
-    with pytest.raises(RuntimeError, match="calculate_pns failed"):
+    monkeypatch.setattr(pns_levels_module, "_safe_gwf_to_pns_chunk", fail)
+    with pytest.raises(RuntimeError, match="chunk failed"):
         pns.pns_prediction(seq)
-    assert seen == [False]
     assert seq.use_block_cache is True
+    assert not seq.block_cache
 
 
 def _three_trs(peak_tr: int) -> pp.Sequence:
@@ -247,3 +257,59 @@ def test_peak_tr_window_with_one_tr_is_none():
 def test_peak_tr_window_without_a_peak_time_is_none():
     seq = _three_trs(1)
     assert pns.peak_tr_window(seq, None) is None
+
+
+def _count_pns_levels_calls(monkeypatch) -> list:
+    """Patches `pns_levels.pns_levels` (as `pns.pns_levels_for` imports it, one time for
+    each call) with a wrapper that records one entry for each call, and returns the
+    list. `pns.pns_levels_for` looks up the current module attribute on every call (a
+    local import inside the function, to avoid a circular import with `pns_levels.py`),
+    so patching the module attribute here reaches it."""
+    calls: list = []
+    original = pns_levels_module.pns_levels
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pns_levels_module, "pns_levels", counted)
+    return calls
+
+
+def test_pns_levels_for_shares_one_computation_with_the_pns_card_and_the_diagram(
+    monkeypatch,
+):
+    """The PNS summary card (`cards.pns.pns_data`) and the diagram's PNS lane
+    (`cards.diagram.diagram_card(..., pns=True)`) both read `pns.pns_levels_for`, so
+    for one sequence the SAFE model runs once, not twice (`docs/plans/diagram-lanes.md`,
+    section 4.6). Adding a block changes the sequence, so the next call recomputes."""
+    calls = _count_pns_levels_calls(monkeypatch)
+    seq = spin_echo_sequence()
+    named = NamedSequence("seq", seq)
+
+    pns_data(seq)
+    diagram_card([named], [full_window([named])], pns=True)
+    assert len(calls) == 1
+
+    seq.add_block(pp.make_delay(1e-3))
+    pns_data(seq)
+    assert len(calls) == 2
+
+
+def test_pns_levels_for_recomputes_for_a_different_asc_path(monkeypatch, write_gradient_asc):
+    """`pns_levels_for` keeps one result for each (sequence, asc path): calling it again
+    for the same sequence with a different `.asc` file recomputes, and going back to the
+    first path recomputes again (the kept result is only the most recent one)."""
+    calls = _count_pns_levels_calls(monkeypatch)
+    seq = spin_echo_sequence()
+    path_a = write_gradient_asc(name="MP_GPA_A")
+    path_b = write_gradient_asc(name="MP_GPA_B")
+
+    pns_levels_for(seq, path_a)
+    assert len(calls) == 1
+    pns_levels_for(seq, path_a)  # same sequence, same path: cached
+    assert len(calls) == 1
+    pns_levels_for(seq, path_b)  # a different path: recomputes
+    assert len(calls) == 2
+    pns_levels_for(seq, path_a)  # back to path_a: recomputes again (not a 2-entry cache)
+    assert len(calls) == 3

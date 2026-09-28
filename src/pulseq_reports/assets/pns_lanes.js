@@ -9,15 +9,22 @@
 // model, using the block maps of the prototype's README ("Block maps": a
 // scan with a checkpoint every `GROUP_BLOCKS` blocks), not a per-sample
 // recursion over the whole file. `levels` builds the coarser pyramid levels
-// (plan section 4.5) that `lanesFor` reads for a zoomed-out view.
+// (plan section 4.5) that `lanesFor` reads for a zoomed-out view. `laneMeta`
+// and `statusText` are the two pure helpers the diagram card script
+// (assets/cards/diagram.js, phase 4) uses to draw the lane and its part of
+// the status line: `laneMeta` builds the lane object without "segments",
+// and `statusText` turns one `lanesFor` result into the sentence that says
+// which data drew the render.
 //
 // The model (unchanged from the prototype, prototypes/pns_lanes/pns_lanes.js
 // and its README): each block `i` holds `n_i = round(duration_i / dt)`
 // gradient-raster samples, at the local times `(j + 0.5) * dt` from the
 // block start. The gradient of one axis in a block is the event's points at
 // `grad_delay + grad_offset` (s, from the block start), with values
-// `grad_value / 1000` (T/m), linear between points, 0 before the first
-// point and after the last, 0 for a block with no event on the axis. This
+// `grad_value / 1000 * gradScale` (T/m; `gradScale` is the file's
+// `pns.gradScale`, 1.0 for a proton sequence, plan section 4.4, decision
+// 14), linear between points, 0 before the first point and after the last,
+// 0 for a block with no event on the axis. This
 // agrees with pypulseq for a sequence that pypulseq accepts: pypulseq's own
 // `get_gradients` draws a line across the gap between two events (0 to the
 // first point, the last point to 0), and `add_block` makes a gradient
@@ -37,20 +44,23 @@
 const PnsLanes = (() => {
   const AXES = ["x", "y", "z"];
   const GROUP_BLOCKS = 64; // blocks between two checkpoints
-  const EXACT_MAX_S = 1.0; // the longest exact view (plan section 4.2)
+  const EXACT_MAX_S = 10.0; // the longest exact view (plan section 4.2, decision 13)
   const ZERO_H = [0, 0, 0];
 
   // ---- Per-event data (README "Per-event data (computed one time for each
   // unique event)"): the samples g[j] (T/m) of one gradient event, for a
   // block of `n` samples starting where the event's own delay/offset times
   // are measured from (the block start). Linear interpolation between the
-  // event's points (delay + offset[p], value[p] mT/m / 1000), 0 before the
-  // first point and after the last. Sample times and point times are both
+  // event's points (delay + offset[p], value[p] mT/m / 1000 * scale), 0
+  // before the first point and after the last. `scale` is the file's
+  // `pns.gradScale` (plan section 4.4, decision 14; 1.0 for a proton
+  // sequence), passed in as a plain argument (a local, not an object
+  // property read inside the loop). Sample times and point times are both
   // non-decreasing, so one sequential merge (not a binary search per
   // sample) computes all n samples in O(n + point count). Reads only
   // grad_delay, grad_n, grad_offset_at, grad_at, grad_offset, grad_value
   // (the tables this module needs, per the interface note).
-  function _eventSamples(tables, dt, eventIdx, n) {
+  function _eventSamples(tables, dt, eventIdx, n, scale) {
     const idx = eventIdx - 1;
     const delay = tables.grad_delay[idx];
     const nPts = tables.grad_n[idx];
@@ -67,12 +77,12 @@ const PnsLanes = (() => {
       const t0 = delay + offset[offAt + p];
       if (t < t0) { g[j] = 0; continue; }
       if (p + 1 >= nPts) {
-        g[j] = t <= t0 ? value[valAt + p] / 1000 : 0;
+        g[j] = t <= t0 ? value[valAt + p] / 1000 * scale : 0;
         continue;
       }
       const t1 = delay + offset[offAt + p + 1];
-      const v0 = value[valAt + p] / 1000;
-      const v1 = value[valAt + p + 1] / 1000;
+      const v0 = value[valAt + p] / 1000 * scale;
+      const v1 = value[valAt + p + 1] / 1000 * scale;
       g[j] = t1 === t0 ? v1 : v0 + (v1 - v0) / (t1 - t0) * (t - t0);
     }
     return g;
@@ -116,7 +126,7 @@ const PnsLanes = (() => {
     const cache = model._eventCache;
     let entry = cache.get(key);
     if (entry !== undefined) return entry;
-    const g = _eventSamples(model.tables, model.dt, eventIdx, n);
+    const g = _eventSamples(model.tables, model.dt, eventIdx, n, model.gradScale);
     const h = _zeroStateResponse(model, axis, g, n);
     entry = { g, h };
     cache.set(key, entry);
@@ -272,9 +282,13 @@ const PnsLanes = (() => {
   // rule). `pns`: the file entry's `pns` object (plan section 4.4), with
   // its levels already decoded by the caller: {dtS, binSamples, hw: {x, y,
   // z: {tau1, tau2, tau3, a1, a2, a3, stim_limit, g_scale}}, levels: {min,
-  // max}}.
+  // max}}. `pns.gradScale` (plan section 4.4, decision 14) defaults to 1.0
+  // when the key is missing; every gradient sample is multiplied by it
+  // (`_eventSamples`) before the SAFE model, so a non-proton sequence's PNS
+  // agrees with Python's.
   function decode(tables, pns) {
     const dt = pns.dtS;
+    const gradScale = pns.gradScale === undefined ? 1.0 : pns.gradScale;
     const numBlocks = tables.duration_index.length;
     const numGradEvents = tables.grad_n.length;
 
@@ -307,6 +321,7 @@ const PnsLanes = (() => {
     const model = {
       numBlocks,
       dt,
+      gradScale,
       groupBlocks: GROUP_BLOCKS,
       numGradEvents,
       alpha, c, aCoef, axisFactor, powCache,
@@ -676,6 +691,66 @@ const PnsLanes = (() => {
     };
   }
 
+  // ---- laneMeta (the diagram card's lane_chart.js hook, plan section 4.5) ----
+
+  // The PNS lane object without "segments" (the `lane_meta` form of
+  // `diagram_data.py`, so `laneChart` draws it like the other lanes):
+  // `id`, `title`, `unit`, `color` (a token of `report.css`; "ink-2", as the
+  // old PNS card's chart used), `kind`, `domain`, `ticks`, `tick_labels`,
+  // `empty` (always false: this lane is built only for a file that has PNS
+  // data) and `fill` (the tooltip's fallback value outside every segment, as
+  // the gradient lanes have). `summary` is the file entry's `pns.summary`
+  // (plan section 4.4): `peak` is a fraction of the limit (1 = 100%), so the
+  // domain's `100 * summary.peak` is the peak in percent, and the domain is
+  // never narrower than [0, 110] (`Math.max(100, ...)`), as the PNS card's
+  // own chart had it.
+  function laneMeta(summary) {
+    const peakPercent = 100 * summary.peak;
+    return {
+      id: "pns",
+      title: "PNS",
+      unit: "%",
+      color: "ink-2",
+      kind: "line",
+      domain: [0, 1.1 * Math.max(100, peakPercent)],
+      ticks: [0, 100],
+      tick_labels: ["0", "100"],
+      empty: false,
+      fill: 0.0,
+    };
+  }
+
+  // A bin width (ms) with a sensible number of digits for the status line:
+  // 3 significant figures, printed without a fixed decimal count (so 6.15,
+  // 24.6, 393 and 1570 all read naturally, instead of a fixed
+  // `toFixed` giving "393.000" or "6.150000").
+  function _fmtBinMs(ms) {
+    return Number(ms.toPrecision(3)).toString();
+  }
+
+  // The PNS part of the diagram's status line (plan section 4.5, item 2),
+  // for one render's `lanesFor` result (`result`, the return of `lanesFor`
+  // above) and the model's own `onRaster` (`model.onRaster`, passed
+  // separately because a caller that skips a hidden PNS group never calls
+  // `lanesFor` and so never has a `result` to read it from otherwise).
+  // "Exact" or the bin width, then at most one more sentence: when the file
+  // is not on the gradient raster, that there is no exact view at any zoom
+  // (this replaces the "zoom in" sentence, which would be misleading: no
+  // zoom ever reaches an exact view for such a file); otherwise, when
+  // `result.gap` is set (even the stored level is coarser than half a
+  // display bin, plan section 4.2), that zooming in to `EXACT_MAX_S` seconds
+  // or less reaches the exact values.
+  function statusText(result, onRaster) {
+    if (result.exact) return "PNS: exact.";
+    let text = `PNS: minimum and maximum in bins of ${_fmtBinMs(result.binMs)} ms.`;
+    if (!onRaster) {
+      text += " The file is not on the gradient raster, so there is no exact view.";
+    } else if (result.gap) {
+      text += ` Zoom in to ${EXACT_MAX_S} s or less for the exact values.`;
+    }
+    return text;
+  }
+
   return {
     EXACT_MAX_S,
     GROUP_BLOCKS,
@@ -683,6 +758,8 @@ const PnsLanes = (() => {
     levels,
     exactView,
     lanesFor,
+    laneMeta,
+    statusText,
     _internal: {
       AXES,
       applyBlockMap: _applyBlockMap,
