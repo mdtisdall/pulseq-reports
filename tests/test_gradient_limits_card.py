@@ -3,7 +3,7 @@ import math
 import pypulseq as pp
 from synthetic import SYSTEM
 
-from pulseq_reports import page
+from pulseq_reports import grad_limits, page
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.markup import _fmt, _table
 from pulseq_reports.seq_utils import GAMMA, NamedSequence
@@ -212,6 +212,27 @@ def test_no_gradients_adds_a_reason_note():
     card = gradient_limits_card([NamedSequence("empty.seq", seq)])
 
     assert "empty.seq: no gradient events in the sequence." in card.body_html
+
+
+def test_card_with_a_window_makes_one_pass_over_the_per_event_values(monkeypatch):
+    """With a window, `gradient_limits_card` calls the per-event function
+    (`seq_index.grad_events`, which reads each unique gradient event's block with
+    `get_block`) exactly one time for the one file, instead of once for the window and
+    again for the whole-file RMS (`GradientLimits.whole_rms_mt_per_m` gives that from
+    the same call, section 4.6 item 4 of `docs/plans/cards-at-scale.md`)."""
+    seq, _gx = _trapezoid_seq(0.4 * SYSTEM.max_grad)
+    calls = []
+    real_grad_events = grad_limits.grad_events
+
+    def counting_grad_events(seq, index):
+        calls.append(1)
+        return real_grad_events(seq, index)
+
+    monkeypatch.setattr(grad_limits, "grad_events", counting_grad_events)
+
+    gradient_limits_card([NamedSequence("a.seq", seq)], window=(0.0, 1e-3))
+
+    assert len(calls) == 1
 
 
 def test_render_page_accepts_gradient_limits_card():

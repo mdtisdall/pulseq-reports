@@ -2273,6 +2273,17 @@ expected value is computed by hand from the parameters of the trapezoid or
 arbitrary gradient that the test builds, not by calling `gradient_limits`
 itself for the expected value.
 
+Since phase 4 of `docs/plans/cards-at-scale.md`, `grad_limits.py` computes its values from
+the per-event values of `seq_index.grad_events` and the columns of `seq_index.sequence_index`,
+instead of reading every block with `get_block`, and its slew also includes the step at each
+block junction (decision 6 of section 2.5 of that plan). The tests below the first group add:
+the largest slew of an arbitrary gradient and of an extended trapezoid (computed from the
+event's own corner points, the same way as the peak amplitude tests above), the credited block
+for a value that several blocks and axes share, a window that keeps only part of a ramp's
+slew, the vector peak of two blocks with different triples of active gradients, the three
+junction-step cases of section 4.6 item 6, and comparisons with the oracle
+(`tests/oracles/grad_limits.py`, the implementation from before phase 4).
+
 #### `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`
 
 **Checks:** For a single x trapezoid, `gradient_limits` gives the peak
@@ -2375,6 +2386,173 @@ documents.
   Hz/m (respectively Hz/m/s) before it stores the value. This is a fact about
   pypulseq, not about the function under test, and is not itself checked here.
 
+#### `test_arbitrary_gradient_max_slew_is_the_largest_neighbouring_slope`
+
+**Checks:** The largest slew of an arbitrary gradient is the largest
+`|delta g / delta t|` between its neighbouring corner points (the shape's
+`first`, its waveform samples, and its `last`).
+
+**How:** The test builds an x arbitrary gradient from an asymmetric sine-lobe
+waveform and calls `gradient_limits`. It computes the expected slew from
+`block.gx.first`, `block.gx.waveform`, `block.gx.last` and their own offset
+and shape-duration fields (the same corner points `gradient_offsets` builds),
+as the largest `|diff(amplitude) / diff(time)|`, not by calling
+`gradient_limits` for the expected value. It checks that the x axis slew
+matches.
+
+**Assumptions:** None.
+
+#### `test_extended_trapezoid_max_slew_is_the_largest_segment_slope`
+
+**Checks:** The largest slew of an extended trapezoid is the largest
+`|delta g / delta t|` between its neighbouring control points.
+
+**How:** The test builds an x extended trapezoid from five explicit times and
+amplitudes and calls `gradient_limits`. It computes the expected slew as the
+largest `|diff(amplitudes) / diff(times)|` of the same arrays given to
+`make_extended_trapezoid`. It checks that the x axis slew matches.
+
+**Assumptions:** None.
+
+#### `test_largest_over_several_blocks_and_axes_credits_the_first_block_with_that_value`
+
+**Checks:** With several blocks on several axes, the peak amplitude and the
+peak slew of each axis are the largest over every block with an event on that
+axis, credited to the first block, in play order, whose event reaches that
+value; a later block that repeats the very same event does not move the
+credit.
+
+**How:** The test builds four blocks: a small x trapezoid, a y trapezoid, a
+larger x trapezoid, and the same larger x trapezoid again. It checks that the
+x axis peak and slew equal the larger trapezoid's own amplitude and slew
+(divided by its rise time), each credited to the third block (the first
+block with that event, not the fourth), and that the y axis peak equals the y
+trapezoid's amplitude.
+
+**Assumptions:** None.
+
+#### `test_window_that_cuts_a_ramp_gives_the_slew_of_the_part_inside_the_window`
+
+**Checks:** A window that includes only part of an extended trapezoid, over a
+segment with a smaller slope than another segment outside the window: the
+slew over the window is the slope of the part inside the window, not the
+largest slope of the whole event.
+
+**How:** The test builds an x extended trapezoid with four segments of
+different slopes and a window that lies inside the two segments with the
+smallest slopes, excluding the segment with the largest. It computes the
+expected slew by hand from the times and amplitudes of the segment the window
+keeps. It checks that the x axis slew matches, not the whole event's own
+largest segment slope.
+
+**Assumptions:** None.
+
+#### `test_vector_peak_of_g_compares_different_triples_across_blocks`
+
+**Checks:** Two blocks with different triples of active gradients: the
+vector peak of `|G|` is the largest magnitude found across the two different
+triples, not just the largest single-axis peak.
+
+**How:** The test builds one block with a large x trapezoid alone, and a
+second block with a smaller, equal-amplitude trapezoid on both x and y (whose
+combined vector magnitude, `sqrt(2)` times the smaller amplitude, is larger
+than the first block's lone peak). It checks that the vector peak equals the
+hand-computed combined magnitude of the second block's triple.
+
+**Assumptions:** None.
+
+#### `test_junction_step_between_extended_trapezoids_is_reported_as_the_slew`
+
+**Checks:** A step at the junction between two extended trapezoids, within
+the tolerance that `add_block` accepts (`max_slew * grad_raster_time`) and
+larger than any segment's own slope: the reported slew is the step divided
+by `grad_raster_time`, credited to the block after the junction.
+
+**How:** The test builds two x extended trapezoids whose junction step is 90%
+of the largest step `add_block` accepts, and whose own segment slopes are
+smaller than that step. It computes the expected slew by hand as the step
+divided by `grad_raster_time`. It checks that the x axis slew matches and is
+credited to the second block.
+
+**Assumptions:** None.
+
+#### `test_gradient_ending_non_zero_before_a_block_with_no_gradient_is_a_junction_step`
+
+**Checks:** A gradient that ends at a non-zero value (within the tolerance
+`add_block` accepts) right before a block with no gradient on that axis: the
+junction step uses 0 for the block with no event, and is credited to that
+block (the block after the junction).
+
+**How:** The test builds an x extended trapezoid ending at 90% of the largest
+step `add_block` accepts, followed by a delay block with no gradient. It
+computes the expected slew by hand as that ending value divided by
+`grad_raster_time`. It checks that the x axis slew matches and is credited to
+the delay block.
+
+**Assumptions:** None.
+
+#### `test_first_block_not_starting_at_zero_is_a_junction_step_before_the_first_block`
+
+**Checks:** A first block whose gradient starts at a non-zero value within
+the tolerance `add_block` accepts: the junction before the first block uses 0
+for "the block before" (there is none), and is credited to the first block.
+
+**How:** The test builds a single x extended trapezoid starting at 90% of the
+largest step `add_block` accepts. It computes the expected slew by hand as
+that starting value divided by `grad_raster_time`. It checks that the x axis
+slew matches and is credited to the first (only) block.
+
+**Assumptions:** None.
+
+#### `test_matches_oracle_on_synthetic_sequences`
+
+**Checks:** `gradient_limits` matches the oracle (`tests/oracles/grad_limits.py`, the
+implementation from before phase 4 of `docs/plans/cards-at-scale.md`) on the whole file, and
+on a window covering the first half of the sequence, for each of `tests/synthetic.py`'s
+sequences (parametrized: `spin_echo_sequence`, `gre_sequence`, `empty_sequence`,
+`arbitrary_gradient_sequence`).
+
+**How:** For each sequence, the test calls both `gradient_limits` and the oracle's, with no
+window and with a window from 0 to half the total duration, and compares every field (`reason`,
+`range_s`, each axis's peak, slew and RMS, and the vector peak), within a tolerance derived
+from the sequence (`_rounding_tol`): `1e-12 + 4 * eps * duration / shortest segment`, relative
+to the value or to the limit of the same kind. It checks only whether a block is credited, not
+which one, because `gre_sequence` repeats its readout, phase-encode and spoiler events every TR,
+and the oracle's own choice among such a tie can depend on the same rounding.
+
+**Assumptions:**
+
+- The user chose this tolerance on 2026-09-28. The oracle adds each block's absolute start
+  time to an event's corner points before it takes a slope, so each corner time is rounded to
+  about eps times the start time, and a slope divides the difference of two such times by the
+  segment's duration. The new code computes each event one time from its own offsets. On the
+  synthetic and random sequences the differences are at most about 2% of this bound.
+
+#### `test_matches_oracle_on_random_gradient_sequences`
+
+**Checks:** 200 random sequences of trapezoids, extended trapezoids and arbitrary gradients on
+random axes, each event built so that it starts and ends at 0 (so every block junction step is
+0, and the result is only the per-event, non-junction part that the tests above cover on their
+own): `gradient_limits` matches the oracle, on the whole file and on a random window, and the
+window's `whole_rms_mt_per_m` (computed in the same call, for the card's "RMS over whole file"
+column) matches the oracle's own whole-file RMS.
+
+**How:** For each of 200 seeds, the test builds a sequence of 2 to 6 blocks, each with 0 to 3
+random axes, each a trapezoid, an extended trapezoid or an arbitrary gradient built with
+pypulseq's `make_*` functions (so pypulseq's own limit checks apply) and an explicit `first` and
+`last` of 0 where the function does not default to that. It compares the whole-file result and
+a random window's result with the oracle's, field by field, with the same derived tolerance and
+the same block-attribution exception as `test_matches_oracle_on_synthetic_sequences`, and separately
+compares `whole_rms_mt_per_m` against a fresh whole-file oracle call.
+
+**Assumptions:**
+
+- `make_arbitrary_grad`'s `first` and `last` default to a linear extrapolation of the
+  waveform's own edge samples, not to 0 (`docs/notes/slew-definitions.md`'s pypulseq source
+  reading confirms this), so the random arbitrary-gradient builder passes `first=0.0, last=0.0`
+  explicitly to keep every event zero-ended. This is a fact about pypulseq, not about the
+  function under test, and is not itself checked here.
+
 ### 2.14 Gradient limits card (`test_gradient_limits_card.py`)
 
 `test_gradient_limits_card.py` tests `cards/gradient_limits.py`: the "Gradient
@@ -2385,6 +2563,10 @@ Every expected numeric cell is computed by hand from the trapezoid the test
 builds, using the same formulas as `test_grad_limits.py`, and compared through
 `markup._table`, so a test also fixes the exact table that `_table` would
 render from those rows.
+
+Since phase 4 of `docs/plans/cards-at-scale.md`, a window's "RMS over whole file" column comes
+from the one `gradient_limits` call's own `whole_rms_mt_per_m`, not a second call with
+`window=None`, so that the card makes one pass over the per-event values for each file.
 
 #### `test_single_file_table_has_axis_rows_and_percents`
 
@@ -2443,6 +2625,19 @@ names the file and the reason.
 **How:** The test builds a file with a delay block only, calls
 `gradient_limits_card`, and checks that the body contains
 "empty.seq: no gradient events in the sequence.".
+
+**Assumptions:** None.
+
+#### `test_card_with_a_window_makes_one_pass_over_the_per_event_values`
+
+**Checks:** With a window, `gradient_limits_card` calls the per-event
+function (`seq_index.grad_events`, which reads each unique gradient event's
+block with `get_block`) exactly one time for the one file, instead of once
+for the window and again for the whole-file RMS.
+
+**How:** The test wraps `grad_limits.grad_events` with a counting wrapper
+(`monkeypatch`), calls `gradient_limits_card` with one file and a window, and
+checks that the wrapper was called exactly once.
 
 **Assumptions:** None.
 
