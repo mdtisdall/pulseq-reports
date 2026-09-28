@@ -509,15 +509,15 @@ script's marker is not.
 #### `test_script_order`
 
 **Checks:** The page's scripts appear in this order: `chart_math.js`,
-`lane_chart.js`, `seq_lanes.js`, `pns_lanes.js`, each card's library script, the extra
-scripts in the given order, and `page.js`.
+`lane_chart.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, each card's library
+script, the extra scripts in the given order, and `page.js`.
 
 **How:** The test builds one card with a library script and two extra
 scripts, calls `render_page`, and checks that the string indices of a
 `chart_math.js` marker, a `lane_chart.js` (`PulseqReport`) marker, a
-`seq_lanes.js` (`SeqLanes`) marker, a `pns_lanes.js` (`PnsLanes`) marker, the card
-script's marker, each extra script's marker, and a `page.js` marker are in increasing
-order.
+`seq_lanes.js` (`SeqLanes`) marker, a `pns_lanes.js` (`PnsLanes`) marker, a
+`g_lanes.js` (`GLanes`) marker, the card script's marker, each extra script's marker,
+and a `page.js` marker are in increasing order.
 
 **Assumptions:** None.
 
@@ -528,8 +528,8 @@ with the others into one element.
 
 **How:** The test builds one card with no script and one extra script,
 calls `render_page`, and counts the occurrences of `<script>\n`. With
-`chart_math.js`, `lane_chart.js`, `seq_lanes.js`, `pns_lanes.js`, the extra script and
-`page.js`, and no card script, the count must be 6.
+`chart_math.js`, `lane_chart.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, the
+extra script and `page.js`, and no card script, the count must be 7.
 
 **Assumptions:** None.
 
@@ -3313,6 +3313,32 @@ body.
 
 **Assumptions:** None.
 
+#### `test_g_lane_explanation_sentence_always_present`
+
+**Checks:** The card's body always has the |G| lane's explanation sentence (naming
+the |G| lane and that it shows the magnitude of the gradient vector), whether or not
+`pns` is given: the |G| lane needs no extra data from `diagram_card` (`docs/plans/
+diagram-lanes.md`, phase 5; it is computed in the browser from the tables already
+sent), unlike the PNS sentence.
+
+**How:** The test builds a diagram card with no `pns` argument (`pns=False`, the
+default) for the synthetic spin echo sequence and checks that each of the two phrases
+("|G| lane", "magnitude of the gradient vector") appears in the body.
+
+**Assumptions:** None.
+
+#### `test_g_lane_explanation_sentence_present_even_without_gradients`
+
+**Checks:** The |G| lane's explanation sentence is present even for a file with no
+gradient event, unlike the PNS sentence, which such a file never gets: the |G| lane
+itself is always in the Gradients group (empty, with an "0 to 1" domain, when the file
+has no gradient), so its sentence is not keyed on the file's own data either.
+
+**How:** The test builds a diagram card for `tests/synthetic.py`'s `empty_sequence`
+(only a delay block) and checks that each of the two phrases appears in the body.
+
+**Assumptions:** None.
+
 #### `test_pns_explanation_sentence_present_when_the_card_has_pns_data`
 
 **Checks:** With `pns=True` and a sequence with gradients, the card's body has
@@ -5514,3 +5540,250 @@ pyramid level by level, with exact equality, against the level below it.
   3).
 - The `sodium_gamma` case needs `PnsLanes.decode` to read `pns.gradScale`
   (decision 14 of `docs/plans/diagram-lanes.md`).
+
+### 2.27 |G| lane (`test_g_lanes.js`)
+
+`g_lanes.js` computes the |G| lane of the sequence diagram in the browser, with no
+DOM and no network (`docs/plans/diagram-lanes.md`, phase 5): |G| =
+sqrt(gx^2 + gy^2 + gz^2) (mT/m, the table units), the magnitude of the gradient
+vector, 0 wherever none of its three axes has an event, or outside the span an
+axis's own event covers (before its own delay, or after its own last point),
+whatever the block's own duration -- so a block can be longer than its events (a
+short trapezoid with a longer delay, ADC or RF ringdown in the same block, or a
+gradient that starts only after a delay) and the padding still reads as the real
+value 0, never "no value". It is the prototype's `gMagMinMax`
+(`prototypes/pns_lanes/slew_g.js` on the unmerged branch
+`chore/pns-lanes-prototype`, its "|G|" section only) made into library code, with
+that padding added: `GLanes.decode` builds, once, the per-(triple, block duration)
+piecewise-quadratic geometry (keyed by duration as well as by the triple of dense
+gradient event ids, because the padding depends on the block's own duration, which
+one triple can play at more than one length) and the group tree over a
+`SeqLanes.decode` model's blocks; `minMax` gives the exact minimum and maximum of
+|G| in each of a view's time bins; `lanesFor` turns that into the chart's
+minimum/maximum zigzag form, the only form the |G| lane ever uses (unlike a value
+lane, |G| is not linear between two axes' corner points, so a polyline through the
+corner values would be wrong at any zoom); `laneMeta` builds the lane object
+without "segments".
+
+The tests load `seq_lanes.js` and `g_lanes.js` directly, with Node's `require`,
+the same way `test_pns_lanes.js` loads `pns_lanes.js`. Every model is hand-made:
+`buildGModel` (a seeded pseudo-random block table, reused by most tests, in the
+style of `test_seq_lanes.js`'s `buildRandomModel` and `test_pns_lanes.js`'s
+`buildPnsTables`) or a fully explicit small table (`buildBorderTables`,
+`buildTailPaddingTables`, `buildHeadPaddingTables`, and the empty/no-gradient
+tables of the last two tests). Unlike `test_pns_lanes.js`, `GLanes.decode` takes a
+full `SeqLanes.decode` model (not the raw tables directly), so `buildGModel`
+builds every table `SeqLanes.decode` requires (empty RF and ADC tables:
+`g_lanes.js` reads none of them). `buildGModel`'s events keep a nonzero delay, and
+a block that has an event draws its own duration independently of which events it
+plays and of their own delay or span, so it commonly has real padding before its
+first event and after its last: real `diagram_tables` output never has the
+opposite (a block shorter than an event it carries: `add_block` sets a block's
+duration to the longest of its own events), so a block with an event never draws
+the 0 duration option either, and the forced 0-duration block (below) is given no
+event.
+
+An independent brute force (`bruteMinMax`/`bruteBlockGRange`, never calling any
+function of `g_lanes.js`) applies the same piecewise-quadratic rule the module's
+doc describes, padded to the whole block the same way, to every block of a bin,
+clip by clip, instead of the module's group tree, the same relationship
+`prototypes/pns_lanes/run_slew_g.js`'s own brute force has to `slew_g.js`. A bin
+with no block overlapping it at all keeps `[Infinity, -Infinity]` ("no value"),
+the convention `GLanes.minMax` itself uses for such a bin (only reachable when a
+view reaches outside the file, since blocks otherwise tile the file with no
+gaps); a bin, or part of one, that lies in a block's own padding gets the real
+value 0.
+
+**Assumptions for the whole file:**
+
+- The functions take only plain values (numbers, typed arrays, a `SeqLanes.decode`
+  model) and return only plain values. Nothing in a test depends on the page or a
+  browser.
+- `assertMinMaxMatches(got, want, tol)` checks that `got` and `want` agree exactly
+  on which bins are empty, and that every other bin's minimum and maximum agree
+  within `tol` of the overall peak (the fast path and the brute force both use the
+  closed-form quadratic extrema, but a clipped sub-piece computes its own `ta`/`tb`
+  from a division a whole, unclipped piece does not, so the two can differ in the
+  last bit). `tol` is 1e-12 everywhere in this file, the same bound the prototype's
+  own brute-force comparison and `test_pns_lanes.js` use.
+- `buildGModel` always places a 0-duration block with no event at index 5, a block
+  with no event on any axis at index 10, and a block with an event on only the gx
+  axis at index 11 (`opts.forceSpecialBlocks: false` turns this off, for the "file
+  without gradients" tests, which need every block to have no event).
+
+#### `test_min_max_matches_brute_force_across_many_views`
+
+**Checks:** `GLanes.minMax` equals the independent brute force, exactly on which
+bins are empty and within 1e-12 of the peak otherwise, for the whole file, a view
+with more bins than there are blocks in many groups, a zoomed view that cuts
+blocks at both ends, a view inside a single block, a view that crosses more than
+`GLanes.GROUP_BLOCKS` (64) blocks between its two edges' own blocks (so the group
+tree's own range query is exercised, not just the two edge blocks), and a view
+that starts at the forced 0-duration block and covers the forced no-event and
+single-axis blocks. `buildGModel`'s own durations, drawn independently of the
+events a block plays, give many of these blocks real padding, so this also covers
+the padding case at scale, across many blocks and views, not just the two
+dedicated tests below.
+
+**How:** The test builds a 300-block pseudo-random model (`buildGModel`, more
+than 4 `GROUP_BLOCKS`, so it crosses more than one checkpoint group), computes
+block start times independently by a running sum, and for each of the six views
+above compares `GLanes.minMax` against `bruteMinMax` with `assertMinMaxMatches`.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_gradient_not_zero_at_a_block_border_and_single_axis_blocks`
+
+**Checks:** `GLanes.minMax` equals the brute force across a gradient event that is
+not zero at a block border (the gx event of block 0 ends, and block 1's gx event
+starts, at the same nonzero value 8 mT/m, a continuous gradient) and three blocks
+that each have an event on only one axis (gx, then gy, then gz), for views inside
+one block, a view that starts exactly at the border, and a view that straddles it.
+
+**How:** The test builds a 4-block hand-made table (`buildBorderTables`), checks
+with the brute force itself that the fixture's gx value really does reach 8 at
+the border (so the fixture tests what it claims to), then compares
+`GLanes.minMax` against `bruteMinMax` for six views, including one bin per block,
+one bin covering the whole file, and views confined to or straddling the border.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_bins_in_the_tail_padding_after_a_shorter_gradient_are_zero_not_empty`
+
+**Checks:** A block whose gradient event ends well before the block's own end (a
+short trapezoid in a block padded out by, for example, a longer delay, ADC or RF
+ringdown) reads as exactly `[0, 0]`, not "no value", for a bin entirely inside
+that padding; a bin that straddles the transition from the event's own peak into
+the padding has minimum 0 and keeps the event's own peak as its maximum.
+
+**How:** The test builds a one-block table (`buildTailPaddingTables`: a gx event
+that ends at 10 raster units into a 20-unit block, gy and gz with no event at
+all), checks a bin entirely inside `[10, 20]` raster units is exactly `[0, 0]`,
+checks a bin straddling the fall from the event's peak (8 mT/m) into the padding
+has minimum 0 and maximum 8, then cross-checks both of those views and the whole
+block (6 bins) against `bruteMinMax`.
+
+**Assumptions:** None.
+
+#### `test_a_gradient_ending_non_zero_a_hair_before_the_block_end_has_no_false_zero`
+
+**Checks:** A gradient that ends at a value that is not 0 at the block end (it continues
+into the next block), with its last point a rounding error (1e-17 s) before the block
+duration, gives no false minimum of 0 in the last bin: `_tripleTimes` adds the block end as
+a breakpoint only when no event point is within 1e-9 s of it.
+
+**How:** One block of 20 raster steps with one gx event at offsets 0, 4 and 20 − 1e-12
+raster steps and values 0, 8 and 8 (mT/m). `GLanes.minMax` of the bin from 15 to 20 raster
+steps must be exactly `[8, 8]`. With the block end added as its own breakpoint, a piece of
+almost no width would fall from 8 to 0 there, and the minimum would be 0.
+
+**Assumptions:** None.
+
+#### `test_bins_in_the_head_padding_before_every_delayed_gradient_are_zero_not_empty`
+
+**Checks:** A block whose every active axis starts only after its own delay reads
+as exactly `[0, 0]`, not "no value", for a bin entirely before the earliest of
+those delays; a bin that straddles the start of the earliest event has minimum 0.
+
+**How:** The test builds a one-block table (`buildHeadPaddingTables`: a gx event
+starting at 8 raster units' delay, a gy event starting at 5 raster units' delay,
+gz with no event, in a 20-unit block), checks a bin entirely inside `[0, 5]`
+raster units is exactly `[0, 0]`, checks a bin straddling gy's own start (5 raster
+units) has minimum 0, then cross-checks both of those views and the whole block
+(6 bins) against `bruteMinMax`.
+
+**Assumptions:** None.
+
+#### `test_lane_meta_domain_ticks_and_the_other_fixed_fields`
+
+**Checks:** `GLanes.laneMeta`'s fixed fields (`id`, `title`, `unit`, `kind`,
+`empty`, `fill`, and a `color` that is not one of gx/gy/gz's own report.css
+tokens), and its peak-dependent domain, ticks and tick label: `[0, 1.1 * peak]`,
+`[0, peak]` and `["0", <peak to 3 significant figures>]`, `diagram_data.lane_meta`'s
+own style for a lane whose value is never negative.
+
+**How:** The test builds a 60-block pseudo-random model with a nonzero peak |G|,
+calls `GLanes.laneMeta`, and checks each fixed field and the domain/ticks/label
+against `model.wholeFileMax` and the same 3-significant-figure formula
+(`Number(peak.toPrecision(3)).toString()`) `assets/chart_math.js`'s `fmt` and
+`pns_lanes.js`'s `_fmtBinMs` use.
+
+**Assumptions:** None.
+
+#### `test_lane_meta_domain_is_zero_to_one_with_no_gradient`
+
+**Checks:** A file with blocks but no gradient event on any axis gets the domain
+`[0, 1]`, ticks `[0]` and tick label `["0"]` -- never `[-1, 1]`, unlike
+`diagram_data.lane_meta`'s own gx/gy/gz lanes for a 0 peak, because |G| can never
+be negative -- and `empty: true`.
+
+**How:** The test builds a 20-block model with `noEventProb: 1.0` (and
+`forceSpecialBlocks: false`, so no block is forced to have an event), checks
+`wholeFileMax` is 0, and checks `GLanes.laneMeta`'s domain, ticks, tick label and
+`empty`.
+
+**Assumptions:** None.
+
+#### `test_lanes_for_zigzag_form_matches_min_max_exactly`
+
+**Checks:** `GLanes.lanesFor` returns the lane object with `id: "gmag"`,
+`minmax: true`, and segments that are exactly `GLanes.minMax`'s own bins
+reformatted as a zigzag (`[edge ms, min]`, `[centre ms, max]` for each bin that
+has a value; an empty bin is absent from every segment): the same layout
+`SeqLanes.minMaxLanes` and `PnsLanes.lanesFor` use.
+
+**How:** The test builds a 120-block pseudo-random model, calls `GLanes.minMax`
+and `GLanes.lanesFor` for the whole file with the same `[t0, t1]` (both divide the
+same `viewMs` by 1000, in the same order, so the two calls use bit-for-bit the
+same range), reads the lane's segments back into a map keyed by each point's
+edge time (`zigzagBins`), and checks, for every bin, that an empty bin
+(`max[k] === -Infinity`) is absent from the map and every other bin's map entry
+is exactly `[min[k], max[k]]`.
+
+**Assumptions:** None.
+
+#### `test_lanes_for_empty_bins_end_a_segment`
+
+**Checks:** A view that reaches far past the end of the file gets bins with no
+value there (`SeqLanes.blockAt` clamps every edge past the file's end to the last
+block, so a bin whose own range does not reach that block's own tail overlaps
+nothing), and those empty bins are absent from the lane's segments rather than
+drawn as a value, ending the current segment.
+
+**How:** The test builds a 40-block model, asks for a view 5 times the file's own
+duration (so only about the first fifth of the bins can ever hold a value),
+checks with `GLanes.minMax` that at least one bin is empty, then checks that
+`GLanes.lanesFor`'s zigzag has no point at an empty bin's edge and a point at
+every non-empty bin's edge, and that not every bin is present.
+
+**Assumptions:** None.
+
+#### `test_empty_file_has_zero_peak_and_no_lane_segments`
+
+**Checks:** An empty file (`SeqLanes.decode` with no blocks) gives
+`GLanes.decode` a model with `numBlocks: 0` and `wholeFileMax: 0`;
+`GLanes.minMax` gives every bin `[Infinity, -Infinity]` ("no value"); `laneMeta`
+gives the `[0, 1]`/`empty: true` domain; and `lanesFor` gives `segments: []`
+(never a segment of one point).
+
+**How:** The test builds a table with every array empty, decodes it with
+`SeqLanes.decode` and `GLanes.decode`, checks `wholeFileMax` and `numBlocks`,
+calls `GLanes.minMax` over 10 bins and checks every one is empty, and checks
+`laneMeta` and `lanesFor`'s output.
+
+**Assumptions:** None.
+
+#### `test_file_without_gradients_is_all_zero_not_empty`
+
+**Checks:** A file whose blocks tile the whole duration but have no event on any
+axis gives every bin exactly `[0, 0]` (a real value, the model's own "a block
+with no event on an axis reads as the constant 0"), not "no value": one
+unbroken segment of zeros, not an empty lane.
+
+**How:** The test builds a 30-block model with `noEventProb: 1.0` (and
+`forceSpecialBlocks: false`), checks `wholeFileMax` is 0 but the file has blocks
+and a nonzero duration, calls `GLanes.minMax` over the whole file and checks
+every bin is exactly `[0, 0]`, and checks `GLanes.lanesFor` gives one segment
+whose every point's value is 0.
+
+**Assumptions:** None.

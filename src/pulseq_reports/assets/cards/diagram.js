@@ -11,12 +11,15 @@
 // The chart's `lanesFor` hook (lane_chart.js) asks SeqLanes.lanesFor for the six
 // waveform lanes of the current view on every render (the exact waveform when the view
 // has few enough points, or the minimum and the maximum of each lane in each of the
-// plot's time bins otherwise), and, when the PNS group is visible and the current
-// file has PNS data, appends the PNS lane from PnsLanes.lanesFor after gz. A hidden
-// PNS group costs no PNS computation: `lanesFor` never calls PnsLanes.lanesFor for it.
-// The status line under the chart (`{card_id}-mode`) says which data drew the
-// waveform lanes, then, when the PNS lane is drawn, PnsLanes.statusText's sentence for
-// it.
+// plot's time bins otherwise); when the Gradients group is visible, appends the |G|
+// lane (GLanes.lanesFor, docs/plans/diagram-lanes.md phase 5) after gz, building the
+// file's GLanes model the first time a render needs it (a hidden Gradients group costs
+// no |G| computation, the same rule the PNS lane already follows); and, when the PNS
+// group is visible and the current file has PNS data, appends the PNS lane from
+// PnsLanes.lanesFor after that. A hidden PNS group costs no PNS computation: `lanesFor`
+// never calls PnsLanes.lanesFor for it. The status line under the chart
+// (`{card_id}-mode`) says which data drew the waveform lanes, then, when the PNS lane
+// is drawn, PnsLanes.statusText's sentence for it.
 //
 // A file's tables can be large (up to 10^7 blocks), so decoding runs only for the
 // file of the first window at start, and for another file the first time a button
@@ -81,13 +84,19 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   }
 
   // The decoded model of file `fileIndex`, from the cache when it is already there:
-  // `{seq, pns}`, `seq` the SeqLanes model (as before) and `pns` either null (the file
+  // `{seq, pns, g}`, `seq` the SeqLanes model (as before), `pns` either null (the file
   // has no "pns" key) or `{model, laneMeta}`, the PnsLanes model and its lane object
   // without segments (PnsLanes.laneMeta(file.pns.summary), built once here so a render
-  // never rebuilds it). Decodes every one of the file's diagram tables, and, when the
-  // file has PNS data, its two stored-level tables, all in parallel; the diagram
-  // tables are reused for both SeqLanes.decode and PnsLanes.decode (a PNS model reads
-  // grad_*/duration_* out of the same tables, module doc of pns_lanes.js).
+  // never rebuilds it), and `g` the |G| lane's own `{model, laneMeta}` pair, built
+  // lazily by `lanesFor` (below) the first time a render needs it: `g` starts null
+  // here, unlike `pns`, because GLanes.decode needs no data beyond the diagram tables
+  // already decoded below, so there is nothing to fetch in parallel with them, and
+  // building it costs a pass over the file's blocks that a render with the Gradients
+  // group hidden should not pay for. Decodes every one of the file's diagram tables,
+  // and, when the file has PNS data, its two stored-level tables, all in parallel; the
+  // diagram tables are reused for both SeqLanes.decode and PnsLanes.decode (a PNS
+  // model reads grad_*/duration_* out of the same tables, module doc of
+  // pns_lanes.js).
   async function decodeFile(fileIndex) {
     if (models[fileIndex]) return models[fileIndex];
     const file = files[fileIndex];
@@ -111,7 +120,7 @@ PulseqReport.registerCard("diagram", async (section, data) => {
         laneMeta: PnsLanes.laneMeta(file.pns.summary),
       };
     }
-    const model = { seq: seqModel, pns };
+    const model = { seq: seqModel, pns, g: null };
     models[fileIndex] = model;
     return model;
   }
@@ -147,18 +156,24 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   const groups = [
     { id: "rf", label: "RF", laneIds: ["rf_mag", "rf_phase"], visible: true },
     { id: "adc", label: "ADC", laneIds: ["adc"], visible: true },
-    { id: "gradients", label: "Gradients", laneIds: ["gx", "gy", "gz"], visible: true },
+    { id: "gradients", label: "Gradients", laneIds: ["gx", "gy", "gz", "gmag"], visible: true },
   ];
   if (hasPns) groups.push({ id: "pns", label: "PNS", laneIds: ["pns"], visible: true });
 
   // Only its length (the number of lanes) matters here: lane_chart.js reads it for
   // the SVG height before the first render, which then replaces it with the
-  // provider's own lanes. `current.seq.lanesMeta`, plus the PNS lane meta when the
-  // first file has one, already has the right count, so building it needs no
-  // SeqLanes.lanesFor/PnsLanes.lanesFor call.
-  const initialLanes = current.pns
-    ? current.seq.lanesMeta.concat([current.pns.laneMeta])
-    : current.seq.lanesMeta;
+  // provider's own lanes. But `laneChart` also reads each lane's own `id` for this
+  // very first count, through `groups`/`visibleLanes` (chart_math.js), before that
+  // first render ever runs -- so the |G| placeholder needs a real `id`, "gmag", not
+  // an empty object or null. `current.seq.lanesMeta`, plus that placeholder (always
+  // drawn on the first render: the Gradients group is visible by default, and
+  // `lanesFor` below builds `current.g` the moment that render asks for it) and the
+  // PNS lane meta when the first file has one, already has the right count, so
+  // building it needs no GLanes.decode, SeqLanes.lanesFor or PnsLanes.lanesFor call.
+  const initialLanes = current.seq.lanesMeta.concat(
+    [{ id: "gmag" }],
+    current.pns ? [current.pns.laneMeta] : []
+  );
 
   const chart = PulseqReport.laneChart({
     svg: document.getElementById(`${section.id}-diagram`),
@@ -170,6 +185,13 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     lanesFor: (view, bins, visibleGroupIds) => {
       const r = SeqLanes.lanesFor(current.seq, view, bins);
       let lanes = r.lanes;
+      if (visibleGroupIds.has("gradients")) {
+        if (!current.g) {
+          const gModel = GLanes.decode(current.seq);
+          current.g = { model: gModel, laneMeta: GLanes.laneMeta(gModel) };
+        }
+        lanes = lanes.concat([GLanes.lanesFor(current.g.model, current.g.laneMeta, view, bins)]);
+      }
       let pnsResult = null;
       if (current.pns && visibleGroupIds.has("pns")) {
         pnsResult = PnsLanes.lanesFor(current.pns.model, current.pns.laneMeta, view, bins);
@@ -221,13 +243,16 @@ PulseqReport.registerCard("diagram", async (section, data) => {
       current = model;
       currentFileIndex = w.file;
       // As for the first render, only the number of lanes is read before the render
-      // replaces them with the provider's lanes. A file without PNS data draws no
-      // PNS lane even with the PNS group on (`current.pns` is null, so `lanesFor`
-      // above never appends one), whatever file was shown before it.
+      // replaces them with the provider's lanes (a `{id: "gmag"}` placeholder for the
+      // |G| lane, as `initialLanes` above has, for the same reason). A file without
+      // PNS data draws no PNS lane even with the PNS group on (`current.pns` is
+      // null, so `lanesFor` above never appends one), whatever file was shown before
+      // it.
       chart.setWindow({
-        lanes: current.pns
-          ? current.seq.lanesMeta.concat([current.pns.laneMeta])
-          : current.seq.lanesMeta,
+        lanes: current.seq.lanesMeta.concat(
+          [{ id: "gmag" }],
+          current.pns ? [current.pns.laneMeta] : []
+        ),
         xDomain: w.view_ms,
         extent: [0, current.seq.durationS * 1000],
       });
