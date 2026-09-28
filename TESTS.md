@@ -4151,9 +4151,331 @@ checks the result's dtype and shape.
 
 **Assumptions:** None.
 
+The remaining tests of this section are for `GradientSampler.block_samples` and
+`raster_block_lengths` (`docs/plans/diagram-lanes.md`, phase 2, task 2.0, section 4.1,
+item 3): the PNS lane's per-block samples at the local times `(j + 0.5) * dt`, 0 before
+a block's first gradient point and after its last, with no line across a gap and no
+time drift from the block start sums. This is the rule of `PnsLanes` (`_eventSamples`
+in `assets/pns_lanes.js`), not the rule of `sample`.
+
+#### `test_block_samples_matches_sample_at_file_raster_times`
+
+**Checks:** `block_samples` over all the blocks of a file agrees with `sample` at the
+file times `(k + 0.5) * dt`, within 1e-9 of the largest |g| of the axis, for the
+spin-echo, gradient-echo and arbitrary-gradient synthetic sequences.
+
+**How:** Parametrized over `spin_echo_sequence()`, `gre_sequence()` and
+`arbitrary_gradient_sequence()`. `raster_block_lengths(index, dt)` gives each block's
+sample count and confirms the file is on the raster; `t_file` is `(k + 0.5) * dt` for
+`k` in `range(total_samples)`. For each axis, `block_samples(axis, 0, num_blocks, dt)`
+is compared with `sample(axis, t_file)` with `numpy.testing.assert_allclose`, `atol =
+1e-9 * peak` and `rtol = 0`, `peak` the largest `|value|` of `sample`'s result. The two
+are not exactly equal: `block_samples` computes each block's samples from its own local
+raster grid, with no accumulated float error, while `sample` reads the waveform at the
+block's actual start time (the sequential sum of the durations before it), which drifts
+off the ideal raster grid by float rounding (`docs/plans/diagram-lanes.md`, section 2.3,
+item 1). The difference is that drift only.
+
+**Assumptions:** None.
+
+#### `test_hand_made_ramp_and_no_event_block`
+
+**Checks:** `block_samples` gives the exact values of a hand-made sequence: a gradient
+that ramps to a nonzero value and stops there (unlike an ordinary trapezoid, whose
+event is 0 at both ends), inside a block longer than the ramp, and a later block with
+no gradient event on any axis.
+
+**How:** Builds a two-block sequence: block 0 has `pp.make_extended_trapezoid` on x,
+ramping from 0 to `amp = 1000.0` Hz/m over `n_ramp = 4` raster steps, and
+`pp.make_trapezoid` on z with an explicit `duration` of `n_block = 7` raster steps (so
+the block is longer than the x ramp); block 1 is `pp.make_delay(n_block * dt)`, with no
+gradient event at all. The expected x samples of block 0 are computed by hand from the
+linear-interpolation rule (`amp * t / rise` while `t` is before the ramp's own last
+point, 0 after it) and compared with `numpy.testing.assert_allclose` (`rtol = atol =
+1e-12`): a division (the same rule, computed by a different sequence of floating-point
+operations) makes exact equality unlikely. gy, which has no event anywhere in the file,
+and block 1's gx and gz, which have no event in that block, are checked against exact
+zero with `numpy.testing.assert_array_equal`.
+
+**Assumptions:** None.
+
+#### `test_range_inside_the_file_equals_the_same_slice_of_the_whole_file`
+
+**Checks:** `block_samples` for a range that starts and ends inside the file gives
+exactly the same values as the matching slice of `block_samples` for the whole file.
+
+**How:** Builds `gre_sequence(num_trs=3)`. `raster_block_lengths` gives each block's
+sample count, used to find the sample offset and length of a block range `[2, num_blocks
+- 1)`. For each axis, `block_samples(axis, 0, num_blocks, dt)` and `block_samples(axis,
+2, num_blocks - 1, dt)` are compared with `numpy.array_equal` after slicing the whole-file
+result to the same sample offset and length.
+
+**Assumptions:** None.
+
+#### `test_block_samples_invalid_axis_name_raises_value_error`
+
+**Checks:** `block_samples` raises `ValueError` for an axis name other than "gx", "gy"
+or "gz".
+
+**How:** Builds `gre_sequence(num_trs=1)`, calls `block_samples("gw", 0, 1, dt)` inside
+`pytest.raises(ValueError)`.
+
+**Assumptions:** None.
+
+#### `test_block_samples_bad_range_raises_value_error`
+
+**Checks:** `block_samples` raises `ValueError` when `first`/`stop` are outside `0 <=
+first <= stop <= num_blocks`: a negative `first`, a `first` greater than `stop`, and a
+`stop` past the number of blocks.
+
+**How:** Parametrized over `(first, stop) = (-1, 1)`, `(3, 1)` and `(0, 100)` on
+`gre_sequence(num_trs=1)` (5 blocks), each inside `pytest.raises(ValueError)`.
+
+**Assumptions:** None.
+
+#### `test_block_samples_off_raster_block_raises_value_error`
+
+**Checks:** `block_samples` raises `ValueError` for a block whose duration is not a
+whole number of raster steps.
+
+**How:** `pp.make_delay(1.5 * dt)` (pypulseq accepts this duration), the block's own
+sequence, and `block_samples("gx", 0, 1, dt)` inside `pytest.raises(ValueError)`.
+
+**Assumptions:** None.
+
+#### `test_raster_block_lengths_with_different_block_lengths`
+
+**Checks:** `raster_block_lengths` gives `round(duration / dt)` for each block of a
+file whose blocks do not all have the same duration, and reports the file as on the
+raster.
+
+**How:** Builds `gre_sequence(num_trs=2)` (RF, phase-encode, readout, spoiler and delay
+blocks, of different durations; confirmed with `len(set(index.duration_s.tolist())) >
+1`). Compares `raster_block_lengths(index, dt)`'s `n` with `numpy.rint(index.duration_s
+/ dt)` cast to `int64`, with `numpy.testing.assert_array_equal`, and checks `on_raster`
+is `True`.
+
+**Assumptions:** None.
+
+#### `test_raster_block_lengths_detects_a_block_off_the_raster`
+
+**Checks:** `raster_block_lengths` reports a file as not on the raster when one block's
+duration is not within `ON_RASTER_TOLERANCE` samples of a whole number, while still
+giving a sample count (the nearest whole number) for every block.
+
+**How:** A two-block sequence: `pp.make_delay(2 * dt)`, then `pp.make_delay(1.5 *
+dt)`. `raster_block_lengths(index, dt)` must give `on_raster = False` and `n =
+[2, 2]` (`numpy.rint` rounds 1.5 to 2, ties-to-even).
+
+**Assumptions:** None.
+
 ### 2.24 PNS levels (`test_pns_levels.py`)
 
-Phase 2 of `docs/plans/diagram-lanes.md` adds the entries.
+`test_pns_levels.py` tests `pns_levels.py` (`docs/plans/diagram-lanes.md`, section
+4.1, item 2, and section 4.2): `pns_levels`, which samples the gradients block by
+block (`GradientSampler.block_samples`), runs the SAFE model of the pinned pypulseq
+fork (`_safe_gwf_to_pns_chunk`) over them in chunks, and keeps only the stored level
+(the minimum and the maximum of the total in fixed time bins) and the summary (the
+peak, the peak time and the axis peaks); and `bin_samples_for`, which picks the bin
+size. The reference for most tests is `seq.calculate_pns` of the pinned fork
+(decision 6 of section 2.2 of the plan: this project does not test pypulseq itself,
+only compares this library's output with pypulseq's or with its own other output).
+`calc_pns` samples `seq.get_gradients()` at the file times `(k + 0.5) * dt`, which
+drift off the ideal raster grid by float rounding of the block start time sums
+(section 2.3, item 1, of the plan); `pns_levels` samples each block at its own local
+raster times, with no such drift. Both then run the same chunk function, so a
+relative 1e-6-of-peak tolerance (section 3.5, item 2, of the plan) covers the whole
+difference, except for a file with a block off the gradient raster, where both
+sample at file times and a relative 1e-9 suffices.
+
+#### `test_summary_matches_calculate_pns_within_the_fork_tolerance`
+
+**Checks:** For a spin echo, a gradient echo, an arbitrary gradient, and a
+hand-made "border" sequence (two extended-trapezoid blocks whose gradient is not
+zero at the block border between them), `pns_levels`'s peak, peak time and axis
+peaks equal `seq.calculate_pns`'s (example hardware) within a relative 1e-6 of the
+peak. Also checks `reason`, `hardware`, `asc_file`, `dt_s` and `on_raster` for the
+example-hardware, on-raster case.
+
+**How:** Parametrized over `spin_echo_sequence()`, `gre_sequence()`,
+`arbitrary_gradient_sequence()` and a module-level `_border_sequence()` (two
+`pp.make_extended_trapezoid` blocks on x, the second continuing the first's
+amplitude with no step, so `add_block` accepts the junction). The reference peak,
+peak time (the first sample at or above `peak * (1 - pns.PEAK_TOLERANCE)`, as
+`PnsPrediction.peak_time_s`) and axis peaks come from
+`seq.calculate_pns(safe_example_hw(), do_plots=False)`. `pns_levels(seq)`'s fields
+are compared with `pytest.approx`: the
+peak and axis peaks with `abs = 1e-6 * ref_peak`, the peak time with `abs = 1e-9`
+(both use the same `(k + 0.5) * dt` formula, so the same sample index gives the same
+float).
+
+**Assumptions:** None of these sequences has two samples close enough together, in
+value, to flip which one the tolerance-based peak-time search finds first.
+
+#### `test_stored_bins_match_calculate_pns_totals`
+
+**Checks:** Each stored bin's minimum and maximum equal the minimum and the maximum
+of `seq.calculate_pns`'s totals over the same samples, within the same 1e-6-of-peak
+tolerance, for the same four sequences.
+
+**How:** Same parametrization and reference call as
+`test_summary_matches_calculate_pns_within_the_fork_tolerance`. For each bin `i` of
+`pns_levels(seq)`, `s0 = i * bin_samples`, `s1 = min(s0 + bin_samples,
+levels.num_samples)` (the last bin can be shorter); the loop stops before a bin
+whose `s1` is past the end of `calc_pns`'s own array (shorter than `pns_levels`'s
+when a trailing block has no gradient event, for example `gre_sequence`'s TR
+padding: `pns_levels` keeps sampling into the filters' own decay past where
+`calc_pns` stopped, so a bin that straddles that point is not comparable). Each
+compared bin's `level_min[i]`/`level_max[i]` are checked against
+`norm[s0:s1].min()`/`.max()` with `pytest.approx(abs = 1e-6 * levels.peak)`. Asserts
+at least one bin was compared.
+
+**Assumptions:** None.
+
+#### `test_cast_outward_bounds_every_input_value`
+
+**Checks:** `_cast_outward` (the float32 rounding that keeps every bin's minimum and
+maximum outside the float64 samples it was built from) never lands on the wrong
+side of its input: the downward cast is at most the input, the upward cast is at
+least the input.
+
+**How:** 2000 uniform random float64 values in `[-1000, 1000)`
+(`numpy.random.default_rng(0)`). Checks `_cast_outward(values,
+down=True).astype(float64) <= values` and `_cast_outward(values,
+down=False).astype(float64) >= values` elementwise, and that both results are
+`float32`.
+
+**Assumptions:** None of the 2000 values happens to already be exactly representable
+in float32 for every one of them (which would make the nudging branch untested);
+not arranged, only overwhelmingly likely for uniform random values.
+
+#### `test_bin_samples_for_matches_the_formula`
+
+**Checks:** `bin_samples_for` follows `max(floor(EXACT_MAX_S / (2 * DISPLAY_BINS) /
+dt), ceil(num_samples / MAX_BINS), 1)`: 615 samples at the 10 us raster for any file
+of up to 1,230,000,000 samples, and a coarser bin above that size or at a coarser
+`dt`. A `pns_levels` call on a real sequence follows the same formula and gives that
+many bins.
+
+**How:** Direct calls: `bin_samples_for(0, 1e-5) == 615`,
+`bin_samples_for(1_230_000_000, 1e-5) == 615`, `bin_samples_for(1_230_000_001, 1e-5)
+== 616`, `bin_samples_for(2_000_000_000, 1e-5) == 1000`, `bin_samples_for(0, 2e-5) ==
+307`. Then `pns_levels(gre_sequence(num_trs=6))`'s `bin_samples` is compared with
+`bin_samples_for(levels.num_samples, levels.dt_s)`, and `len(levels.level_min) ==
+len(levels.level_max)` equals the ceiling division of `num_samples` by
+`bin_samples`.
+
+**Assumptions:** None.
+
+#### `test_result_does_not_depend_on_chunk_samples`
+
+**Checks:** The stored level and the summary do not depend on `chunk_samples`: exact
+equality for chunks of 1, 2 and 7 bins and one chunk larger than the whole file.
+
+**How:** `gre_sequence(num_trs=20)`, long enough that the smallest case (1 bin per
+chunk) still has more than one chunk. `reference = pns_levels(seq)` (the default
+chunk size); then `pns_levels(seq, chunk_samples=...)` for `bin_samples * (1, 2, 7)`
+and `bin_samples * (num_samples // bin_samples + 10)` (bigger than the file).
+`level_min`/`level_max` are compared with `numpy.array_equal`; `peak`, `peak_time_s`,
+`axis_peaks`, `num_samples` and `bin_samples` with `==`.
+
+**Assumptions:** None.
+
+#### `test_no_gradients`
+
+**Checks:** A sequence with no gradient event gives `reason=pns.NO_GRADIENTS`, no
+stored bins, a peak of 0, `peak_time_s` of `None`, zero axis peaks, and still the
+example hardware and its `hw` fields.
+
+**How:** `pns_levels(empty_sequence())`. Checks `reason`, `hardware`, `asc_file`,
+the `(0,)` shape of `level_min`/`level_max`, `peak == 0.0`, `peak_time_s is None`,
+`axis_peaks == {"x": 0.0, "y": 0.0, "z": 0.0}`, and `hw` against the 8 kept fields
+of `safe_example_hw()`.
+
+**Assumptions:** None.
+
+#### `test_off_raster_block_falls_back_to_sampling`
+
+**Checks:** A file with a block that is not on the gradient raster is reported as
+`on_raster=False`, and its peak, peak time and axis peaks equal `seq.calculate_pns`
+within a relative 1e-9 of the peak (tighter than the drift-based 1e-6 elsewhere in
+this section, because both now sample with `GradientSampler.sample`/
+`seq.get_gradients()` at the same file times; `test_sampling.py` established that
+those two agree to about float rounding).
+
+**How:** A trapezoid on x followed by `pp.make_delay(1.5 * dt)` (pypulseq's
+`add_block` accepts this duration, though it is not a whole number of raster
+steps). Compares `pns_levels(seq)`'s `on_raster`, `peak`, `peak_time_s` and
+`axis_peaks` with the same-named values from `seq.calculate_pns(safe_example_hw(),
+do_plots=False)`, as in `test_summary_matches_calculate_pns_within_the_fork_tolerance`
+but with `abs = 1e-9 * ref_peak` (and `abs = 1e-9` for the peak time). It also checks
+that `num_samples` is at least the length of `calculate_pns`'s result: `pns_levels`
+covers the whole sequence, and `calc_pns` stops at the last gradient point.
+
+**Assumptions:** None.
+
+#### `test_asc_hardware_file_is_used_for_the_levels`
+
+**Checks:** `pns_levels` reads the hardware name and the 8 kept fields of each axis
+from a given gradient .asc file, instead of the example hardware, and its stored
+level and summary then equal the default (example-hardware) call exactly, because
+this .asc file encodes the example hardware's own numbers.
+
+**How:** A local `write_gradient_asc` fixture (the technique of `test_pns.py`'s
+fixture of the same name, not its confidential data: real .asc files are
+confidential, so this one is built from pypulseq's own public
+`safe_example_hw()`) writes an `asCOMP.tName` line and the `flGSWDTau*`,
+`flGSWDA*`, `flGSWDStimulationLimit*`/`Threshold*` and `flGScaleFactor*` fields for
+each axis. `pns_levels(spin_echo_sequence(), path)`'s `hardware`, `asc_file` and
+`hw` are checked, then its `level_min`, `level_max`, `peak` and `peak_time_s` are
+compared with a plain `pns_levels(seq)` call (`numpy.array_equal` for the arrays,
+`==` for the scalars).
+
+**Assumptions:** None.
+
+#### `test_pns_levels_refuses_rotations`
+
+**Checks:** `pns_levels` raises `NotImplementedError` for a sequence with a
+rotation library, as the other gradient cards do.
+
+**How:** `gre_sequence(num_trs=2)` with a non-empty `rotation_library` (the
+technique of `test_extensions.py`'s `_with_rotation_library`), inside
+`pytest.raises(NotImplementedError, match="rotation extension")`.
+
+**Assumptions:** None.
+
+#### `test_pns_levels_is_a_frozen_dataclass`
+
+**Checks:** `pns_levels` returns a `PnsLevels` instance.
+
+**How:** `isinstance(pns_levels(spin_echo_sequence()), PnsLevels)`. A smoke test of
+the interface; the other tests of this section check individual fields.
+
+**Assumptions:** None.
+
+#### `test_chunk_samples_must_be_a_whole_number_of_bins`
+
+**Checks:** `pns_levels` raises `ValueError` for a `chunk_samples` that is not a
+positive whole number of bins.
+
+**How:** `pns_levels(spin_echo_sequence(), chunk_samples=...)` with `bin_samples //
+2` (not a multiple of `bin_samples`) and with `0`, each inside
+`pytest.raises(ValueError)`.
+
+**Assumptions:** None.
+
+#### `test_default_chunk_samples_is_the_nearest_whole_number_of_bins_at_or_above_the_fork_size`
+
+**Checks:** The default `chunk_samples` (no keyword given) is the smallest multiple
+of `bin_samples` that is at least `CHUNK_SAMPLES`.
+
+**How:** `gre_sequence(num_trs=20)`; `expected` is `bin_samples` times the ceiling
+division of `CHUNK_SAMPLES` by `bin_samples`, computed independently of
+`pns_levels`'s own formula. `pns_levels(seq, chunk_samples=expected)` and
+`pns_levels(seq)` (the default) are compared with `numpy.array_equal` on
+`level_min` and `level_max`.
+
+**Assumptions:** None.
 
 ### 2.25 PNS lane in JavaScript (`test_pns_lanes.js`)
 

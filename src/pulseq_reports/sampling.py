@@ -14,6 +14,12 @@ The waveform is the polyline of pypulseq's `Sequence.get_gradients()`, in Hz/m:
    time), which have the same value.
 3. The values. Straight lines between consecutive points, also across a gap between
    two events. 0 before the first point and after the last point.
+
+`GradientSampler.block_samples` gives a second form of the same waveform, for the PNS
+lane (section 4.1, item 3, of docs/plans/diagram-lanes.md): each block on its own, at
+the local times `(j + 0.5) * dt` from the block start, with the rule of the browser's
+`PnsLanes` (`assets/pns_lanes.js`): the block's own event, 0 outside it. It has no line
+across a gap, and no time drift from the block start sums.
 """
 
 import numpy as np
@@ -59,6 +65,8 @@ class GradientSampler:
         self._amp = np.concatenate(amp_chunks) if amp_chunks else np.empty(0, dtype=np.float64)
         # Filled lazily, one time for each axis that `sample` is called with.
         self._axis_blocks: dict[str, np.ndarray] = {}
+        # The samples of each (event, n, dt) that `block_samples` has computed.
+        self._block_sample_cache: dict[tuple[int, int, float], np.ndarray] = {}
 
     def _event_blocks(self, axis: str) -> np.ndarray:
         """The play indexes that have an event on `axis`, sorted, computed one time and
@@ -124,3 +132,148 @@ class GradientSampler:
         values = values[keep]
 
         return np.interp(t, times, values, left=0.0, right=0.0)
+
+    def block_samples(self, axis: str, first: int, stop: int, dt: float) -> np.ndarray:
+        """The samples of `axis` ("gx", "gy" or "gz") in Hz/m of the blocks `first` to
+        `stop - 1` (play indexes), joined in play order (float64).
+
+        Block `i` has `n_i` samples (`raster_block_lengths`), at the local times
+        `(j + 0.5) * dt`, `j = 0 .. n_i - 1`, from the block start. The value of a sample
+        is the block's own event on `axis`: its points at `delay + offset`
+        (`seq_utils.gradient_offsets`), a straight line between two points, and 0
+        before the first point and after the last point. At a local time equal to a
+        point time where two points have the same time (a step), the later point's
+        value is used. A block with no event on `axis` gives zeros. This is the rule of
+        `PnsLanes` (`_eventSamples` in assets/pns_lanes.js). It differs from `sample`
+        only for a gradient that is not continuous at a block junction, which pypulseq's
+        `add_block` does not accept.
+
+        The samples of each unique (event, n) are computed one time and kept, and a call
+        gathers them with numpy for all the blocks of the range, not with a Python loop
+        over the blocks. Cost: O(samples in the range + blocks in the range + points of
+        the events not yet kept).
+
+        Raises ValueError for an unknown axis, for `first`/`stop` outside
+        `0 <= first <= stop <= num_blocks`, and when a block of the range is not on the
+        raster (`raster_block_lengths`)."""
+        if axis not in _AXES:
+            raise ValueError(f"axis must be one of {_AXES}: {axis!r}")
+        num_blocks = self._index.num_blocks
+        if not (0 <= first <= stop <= num_blocks):
+            raise ValueError(
+                f"first/stop must satisfy 0 <= first <= stop <= {num_blocks}: "
+                f"first={first!r}, stop={stop!r}"
+            )
+
+        cache = self._block_sample_cache
+        if first == stop:
+            return np.empty(0, dtype=np.float64)
+
+        # The lengths and the raster check of the range only, so that the cost does not
+        # grow with the whole file.
+        n, on_raster = _raster_lengths(self._index.duration_s[first:stop], dt)
+        if not on_raster:
+            raise ValueError(
+                f"block_samples: a block in [{first}, {stop}) is not on the raster (dt={dt!r})"
+            )
+
+        total = int(n.sum())
+        out = np.zeros(total, dtype=np.float64)
+        if total == 0:
+            return out
+
+        # The start offset of each block's samples in `out` (the prefix sum of `n`, as
+        # `_points` builds `group_start`).
+        starts = np.cumsum(n) - n
+
+        col = getattr(self._index, axis)[first:stop].astype(np.int64)
+        valid = col > 0
+        if not np.any(valid):
+            return out
+
+        k = col[valid] - 1  # 0-based event index, into `self._n`/`self._at`/pools
+        n_valid = n[valid]
+        starts_valid = starts[valid]
+
+        def event_samples(event_k: int, count_n: int) -> np.ndarray:
+            """The `count_n` samples (Hz/m) of gradient event `event_k`, cached by
+            `(event_k, count_n, dt)`: the rule of `PnsLanes._eventSamples`."""
+            cache_key = (event_k, count_n, dt)
+            samples = cache.get(cache_key)
+            if samples is not None:
+                return samples
+            num_points = int(self._n[event_k])
+            if num_points == 0 or count_n == 0:
+                samples = np.zeros(count_n, dtype=np.float64)
+            else:
+                at = int(self._at[event_k])
+                points_t = self._delay[event_k] + self._offsets[at : at + num_points]
+                points_v = self._amp[at : at + num_points]
+                t = (np.arange(count_n, dtype=np.float64) + 0.5) * dt
+                # The point at or before `t`: the largest p with points_t[p] <= t,
+                # equivalent to the JS sequential merge (both a pure function of `t`
+                # and `points_t`, so the two agree on every comparison, sample by
+                # sample).
+                p = np.searchsorted(points_t, t, side="right") - 1
+                p = np.clip(p, 0, num_points - 1)
+                t0 = points_t[p]
+                before = t < t0
+                last = p == num_points - 1
+                samples = np.zeros(count_n, dtype=np.float64)
+                # The last point's own value, only at exactly its time.
+                at_last = last & ~before & (t == t0)
+                samples[at_last] = points_v[p[at_last]]
+                # Between two points: linear, or the later point's value at a step
+                # (two points with the same time).
+                mid = ~before & ~last
+                if np.any(mid):
+                    p_mid = p[mid]
+                    t0_mid = t0[mid]
+                    t1_mid = points_t[p_mid + 1]
+                    v0_mid = points_v[p_mid]
+                    v1_mid = points_v[p_mid + 1]
+                    t_mid = t[mid]
+                    step = t1_mid == t0_mid
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        interp = v0_mid + (v1_mid - v0_mid) / (t1_mid - t0_mid) * (t_mid - t0_mid)
+                    samples[mid] = np.where(step, v1_mid, interp)
+            cache[cache_key] = samples
+            return samples
+
+        # One (event, n) pair for each distinct combination in the range: a Python loop
+        # over these (normally few), not over the blocks themselves.
+        pairs = np.stack([k, n_valid], axis=1)
+        unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
+        inverse = np.asarray(inverse).reshape(-1)
+        for pair_index in range(unique_pairs.shape[0]):
+            event_k = int(unique_pairs[pair_index, 0])
+            count_n = int(unique_pairs[pair_index, 1])
+            samples = event_samples(event_k, count_n)
+            if count_n == 0:
+                continue
+            block_starts = starts_valid[inverse == pair_index]
+            idx = (block_starts[:, None] + np.arange(count_n, dtype=np.int64)[None, :]).ravel()
+            out[idx] = np.tile(samples, block_starts.size)
+
+        return out
+
+
+# A block is on the raster when its duration is within this many samples of a whole
+# number of samples: the rule of `PnsLanes.decode` (`onRaster`) in assets/pns_lanes.js.
+ON_RASTER_TOLERANCE = 1e-6
+
+
+def raster_block_lengths(index: SequenceIndex, dt: float) -> tuple[np.ndarray, bool]:
+    """The number of samples of each block, `round(duration / dt)` (int64, length N, in
+    play order), and whether every block is on the raster (`ON_RASTER_TOLERANCE`).
+
+    `PnsLanes.decode` computes the same numbers in the browser, so Python and JavaScript
+    agree on where each block's samples are."""
+    return _raster_lengths(index.duration_s, dt)
+
+
+def _raster_lengths(duration_s: np.ndarray, dt: float) -> tuple[np.ndarray, bool]:
+    """`raster_block_lengths` of the given block durations."""
+    ratio = duration_s / dt
+    n = np.rint(ratio).astype(np.int64)
+    return n, bool(np.all(np.abs(ratio - n) <= ON_RASTER_TOLERANCE))
