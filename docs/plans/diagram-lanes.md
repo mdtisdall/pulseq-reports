@@ -61,9 +61,10 @@ Do not open these decisions again. The user made them or approved them.
    model in this library. The browser does not compute the whole-file PNS
    (the prototype's question 4 failed at 10^7 blocks).
 3. **Stored levels.** Python stores the exact minimum and maximum of each PNS
-   lane in fixed time bins. The finest bin is 1.2 ms for shorter files, so
-   that it meets the longest exact view (section 4.3). Longer files get a
-   coarser finest bin, set by a size limit.
+   lane in fixed time bins. The finest bin is 6.15 ms for shorter files, so
+   that it is at most half a display bin at the longest exact view (section
+   4.2, decision 13). Longer files get a coarser finest bin, set by a size
+   limit.
 4. **Exact short views in the browser.** For short views, the browser
    computes the exact PNS from the diagram tables, with the block maps of the
    prototype. This is a JavaScript copy of the SAFE recursion. It is tested
@@ -93,6 +94,18 @@ Do not open these decisions again. The user made them or approved them.
     "Move from the pypulseq fork to a pypulseq release",
     `docs/plans/cards-at-scale.md` task 7.2). No other module of this library
     imports it.
+12. **Samples at block-local times** (the user, 2026-09-27, question 6 of
+    section 7). `pns_levels` samples each block at `(j + 0.5) * dt` from the
+    block start, as `PnsLanes` does (merged in phase 3, #33). A new method of
+    `GradientSampler` gives these samples (section 4.1, item 3). So Python
+    and JavaScript use the same samples, and the golden tolerance of 1e-12
+    (section 3.5, item 1) stays.
+13. **The longest exact view is 10 s** (the user, 2026-09-27, question 5 of
+    section 7). `EXACT_MAX_S = 10.0`, and the finest stored bin is at most
+    half a display bin at that view (section 4.2). Phase 3 measured an exact
+    view of 10 s at 11 to 15 ms (95th percentile) for each file size. Phase 4
+    changes the constant in `assets/pns_lanes.js` (merged in phase 3 with
+    1.0).
 
 ### 2.3 Facts from the prototype (2026-09-24, a Mac with 10 cores and 64 GB)
 
@@ -256,9 +269,9 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 |---|---|
 | 0 | `TESTS.md` (only: add three placeholder sections, task 0.1) |
 | 1 | `pyproject.toml` (only `[tool.uv.sources]` and its comment), `uv.lock`. No fork file: the fork work is done (section 2.6) |
-| 2 | `pns_levels.py` (new), `tests/test_pns_levels.py` (new), `TESTS.md` section 2.24 |
+| 2 | `pns_levels.py` (new), `sampling.py` (only the new method `block_samples`), `tests/test_pns_levels.py` (new), `tests/test_sampling.py` (only new tests of `block_samples`), `TESTS.md` sections 2.23 (only the new entries) and 2.24 |
 | 3 | `assets/pns_lanes.js` (new), `page.py` (only the script order), `tests/js/test_pns_lanes.js` (new), `tests/test_page.py` (only `test_script_order`), `TESTS.md` sections 2.3 and 2.25 |
-| 4 | `cards/diagram.py`, `assets/cards/diagram.js`, `assets/lane_chart.js`, `cards/pns.py`, `assets/cards/pns.js`, `pns.py`, `tests/test_diagram_card.py`, `tests/test_pns_card.py`, `tests/test_pns.py`, `tests/test_pns_lanes_golden.py` (new), `tests/js/golden_pns_lanes.js` (new), `tests/js/test_chart_math.js` and `assets/chart_math.js` (only if lane groups need a pure function), `docs/usage.md`, `scripts/vb_parity.py` (only `ACCEPTED["pns"]` and `ACCEPTED["diagram"]`), `TESTS.md` sections 2.4, 2.11, 2.12, 2.16 and 2.26 |
+| 4 | `cards/diagram.py`, `assets/cards/diagram.js`, `assets/lane_chart.js`, `cards/pns.py`, `assets/cards/pns.js`, `pns.py`, `tests/test_diagram_card.py`, `tests/test_pns_card.py`, `tests/test_pns.py`, `tests/test_pns_lanes_golden.py` (new), `tests/js/golden_pns_lanes.js` (new), `tests/js/test_chart_math.js` and `assets/chart_math.js` (only if lane groups need a pure function), `docs/usage.md`, `scripts/vb_parity.py` (only `ACCEPTED["pns"]` and `ACCEPTED["diagram"]`), `assets/pns_lanes.js` (only `EXACT_MAX_S`, decision 13), `tests/js/test_pns_lanes.js` (only the tests that use the old value), `TESTS.md` sections 2.4, 2.11, 2.12, 2.16, 2.25 (only those tests) and 2.26 |
 | 5 | `assets/g_lanes.js` (new), `cards/diagram.py`, `assets/cards/diagram.js`, `tests/js/test_g_lanes.js` (new), `tests/test_diagram_card.py`, `TESTS.md` sections 2.16 and a new section at the end |
 | 6 | `scripts/cards_scale.py` (only a `--pns-lanes` option), `TODO.md`, `docs/usage.md`, this plan file (status and results only) |
 
@@ -291,9 +304,10 @@ time as this plan.
    pinned commit `20b9e5e`. Phase 1 only pins it.
 2. **`pns_levels.py` (phase 2).** `pns_levels(seq, hw=None, index=None) ->
    PnsLevels`:
-   - It gets the gradient samples from `GradientSampler`, block by block, at
-     the exact local times `(j + 0.5) * dt` of each block. So it has no time
-     drift (section 2.3, item 1). See question 6 of section 7.
+   - It gets the gradient samples from `GradientSampler.block_samples`
+     (item 3), at the exact local times `(j + 0.5) * dt` of each block. So it
+     has no time drift (section 2.3, item 1), and it uses the samples of
+     `PnsLanes` (decision 12).
    - It divides the samples (Hz/m) by `seq.system.gamma` to get T/m, as
      `calc_pns` does.
    - It sends the samples through the chunk function (decision 11), in
@@ -311,27 +325,61 @@ time as this plan.
      `peak * (1 − 1e-6)`, as in `PnsPrediction.peak_time_s` now.
    - Memory is bounded by the chunk size and the stored level.
    - `pns_levels.py` is the only module that imports the chunk function.
+3. **`GradientSampler.block_samples` (phase 2).** A new method in
+   `sampling.py`, next to `sample`:
+   ```python
+   def block_samples(self, axis: str, first: int, stop: int, dt: float) -> np.ndarray
+   ```
+   - It gives the samples of the blocks `first` to `stop - 1` (play order),
+     joined, in Hz/m. Block `i` has `n_i = round(duration_i / dt)` samples,
+     at the local times `(j + 0.5) * dt` from the block start.
+   - The value of a sample is the block's own event on the axis: the
+     polyline of its points at `delay + offset` (the offsets of
+     `seq_utils.gradient_offsets`), 0 before the first point and after the
+     last point. A block with no event on the axis gives 0. This is the rule
+     of `PnsLanes` (`assets/pns_lanes.js`, "The model"). It is not the
+     line across a gap of `sample` and `get_gradients()`. The two agree for
+     a sequence that pypulseq accepts, because `add_block` makes a gradient
+     continuous at a block junction.
+   - It computes the samples of each unique (event, `n`) one time and copies
+     them for each block that plays them. Its cost is O(samples of the
+     blocks + points).
+   - `sequence_index` gives the block durations. A block is "on the raster"
+     when `|duration / dt − n| ≤ 1e-6`, the rule of `PnsLanes.decode`
+     (`onRaster`). `block_samples` raises `ValueError` for a block that is
+     not on the raster.
+   - When a file has a block that is not on the raster, `pns_levels` samples
+     at the file times `(k + 0.5) * dt` with `sample`, as `calc_pns` does.
+     The browser has no exact view for such a file (`onRaster` is false), so
+     no golden comparison applies to it.
 
 ### 4.2 The stored level and its size
 
 - `dt` is the gradient raster (10 µs). `nt` is the number of samples.
-- `EXACT_MAX_S = 1.0`: the longest exact view (section 4.3).
-- `binSamples = max(floor(EXACT_MAX_S / 812 / dt), ceil(nt / MAX_BINS))`, with
-  `MAX_BINS = 2,000,000`. At 10 µs, the first term is 123 samples (1.23 ms).
+- `EXACT_MAX_S = 10.0`: the longest exact view (section 4.3, decision 13).
+- `binSamples = max(floor(EXACT_MAX_S / (2 × 812) / dt), ceil(nt / MAX_BINS))`,
+  with `MAX_BINS = 2,000,000`. At 10 µs, the first term is 615 samples
+  (6.15 ms).
+- The factor 2: `PnsLanes.lanesFor` uses a stored level only when its bin is
+  at most half a display bin (section 4.5, item 1). A view just longer than
+  `EXACT_MAX_S` has display bins of `EXACT_MAX_S / 812`, so the finest bin
+  must be at most half of that. (The formula written on 2026-09-24 had no
+  factor 2. Then each view from 1× to 2× `EXACT_MAX_S` was in the gap, also
+  in a short file.)
 - Size: 2 (minimum, maximum) × float32 = 8 bytes for each bin, before
   compression. At most 16 MB for each file.
 
 | File | `nt` | `binSamples` | Bin | Bins | Size before compression |
 |---|---|---|---|---|---|
-| 370 s | 3.7e7 | 123 | 1.23 ms | 3.0e5 | 2.4 MB |
-| 10^6 repeating blocks (1,198 s) | 1.2e8 | 123 | 1.23 ms | 9.7e5 | 7.8 MB |
-| 10^7 repeating blocks (11,980 s) | 1.2e9 | 599 | 6.0 ms | 2.0e6 | 16 MB |
+| 370 s | 3.7e7 | 615 | 6.15 ms | 6.0e4 | 0.48 MB |
+| 10^6 repeating blocks (1,198 s) | 1.2e8 | 615 | 6.15 ms | 1.9e5 | 1.6 MB |
+| 10^7 repeating blocks (11,980 s) | 1.2e9 | 615 | 6.15 ms | 1.9e6 | 15.6 MB |
 
-A file longer than about 2,460 s (41 minutes: 2,000,000 bins of 1.23 ms)
-has a gap. In that
-file, views from 1 s to `812 × bin` show the stored bins, and each stored bin
-is wider than one pixel. The
-status line says so (section 4.5). The page-size budget of section 2.4 is for
+A file longer than about 12,300 s (3.4 hours: 2,000,000 bins of 6.15 ms)
+has a gap. No file of the target (10^7 repeating blocks, 3.3 hours) has one.
+In a file with a gap, views from `EXACT_MAX_S` to `2 × 812 × bin` show stored
+bins that are wider than half a display bin. The status line says so
+(section 4.5). The page-size budget of section 2.4 is for
 the compressed data. Phase 2 measures the compressed size. If it fails, stop
 and tell the user (question 4 of section 7).
 
@@ -347,10 +395,10 @@ and tell the user (question 4 of section 7).
    maximum of the total in each of `bins` bins, from the exact samples. It
    computes the three axis values, because the total needs them, but it does
    not return them.
-3. `EXACT_MAX_S = 1.0` (section 4.2). Phase 3 measures the optimized loop.
-   An exact view of 10 s can take at most 50 ms at the 95th percentile. Then
-   tell the user, because the gap of section 4.2 can become smaller (question
-   5).
+3. `EXACT_MAX_S` (section 4.2). Phase 3 merged it as 1.0 and measured the
+   optimized loop: about 11 ns for each sample, an exact view of 10 s in 11
+   to 15 ms (95th percentile). The user then chose 10.0 (decision 13). Phase
+   4 changes the constant and the tests that use the old value.
 
 ### 4.4 The data in the page
 
@@ -364,7 +412,7 @@ section 4.1) gets an optional key `pns` in each file entry:
   "hw": {"x": {"tau1": 0.2, "tau2": 0.03, "tau3": 3.0, "a1": 0.4, "a2": 0.1,
                "a3": 0.5, "stim_limit": 30.0, "g_scale": 0.35}, "y": {}, "z": {}},
   "dtS": 1e-05,
-  "binSamples": 123,
+  "binSamples": 615,
   "summary": {"peak": 0.8659, "peak_time_s": 0.001955, "axis_peaks": {"x": 0.1, "y": 0.2, "z": 0.3}},
   "levels": {"min": {"dtype": "float32", "length": 300000, "data": "<base64 of gzip>"},
              "max": {"dtype": "float32", "length": 300000, "data": "<base64 of gzip>"}}
@@ -390,7 +438,7 @@ section 4.1) gets an optional key `pns` in each file entry:
 2. **The status line** says which data draws the view:
    - "PNS: exact".
    - "PNS: minimum and maximum in bins of X ms".
-   - In the gap: "PNS: minimum and maximum in bins of X ms (zoom in to 1 s or
+   - In the gap: "PNS: minimum and maximum in bins of X ms (zoom in to 10 s or
      less for the exact values)".
 3. **Lanes and lane groups.** The diagram has these groups: RF (|B1|, phase),
    ADC, gradients (x, y, z), PNS (the total). Buttons above the chart
@@ -492,6 +540,20 @@ prints `ok` for each card.
 
 Branch: `feature/pns-levels`. Tier: S. Review: O.
 
+**Task 2.0: `GradientSampler.block_samples`.** Tier O for the signature and
+the docstring, S for the code. Section 4.1, item 3. Tests in
+`tests/test_sampling.py`, and their entries in `TESTS.md` section 2.23:
+
+1. On the synthetic sequences (all blocks on the raster), `block_samples`
+   equals `sample` at the file times `(k + 0.5) * dt` within 1e-9 of the
+   largest `|g|`. The only difference is the time drift of section 2.3,
+   item 1 (write this reason in the test).
+2. A hand-made sequence with a gradient that is not zero at a block border,
+   and a block with no event on an axis: exact values, computed by hand.
+3. A range of blocks that starts and ends inside the file gives the same
+   values as the same slice of the whole file (exact equality).
+4. `ValueError` for a block that is not on the raster.
+
 **Task 2.1: `pns_levels.py`.** Tier S. Section 4.1, item 2, and section 4.2.
 The dataclass `PnsLevels` holds `bin_samples`, `dt_s`, the stored level (2
 arrays: the minimum and the maximum of the total), the summary and the
@@ -568,6 +630,12 @@ argument, the `pns` key of each file entry, `refuse_rotations` as now.
 the card script. Review O line by line: without groups, `laneChart` must work
 as now for the other cards.
 
+**Task 4.0: The longest exact view.** Tier S. Decision 13: set
+`EXACT_MAX_S = 10.0` in `assets/pns_lanes.js`. Change the tests of
+`tests/js/test_pns_lanes.js` that use the old value 1.0 (for example a view of
+2 s as "longer than `EXACT_MAX_S`"), and their `TESTS.md` entries in section
+2.25. Use `PnsLanes.EXACT_MAX_S` in the tests, not a number.
+
 **Task 4.3: The card script.** Tier S. Section 4.5: decode the PNS data of
 each file with its tables, `lanesFor` for the PNS group, the status line, the
 units and the tooltip.
@@ -596,7 +664,7 @@ accepted difference, after the user approves it.
 1. Pages: a synthetic file, the ex-vivo file, and 10^6 repeating blocks. The
    page of the ex-vivo file stays in the scratchpad. Never commit it.
 2. Check each lane group on and off.
-3. Zoom from the whole file to one block and back: exact below 1 s, the
+3. Zoom from the whole file to one block and back: exact at 10 s and below, the
    pyramid above.
 4. Check the status line, the tooltips, both themes, and that there is no
    console error.
@@ -650,9 +718,9 @@ Workers inside a phase:
 | Phase | Parallel workers |
 |---|---|
 | 1 | The executing agent. No worker: the phase is a pin and measurements. |
-| 2 | One S worker for task 2.1, then one S worker for tasks 2.2 and 2.3. |
+| 2 | The executing agent writes the signature of task 2.0. One S worker for the code and tests of task 2.0, and one S worker for task 2.1, at the same time (different files). Then one S worker for tasks 2.2 and 2.3. |
 | 3 | One S worker for tasks 3.1 and 3.2, and one H worker for task 3.3, at the same time. Task 3.4 after 3.2. |
-| 4 | Task 4.1 (S) and task 4.2 (S) at the same time. Task 4.3 after both. Task 4.4 (S) at the same time as 4.3. The executing agent designs task 4.5 and gives the code to an S worker. Task 4.6 after 4.3 and 4.4. |
+| 4 | Task 4.0 (S), task 4.1 (S) and task 4.2 (S) at the same time. Task 4.3 after both. Task 4.4 (S) at the same time as 4.3. The executing agent designs task 4.5 and gives the code to an S worker. Task 4.6 after 4.3 and 4.4. |
 | 5 | One S worker. |
 | 6 | The executing agent. One H worker for the documents with the exact text. |
 
@@ -671,6 +739,8 @@ Workers inside a phase:
    the compressed size is too large.
 5. **A faster exact view.** If phase 3 measures a much faster loop, the user
    decides whether `EXACT_MAX_S` grows and the stored level gets smaller.
+   Answered on 2026-09-27: 10 s, with the factor 2 of section 4.2
+   (decision 13).
 6. **Samples at block-local times** (found in the review of 2026-09-27).
    Section 4.1, item 2, samples each block at `(j + 0.5) * dt` from the block
    start, to remove the time drift. `GradientSampler.sample(axis, t)` of
@@ -685,3 +755,5 @@ Workers inside a phase:
      exact view (which has no drift) differs from it by up to about 1e-6 of
      the peak. The 1e-12 golden tolerance of section 3.5, item 1, then fails
      on long files.
+   Answered on 2026-09-27: the block-local method (decision 12, section
+   4.1, item 3, task 2.0).
