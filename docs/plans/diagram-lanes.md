@@ -24,7 +24,7 @@ up to 10^7 blocks:
    peaks, the hardware and the example-hardware warning. The PNS chart moves
    into the diagram.
 
-A slew lane and a |G| lane are not in this plan, except the optional phase 5
+A slew lane and a |G| lane are not in this plan, except phase 5
 (|G|). A slew lane waits for the `TODO.md` item "Study the two definitions of
 the gradient slew rate".
 
@@ -115,6 +115,17 @@ Do not open these decisions again. The user made them or approved them.
     seq.system.gamma` (section 4.4), and `PnsLanes` multiplies the table
     values by it before the SAFE model. For a proton sequence it is exactly
     1.0.
+15. **`PnsPrediction` loses its whole-file arrays** (the user, 2026-09-28,
+    question 1 of section 7). It keeps the summary: `reason`, `hardware`,
+    `asc_file`, `peak`, `peak_time_s` and `axis_peaks`, as plain fields.
+    `pns_prediction` builds it from `pns_levels`. A caller that wants the
+    samples of a short sequence calls `seq.calculate_pns`. This changes the
+    public API of `v0.1.0`; the release notes of `v0.2.0` say so.
+16. **`diagram_card(..., pns=False)` by default** (the user, 2026-09-28,
+    question 2 of section 7). A caller asks for the PNS lane and its cost.
+    Existing callers see no change.
+17. **Phase 5 (the |G| lane) stays** (the user, 2026-09-28, question 3 of
+    section 7).
 
 ### 2.3 Facts from the prototype (2026-09-24, a Mac with 10 cores and 64 GB)
 
@@ -255,7 +266,7 @@ Phase 1 (pin pns-chunked) ─────────┐
 Phase 0 (TESTS.md) ─┬──────────────┴─► Phase 2 (Python levels) ─┐
                     │                                           ├─► Phase 4 (diagram, card) ─► Phase 6
                     └─► Phase 3 (JavaScript PNS) ───────────────┘
-                                          Phase 5 (|G| lane, optional) ─► Phase 6
+                                          Phase 5 (|G| lane) ─► Phase 6
 ```
 
 - Phases 1 and 2 of `docs/plans/cards-at-scale.md` are merged, so this plan
@@ -264,8 +275,8 @@ Phase 0 (TESTS.md) ─┬──────────────┴─► Pha
 - Phase 1 starts at once, before phase 0 (section 2.6, item 1). It does not
   need phase 0: it adds no test.
 - Phase 0 at the same time as phase 1. Phase 3 after phase 0. Phase 2 after
-  phases 0 and 1. Phase 4 after phases 2 and 3. Phase 5 (if the user keeps
-  it) after phase 4. Phase 6 last.
+  phases 0 and 1. Phase 4 after phases 2 and 3. Phase 5 after phase 4.
+  Phase 6 last.
 - A phase of `docs/plans/cards-at-scale.md` that is open when phase 1 merges
   rebases onto it, and runs `scripts/check` and `scripts/vb_parity.py` again
   (the pin changes pypulseq, section 2.6, item 5).
@@ -475,7 +486,7 @@ section 4.1) gets an optional key `pns` in each file entry:
   `sequence_index` is, `docs/plans/cards-at-scale.md` section 4.1, item 4).
 - The public API changes (`PnsPrediction` loses its whole arrays). This is
   question 2 of `docs/plans/cards-at-scale.md`, section 7, which moves here
-  (question 1 of section 7).
+  (question 1 of section 7). Answered: decision 15.
 
 ### 4.7 The API (phase 4)
 
@@ -484,7 +495,7 @@ diagram_card(seqs, windows, card_id="diagram", pns=False)
 ```
 
 `pns` is `False` (no PNS lane), `True` (the example hardware), or the path of
-a gradient `.asc` file. The default is question 2 of section 7.
+a gradient `.asc` file. The default is `False` (decision 16).
 
 ## 5. Phases
 
@@ -698,10 +709,9 @@ section 2.4 pass for the 370 s file. The browser check passes.
 
 ---
 
-### Phase 5: a |G| lane (optional)
+### Phase 5: a |G| lane
 
-Branch: `feature/g-lane`. Tier: S. The user decides whether to keep this
-phase (question 3 of section 7).
+Branch: `feature/g-lane`. Tier: S. The user keeps this phase (decision 17).
 
 **Task 5.1.** `assets/g_lanes.js` from the prototype's `slew_g.js`
 (`gMagMinMax` only): the exact minimum and maximum of |G| in each bin, from
@@ -734,7 +744,7 @@ chunk function and `pns_levels.py` (decision 11 of section 2.2).
 | 1 | 0, 1 | Now (phases 1 and 2 of `docs/plans/cards-at-scale.md` are merged). Phase 1 first if only one PR can open. |
 | 2 | 2, 3 | Phase 3: phase 0 merged. Phase 2: phases 0 and 1 merged. |
 | 4 | 4 | Phases 2 and 3 merged. |
-| 5 | 5 (optional) | Phase 4 merged. |
+| 5 | 5 | Phase 4 merged. |
 | 6 | 6 | Phases 4 and 5 merged. |
 
 Workers inside a phase:
@@ -755,9 +765,12 @@ Workers inside a phase:
    short sequence can call `seq.calculate_pns`: with the pinned fork, its
    memory is near the size of its result (about 40 bytes for each sample,
    section 2.6, item 3). This changes the public API of `v0.1.0`.
+   Answered on 2026-09-28: remove them (decision 15).
 2. **The default of `pns`** in `diagram_card`. Proposal: `False`, so that a
    caller asks for the PNS lane and its cost (about 3 s for a 370 s file).
-3. **Phase 5 (|G| lane).** Keep it, or drop it.
+   Answered on 2026-09-28: `False` (decision 16).
+3. **Phase 5 (|G| lane).** Keep it, or drop it. Answered on 2026-09-28: keep
+   it (decision 17).
 4. **The size limit** `MAX_BINS = 2,000,000` (16 MB before compression for each
    file). The user can change it, or accept a lossy float16 or uint16 form if
    the compressed size is too large.
