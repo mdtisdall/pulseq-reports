@@ -1,9 +1,18 @@
+import importlib.util
 import math
+from pathlib import Path
 
 import numpy as np
 import pypulseq as pp
 import pytest
-from synthetic import SYSTEM, gre_sequence, spin_echo_sequence
+from oracles import grad_spectrum as oracle
+from synthetic import (
+    SYSTEM,
+    arbitrary_gradient_sequence,
+    empty_sequence,
+    gre_sequence,
+    spin_echo_sequence,
+)
 
 from pulseq_reports import grad_spectrum
 
@@ -134,3 +143,84 @@ def test_combine_skips_files_without_gradients():
     assert grad_spectrum.combine([no_gradients]).reason == grad_spectrum.NO_GRADIENTS
     with pytest.raises(ValueError, match="at least one"):
         grad_spectrum.combine([])
+
+
+def _assert_matches_oracle(got: grad_spectrum.GradientSpectrum, ref, tol: float = 1e-12) -> None:
+    """`got` (this module, the sampler-based implementation) equals `ref`
+    (`tests/oracles/grad_spectrum.py`, the implementation before phase 5, which samples
+    through `Sequence.get_gradients()`) within the tolerance of section 3.5, item 2 of
+    `docs/plans/cards-at-scale.md`: the sampler builds the waveform from each block's own
+    corner points and `numpy.interp`, in a different order of float operations than
+    `Sequence.get_gradients()`'s one whole-axis `scipy.interpolate.PPoly`, so the tests
+    allow a relative difference of 1e-12, or an absolute difference of 1e-12 times the
+    largest value of the same array. `tol` replaces 1e-12 for a long sequence (see
+    `test_matches_oracle_on_long_sequences`).
+    """
+    assert got.reason == ref.reason
+    if ref.reason is not None:
+        return
+    np.testing.assert_array_equal(got.frequency_hz, ref.frequency_hz)
+    assert list(got.axes) == list(ref.axes)
+    for axis in ref.axes:
+        r = ref.axes[axis]
+        peak = float(r.max()) if r.size else 0.0
+        np.testing.assert_allclose(got.axes[axis], r, rtol=tol, atol=tol * peak)
+    rss_peak = float(ref.rss.max()) if ref.rss.size else 0.0
+    np.testing.assert_allclose(got.rss, ref.rss, rtol=tol, atol=tol * rss_peak)
+    assert len(got.band_peaks) == len(ref.band_peaks)
+    for g, r in zip(got.band_peaks, ref.band_peaks):
+        # `g.resonance` and `r.resonance` are `AcousticResonance` instances of two
+        # different classes (this module's and the oracle's own copy), so compare their
+        # fields, not the dataclass instances themselves.
+        assert (g.resonance.frequency_hz, g.resonance.bandwidth_hz) == (
+            r.resonance.frequency_hz,
+            r.resonance.bandwidth_hz,
+        )
+        assert g.peak == pytest.approx(r.peak, rel=tol, abs=tol * rss_peak)
+        assert g.frequency_hz == pytest.approx(r.frequency_hz, rel=tol, abs=tol)
+        assert g.relative == pytest.approx(r.relative, rel=tol, abs=tol)
+
+
+@pytest.mark.parametrize(
+    "seq",
+    [
+        spin_echo_sequence(),
+        gre_sequence(),
+        arbitrary_gradient_sequence(),
+        empty_sequence(),
+        _sine_sequence(600),
+    ],
+    ids=["spin_echo", "gre", "arbitrary_gradient", "empty", "sine"],
+)
+def test_matches_oracle_on_synthetic_sequences(seq):
+    _assert_matches_oracle(grad_spectrum.gradient_spectrum(seq), oracle.gradient_spectrum(seq))
+
+
+def _load_diagram_scale():
+    """`scripts/diagram_scale.py`, imported by path, as `test_seq_index.py` does."""
+    path = Path(__file__).resolve().parent.parent / "scripts" / "diagram_scale.py"
+    spec = importlib.util.spec_from_file_location("diagram_scale", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("case", ["repeating", "worst"])
+def test_matches_oracle_on_long_sequences(case):
+    """The builders of `scripts/diagram_scale.py` at 10^4 blocks (task 5.3 of
+    docs/plans/cards-at-scale.md). The tolerance is `1e-12 * max(1, duration in s)`, not
+    1e-12 (the user, 2026-09-28). Both implementations place each gradient corner at an
+    absolute time with float rounding, in a different order of additions: the sampler
+    adds `(block start + delay) + offset`, and pypulseq's `get_gradients()` adds the
+    segment durations one at a time. The rounding of an absolute time grows with the
+    time, and a gradient ramp turns it into a value difference, so the difference grows
+    with the duration of the sequence. Measured: 2.5e-12 of the peak at 10^4 repeating
+    blocks (12 s), 3.6e-12 at 10^5 blocks. Neither is more correct than the other."""
+    diagram_scale = _load_diagram_scale()
+    n_trs = 10_000 // diagram_scale.TR_BLOCKS
+    build = diagram_scale.build_repeating if case == "repeating" else diagram_scale.build_worst
+    seq = build(n_trs)
+    tol = 1e-12 * max(1.0, seq.duration()[0])
+    _assert_matches_oracle(
+        grad_spectrum.gradient_spectrum(seq), oracle.gradient_spectrum(seq), tol=tol
+    )

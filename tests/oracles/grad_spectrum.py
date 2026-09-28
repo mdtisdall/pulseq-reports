@@ -1,6 +1,9 @@
 """Gradient spectrum of a Pulseq sequence, checked against the acoustic resonances of
 a gradient coil (by default the Siemens MAGNETOM Prisma AS82).
 
+Oracle: the implementation before phase 5 of docs/plans/cards-at-scale.md. Do not
+change it.
+
 The gradient coil vibrates strongly at its mechanical resonances. Siemens
 lists these in the gradient system's .asc file (aflAcousticResonanceFrequency
 and aflAcousticResonanceBandwidth) and forbids protocols, such as EPI echo
@@ -27,9 +30,6 @@ from dataclasses import dataclass
 import numpy as np
 import pypulseq as pp
 from scipy.signal import spectrogram
-
-from .sampling import GradientSampler
-from .seq_index import sequence_index
 
 MAX_FREQUENCY_HZ = 2000.0
 WINDOW_S = 0.05
@@ -86,11 +86,10 @@ def gradient_spectrum(
 ) -> GradientSpectrum:
     """The spectrum of each gradient axis up to `MAX_FREQUENCY_HZ`, and the largest
     RSS value in each resonance band."""
-    index = sequence_index(seq)
-    if not (index.gx.any() or index.gy.any() or index.gz.any()):
+    gradients = seq.get_gradients()
+    if all(g is None for g in gradients):
         empty = np.zeros(0)
         return GradientSpectrum(NO_GRADIENTS, resonances, empty, {}, empty, ())
-    sampler = GradientSampler(seq, index)
 
     dt = seq.system.grad_raster_time
     nwin = round(WINDOW_S / dt)
@@ -114,10 +113,8 @@ def gradient_spectrum(
         start = first * hop
         stop = n if n < nwin else (last - 1) * hop + nwin
         rss_sq = 0.0
-        for axis in "xyz":
-            freq, sxx = _chunk_spectrogram(
-                sampler, f"g{axis}", start, stop, pad, nt, dt, nwin, to_mt
-            )
+        for axis, g in zip("xyz", gradients):
+            freq, sxx = _chunk_spectrogram(g, start, stop, pad, nt, dt, nwin, to_mt)
             keep = freq <= MAX_FREQUENCY_HZ + 1e-6
             sxx = sxx[keep]
             chunk_max = sxx.max(axis=1)
@@ -133,18 +130,19 @@ def gradient_spectrum(
     )
 
 
-def _chunk_spectrogram(sampler, axis, start, stop, pad, nt, dt, nwin, to_mt):
+def _chunk_spectrogram(g, start, stop, pad, nt, dt, nwin, to_mt):
     """The frequencies and the magnitude spectrogram of samples [start, stop) of one
     axis's padded waveform, with the arguments of pypulseq's
-    `calculate_gradient_spectrum`. `axis` is "gx", "gy" or "gz" (`sampling.GradientSampler`'s
-    axis names); `sampler` gives the axis's waveform (Hz/m), 0 before the first event and
-    after the last one, so an axis with no gradient gives an all-zero chunk."""
+    `calculate_gradient_spectrum`. `g` is the axis's piecewise polynomial from
+    `Sequence.get_gradients` (Hz/m), or None for an axis with no gradient."""
     w = np.zeros(stop - start)
-    # Sequence sample i is at (i + 0.5) * dt, and is padded sample i + pad.
-    lo, hi = max(start - pad, 0), min(stop - pad, nt)
-    if hi > lo:
-        t = (np.arange(lo, hi) + 0.5) * dt
-        w[lo + pad - start : hi + pad - start] = sampler.sample(axis, t) * to_mt
+    if g is not None:
+        # Sequence sample i is at (i + 0.5) * dt, and is padded sample i + pad.
+        lo, hi = max(start - pad, 0), min(stop - pad, nt)
+        if hi > lo:
+            t = (np.arange(lo, hi) + 0.5) * dt
+            inside = (t >= g.x[0]) & (t <= g.x[-1])
+            w[lo + pad - start : hi + pad - start][inside] = g(t[inside]) * to_mt
     freq, _, sxx = spectrogram(
         w,
         fs=1 / dt,

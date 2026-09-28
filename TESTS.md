@@ -1513,9 +1513,13 @@ Here the gradients are sampled to the end of the sequence, with half a window
 of zeros added at each end. The RSS spectrum is the root-sum-of-squares of the
 three axes in each window, then the maximum over windows. The default
 resonance bands, of the MAGNETOM Prisma AS82 gradient coil, are 590 ± 50 Hz
-and 1140 ± 110 Hz. The gradients are sampled in chunks of `CHUNK_WINDOWS`
-windows, so the memory does not grow with the sequence length. `combine` gives
-the spectrum of several files.
+and 1140 ± 110 Hz. The gradients are sampled through the raster sampler
+(`sampling.GradientSampler`, phase 2 of `docs/plans/cards-at-scale.md`),
+in chunks of `CHUNK_WINDOWS` windows, so the memory does not grow with the
+sequence length. `combine` gives the spectrum of several files.
+`tests/oracles/grad_spectrum.py` is the module before that phase, sampling
+through `Sequence.get_gradients()` instead; the tests compare this module's
+spectra with it.
 
 Several tests use a 1 mT/m sine on x, on the synthetic system. On a frequency
 bin, a Hann window gives an amplitude spectral density of
@@ -1671,6 +1675,56 @@ without gradients alone: the reason must be "no gradients". Combining an empty
 list must raise ValueError.
 
 **Assumptions:** None.
+
+#### `test_matches_oracle_on_synthetic_sequences`
+
+**Checks:** Phase 5 of `docs/plans/cards-at-scale.md` moved
+`gradient_spectrum` from `Sequence.get_gradients()` to the raster sampler
+(`sampling.GradientSampler`). This test checks that the axis spectra, the RSS
+spectrum and the band peaks still agree with the oracle
+(`tests/oracles/grad_spectrum.py`, the module before that change), on the
+synthetic spin echo, GRE, arbitrary-gradient, empty and 600 Hz sine
+sequences.
+
+**How:** For each sequence, the test calculates the spectrum with this
+module and with the oracle. The reasons must be equal. When there is a
+spectrum, the frequencies must be equal, the axis spectra and the RSS must
+agree within a relative 1e-12 or an absolute 1e-12 times the array's own
+peak, and the band peaks must agree on their resonance, their peak value,
+their frequency and their relative value within the same tolerance.
+
+**Assumptions:**
+
+- The sampler builds the waveform from each block's own corner points and
+  `numpy.interp`, a different order of float operations than
+  `Sequence.get_gradients()`'s one whole-axis `PPoly`, so the values are not
+  always bit-for-bit equal (section 3.5, item 2 of
+  `docs/plans/cards-at-scale.md`).
+- The long sequences of task 5.3 are in
+  `test_matches_oracle_on_long_sequences`, with a tolerance that grows with
+  the duration.
+
+#### `test_matches_oracle_on_long_sequences`
+
+**Checks:** The same comparison with the oracle as
+`test_matches_oracle_on_synthetic_sequences`, on the builders of
+`scripts/diagram_scale.py` (`build_repeating` and `build_worst`) at 10^4
+blocks (task 5.3 of `docs/plans/cards-at-scale.md`).
+
+**How:** The test imports `scripts/diagram_scale.py` by path, builds each
+sequence with `10^4 / TR_BLOCKS` TRs, and compares this module's spectrum with
+the oracle's, as the test above does, with the tolerance
+`1e-12 * max(1, duration in s)` instead of 1e-12.
+
+**Assumptions:**
+
+- The user chose this tolerance on 2026-09-28. Both implementations place each
+  gradient corner at an absolute time with float rounding, in a different
+  order of additions: the sampler adds `(block start + delay) + offset`, and
+  `Sequence.get_gradients()` adds the segment durations one at a time. The
+  rounding of an absolute time grows with the time, and a gradient ramp turns
+  it into a value difference. Measured: 2.5e-12 of the peak at 10^4 repeating
+  blocks (12 s), 3.6e-12 at 10^5 blocks. Neither value is more correct.
 
 ### 2.10 Gradient spectrum card (`test_spectrum_card.py`)
 
