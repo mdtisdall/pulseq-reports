@@ -106,6 +106,15 @@ Do not open these decisions again. The user made them or approved them.
     view of 10 s at 11 to 15 ms (95th percentile) for each file size. Phase 4
     changes the constant in `assets/pns_lanes.js` (merged in phase 3 with
     1.0).
+14. **The gyromagnetic ratio of the sequence** (the user, 2026-09-28). The
+    diagram tables hold gradients in mT/m with the fixed proton value
+    `seq_utils.GAMMA` (42.576e6 Hz/T). `calc_pns` and `pns_levels` divide the
+    Hz/m of pypulseq by `seq.system.gamma`. For a sequence of another nucleus
+    the two differ, and `PnsLanes` would give a PNS that does not agree with
+    Python. So the `pns` data of each file has `gradScale = GAMMA /
+    seq.system.gamma` (section 4.4), and `PnsLanes` multiplies the table
+    values by it before the SAFE model. For a proton sequence it is exactly
+    1.0.
 
 ### 2.3 Facts from the prototype (2026-09-24, a Mac with 10 cores and 64 GB)
 
@@ -271,7 +280,7 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 | 1 | `pyproject.toml` (only `[tool.uv.sources]` and its comment), `uv.lock`. No fork file: the fork work is done (section 2.6) |
 | 2 | `pns_levels.py` (new), `sampling.py` (only the new method `block_samples`), `tests/test_pns_levels.py` (new), `tests/test_sampling.py` (only new tests of `block_samples`), `TESTS.md` sections 2.23 (only the new entries) and 2.24 |
 | 3 | `assets/pns_lanes.js` (new), `page.py` (only the script order), `tests/js/test_pns_lanes.js` (new), `tests/test_page.py` (only `test_script_order`), `TESTS.md` sections 2.3 and 2.25 |
-| 4 | `cards/diagram.py`, `assets/cards/diagram.js`, `assets/lane_chart.js`, `cards/pns.py`, `assets/cards/pns.js`, `pns.py`, `tests/test_diagram_card.py`, `tests/test_pns_card.py`, `tests/test_pns.py`, `tests/test_pns_lanes_golden.py` (new), `tests/js/golden_pns_lanes.js` (new), `tests/js/test_chart_math.js` and `assets/chart_math.js` (only if lane groups need a pure function), `docs/usage.md`, `scripts/vb_parity.py` (only `ACCEPTED["pns"]` and `ACCEPTED["diagram"]`), `assets/pns_lanes.js` (only `EXACT_MAX_S`, decision 13), `tests/js/test_pns_lanes.js` (only the tests that use the old value), `TESTS.md` sections 2.4, 2.11, 2.12, 2.16, 2.25 (only those tests) and 2.26 |
+| 4 | `cards/diagram.py`, `assets/cards/diagram.js`, `assets/lane_chart.js`, `cards/pns.py`, `assets/cards/pns.js`, `pns.py`, `tests/test_diagram_card.py`, `tests/test_pns_card.py`, `tests/test_pns.py`, `tests/test_pns_lanes_golden.py` (new), `tests/js/golden_pns_lanes.js` (new), `tests/js/test_chart_math.js` and `assets/chart_math.js` (only if lane groups need a pure function), `docs/usage.md`, `scripts/vb_parity.py` (only `ACCEPTED["pns"]` and `ACCEPTED["diagram"]`), `assets/pns_lanes.js` (only `EXACT_MAX_S` and `gradScale`, decisions 13 and 14), `tests/js/test_pns_lanes.js` (only the tests that use the old value), `TESTS.md` sections 2.4, 2.11, 2.12, 2.16, 2.25 (only those tests) and 2.26 |
 | 5 | `assets/g_lanes.js` (new), `cards/diagram.py`, `assets/cards/diagram.js`, `tests/js/test_g_lanes.js` (new), `tests/test_diagram_card.py`, `TESTS.md` sections 2.16 and a new section at the end |
 | 6 | `scripts/cards_scale.py` (only a `--pns-lanes` option), `TODO.md`, `docs/usage.md`, this plan file (status and results only) |
 
@@ -412,6 +421,7 @@ section 4.1) gets an optional key `pns` in each file entry:
   "hw": {"x": {"tau1": 0.2, "tau2": 0.03, "tau3": 3.0, "a1": 0.4, "a2": 0.1,
                "a3": 0.5, "stim_limit": 30.0, "g_scale": 0.35}, "y": {}, "z": {}},
   "dtS": 1e-05,
+  "gradScale": 1.0,
   "binSamples": 615,
   "summary": {"peak": 0.8659, "peak_time_s": 0.001955, "axis_peaks": {"x": 0.1, "y": 0.2, "z": 0.3}},
   "levels": {"min": {"dtype": "float32", "length": 300000, "data": "<base64 of gzip>"},
@@ -424,6 +434,10 @@ section 4.1) gets an optional key `pns` in each file entry:
   card script accept.
 - `SeqLanes.decode` does not read this key, so its rule "refuse unknown
   tables" does not change.
+- `gradScale`: `seq_utils.GAMMA / seq.system.gamma` (decision 14).
+  `PnsLanes` computes a gradient sample in T/m as `grad_value / 1000 *
+  gradScale`. It is 1.0 for a proton sequence. The gradient lanes of the
+  diagram do not use it: they show the tables as they are.
 
 ### 4.5 The lanes in the browser (phase 4)
 
@@ -623,18 +637,26 @@ from the pyramid. Apply section 4.3, item 3.
 Branch: `feature/pns-lanes`. Tier: S, with O for the golden test design and
 the review.
 
+**Task 4.0: `pns_lanes.js` changes.** Tier S.
+
+1. Decision 13: set `EXACT_MAX_S = 10.0` in `assets/pns_lanes.js`. Change the
+   tests of `tests/js/test_pns_lanes.js` that use the old value 1.0 (for
+   example a view of 2 s as "longer than `EXACT_MAX_S`"). Use
+   `PnsLanes.EXACT_MAX_S` in the tests, not a number.
+2. Decision 14: `PnsLanes.decode` reads `pns.gradScale` (default 1.0 when
+   the key is missing) and multiplies each gradient sample by it
+   (`_eventSamples`). Add a Node test: a model with `gradScale` 2 equals the
+   model of the same tables with every `grad_value` doubled, within 1e-12 of
+   the peak.
+3. The `TESTS.md` entries of these tests in section 2.25.
+
 **Task 4.1: The card in Python.** Tier S. Sections 4.4 and 4.7: the `pns`
-argument, the `pns` key of each file entry, `refuse_rotations` as now.
+argument, the `pns` key of each file entry (with `gradScale`, decision
+14), `refuse_rotations` as now.
 
 **Task 4.2: Lane groups.** Tier S. Section 4.5, item 3, in `lane_chart.js` and
 the card script. Review O line by line: without groups, `laneChart` must work
 as now for the other cards.
-
-**Task 4.0: The longest exact view.** Tier S. Decision 13: set
-`EXACT_MAX_S = 10.0` in `assets/pns_lanes.js`. Change the tests of
-`tests/js/test_pns_lanes.js` that use the old value 1.0 (for example a view of
-2 s as "longer than `EXACT_MAX_S`"), and their `TESTS.md` entries in section
-2.25. Use `PnsLanes.EXACT_MAX_S` in the tests, not a number.
 
 **Task 4.3: The card script.** Tier S. Section 4.5: decode the PNS data of
 each file with its tables, `lanesFor` for the PNS group, the status line, the
@@ -647,8 +669,10 @@ same `PnsLevels` as the diagram.
 Write `tests/test_pns_lanes_golden.py` with `tests/js/golden_pns_lanes.js`, as
 the golden test of the diagram does. Compare Python `pns_levels` and
 JavaScript `exactView` on the synthetic sequences, the "border" sequence and
-repeating sequences with more than one checkpoint group. The exact values must agree within 1e-12 of
-the peak (section 3.5, item 1). The pyramid bins must equal the minimum and
+repeating sequences with more than one checkpoint group, and one sequence
+with `pp.Opts(gamma=...)` of another nucleus (for example 11.262e6 Hz/T,
+sodium; decision 14). The exact values must agree within 1e-12 of the peak
+(section 3.5, item 1). The pyramid bins must equal the minimum and
 the maximum of the exact values. `TESTS.md` section 2.26.
 
 **Task 4.6: Tests and documents.** Tier S. `tests/test_diagram_card.py`,
