@@ -5808,3 +5808,31 @@ every bin is exactly `[0, 0]`, and checks `GLanes.lanesFor` gives one segment
 whose every point's value is 0.
 
 **Assumptions:** None.
+
+### 2.28 Messages between cards (`test_messages.js`)
+
+Phase 1 of `docs/plans/rf-profiles.md` adds the entries.
+
+### 2.29 RF simulation (`test_rf_sim.py`)
+
+Phase 2 of `docs/plans/rf-profiles.md` adds the entries.
+
+### 2.30 Profile metrics (`test_profile_metrics.py`)
+
+Phase 2 of `docs/plans/rf-profiles.md` adds the entries.
+
+### 2.31 RF pulse of a block (`test_rf_profiles.py`)
+
+Phase 2 of `docs/plans/rf-profiles.md` adds the entries.
+
+### 2.32 RF profiles in JavaScript (`test_rf_profiles.js`)
+
+Phase 3 of `docs/plans/rf-profiles.md` adds the entries.
+
+### 2.33 RF profiles against Python (`test_rf_profiles_golden.py`)
+
+Phase 3 of `docs/plans/rf-profiles.md` adds the entries.
+
+### 2.34 RF profile card (`test_rf_profile_card.py`)
+
+Phase 5 of `docs/plans/rf-profiles.md` adds the entries.
