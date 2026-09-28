@@ -4149,3 +4149,15 @@ checks the result's dtype and shape.
 `pytest.raises(ValueError)`.
 
 **Assumptions:** None.
+
+### 2.24 PNS levels (`test_pns_levels.py`)
+
+Phase 2 of `docs/plans/diagram-lanes.md` adds the entries.
+
+### 2.25 PNS lane in JavaScript (`test_pns_lanes.js`)
+
+Phase 3 of `docs/plans/diagram-lanes.md` adds the entries.
+
+### 2.26 PNS lane against Python (`test_pns_lanes_golden.py`)
+
+Phase 4 of `docs/plans/diagram-lanes.md` adds the entries.
