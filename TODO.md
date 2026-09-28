@@ -2,36 +2,40 @@
 
 Work that is planned but not started. Delete an item when its PR merges.
 
-## Make the other cards work at 10^7 blocks
+## Move from the pypulseq fork to a pypulseq release
 
-**Why.** The sequence diagram works for a file of up to 10^7 blocks
-(`docs/plans/diagram-event-table.md`). The other cards were not made for that
-size, and a long file can make them too slow or too large:
+**Why.** PNS at 10^7 blocks needs two changes of pypulseq that no release has
+yet. This project pins them from the fork `mdtisdall/pypulseq` in
+`[tool.uv.sources]` of `pyproject.toml` (`docs/plans/cards-at-scale.md`,
+section 3.6):
 
-- **PNS:** pypulseq `calculate_pns` uses the whole sampled waveform. A 1 h file
-  is about 3.6 × 10^8 samples for each axis, so several GB.
-- **RF exposure and gradient limits:** they call `seq.get_block` for each
-  block (about 18 µs for each block, so minutes at 10^7 blocks).
-- **Gradient spectrum:** it is chunked. Its time grows with the duration of
-  the file, not with the number of blocks (about 50 s for 1 h).
-- **Block table:** it reads only the rows that it shows. No change is needed.
+| Fork branch | Commit | Change | Upstream |
+|---|---|---|---|
+| `pns-lfilter` | `e476200` | `safe_tau_lowpass` as a recursion (`scipy.signal.lfilter`), not a convolution: the PNS card of a 370 s file in 5.5 s instead of 258 s | not proposed yet (draft 06 of `github.com/mdtisdall/pypulseq-issues`) |
+| `pns-chunked` | `20b9e5e` | `calc_pns` in chunks, and the chunk function `_safe_gwf_to_pns_chunk`: the memory of `calculate_pns` near the size of its result | not proposed yet (the same draft 06) |
 
-For scale: a synthetic GRE-like sequence of 10^7 blocks (5 blocks for each
-TR, about 3.3 h) takes 87 s and 3.8 GB peak RSS to build in pypulseq
-(phase 5 of `docs/plans/diagram-event-table.md`). The diagram card adds 13 s
-and 0.2 GB to that.
+The pin has two more consequences:
 
-**What.** Give each card a method whose time and memory do not grow with the
-expanded waveform:
+- The fork branches are on upstream `master` (`f2c582b`), so the pin also has
+  28 upstream commits that are not in a release
+  (`docs/plans/diagram-lanes.md`, section 2.6, item 5).
+- `pns_levels.py` imports the private `_safe_gwf_to_pns_chunk`
+  (`docs/plans/diagram-lanes.md`, decision 11). If the upstream review renames
+  or changes it, `pns_levels.py` changes with it.
 
-- RF exposure and gradient limits can use the block and event tables of
-  `diagram_data.diagram_tables` (each unique event is expanded one time).
-- PNS needs a chunked or windowed method.
+A project that depends on pulseq-reports gets stock pypulseq from PyPI unless
+it adds the same source line (`docs/usage.md`).
 
-**How to check.** A scale run, as `scripts/diagram_scale.py` does for the
-diagram, for each card.
+**What.** When a pypulseq release has both changes: pin that release in
+`[project] dependencies`, remove `[tool.uv.sources]`, change `pns_levels.py`
+to the released name of the chunk function, and remove the fork paragraph of
+`docs/usage.md`.
 
-**When.** Write a plan in `docs/plans/` first. Each card can be its own phase.
+**How to check.** `scripts/check`, `scripts/vb_parity.py`, and
+`scripts/cards_scale.py --card pns` for the 370 s file.
+
+**When.** After the upstream pull requests are merged and released (the user
+proposes them).
 
 ## Support the rotation extension
 
