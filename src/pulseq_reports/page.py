@@ -95,8 +95,9 @@ def render_page(
 ) -> str:
     """The HTML of a page with `cards` in the given order.
 
-    Scripts, in this order: chart_math.js, lane_chart.js, seq_lanes.js, pns_lanes.js,
-    g_lanes.js, the library card script of each distinct `Card.script` name (one time each),
+    Scripts, in this order: chart_math.js, lane_chart.js, map_chart.js, seq_lanes.js,
+    pns_lanes.js, g_lanes.js, the library card script of each distinct `Card.script`
+    name (one time each),
     `extra_scripts` in the given order, and page.js. A card whose script is not a library card script gets it
     from `extra_scripts`, which registers it with `PulseqReport.registerCard`. Each
     script is in its own `<script>` element, so an error in one does not stop the others.
@@ -126,6 +127,7 @@ def render_page(
     scripts = [
         _asset("chart_math.js"),
         _asset("lane_chart.js"),
+        _asset("map_chart.js"),
         _asset("seq_lanes.js"),
         _asset("pns_lanes.js"),
         _asset("g_lanes.js"),

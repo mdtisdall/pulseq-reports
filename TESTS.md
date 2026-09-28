@@ -509,17 +509,20 @@ script's marker is not.
 #### `test_script_order`
 
 **Checks:** The page's scripts appear in this order: `chart_math.js`,
-`lane_chart.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, each card's library
-script, the extra scripts in the given order, and `page.js`.
+`lane_chart.js`, `map_chart.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, each
+card's library script, the extra scripts in the given order, and `page.js`.
 
 **How:** The test builds one card with a library script and two extra
 scripts, calls `render_page`, and checks that the string indices of a
 `chart_math.js` marker, a `lane_chart.js` (`PulseqReport`) marker, a
-`seq_lanes.js` (`SeqLanes`) marker, a `pns_lanes.js` (`PnsLanes`) marker, a
-`g_lanes.js` (`GLanes`) marker, the card script's marker, each extra script's marker,
-and a `page.js` marker are in increasing order.
+`map_chart.js` (`PulseqReport.mapChart = mapChart;`) marker, a `seq_lanes.js`
+(`SeqLanes`) marker, a `pns_lanes.js` (`PnsLanes`) marker, a `g_lanes.js`
+(`GLanes`) marker, the card script's marker, each extra script's marker, and a
+`page.js` marker are in increasing order.
 
 **Assumptions:** None.
+
+---
 
 #### `test_each_script_is_its_own_script_element`
 
@@ -528,10 +531,13 @@ with the others into one element.
 
 **How:** The test builds one card with no script and one extra script,
 calls `render_page`, and counts the occurrences of `<script>\n`. With
-`chart_math.js`, `lane_chart.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, the
-extra script and `page.js`, and no card script, the count must be 7.
+`chart_math.js`, `lane_chart.js`, `map_chart.js`, `seq_lanes.js`, `pns_lanes.js`,
+`g_lanes.js`, the extra script and `page.js`, and no card script, the count must
+be 8.
 
 **Assumptions:** None.
+
+---
 
 #### `test_extra_script_with_close_tag_raises`
 
@@ -644,7 +650,11 @@ anchor, `panView` shifts a view by a fixed amount, and `dragView` turns the
 two ends of a drag into a view. `laneGroupMap` turns a `laneChart` `groups`
 option into a Map from lane id to group id, and `visibleLanes` filters a
 list of lanes down to those of a visible group (`lane_chart.js`'s
-lane-group support, `docs/plans/diagram-lanes.md` section 4.5 item 3). The
+lane-group support, `docs/plans/diagram-lanes.md` section 4.5 item 3). `colorRamp` builds an n-color ramp linear between a list of
+stops, `colorIndex` finds the index of a value in such a ramp over a domain,
+and `nearestIndex` finds the nearest grid index on a uniform axis: the map
+chart (`assets/map_chart.js`, `docs/plans/rf-profiles.md` section 4.4) uses
+them to color its raster and to snap its cursor to the grid. The
 report page (`page.py`) puts
 `chart_math.js` and `lane_chart.js` first among its scripts, each in its own
 `<script>` element, before any card scripts, the extra scripts and
@@ -1187,6 +1197,140 @@ array as `view`. It calls `zoomView(view, 2, 15, extent, 5)` and checks that
 copy.
 
 **Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_ramp_two_stops_linear_between_endpoints`
+
+**Checks:** `colorRamp` gives the first stop, the last stop, and a linear blend at
+each point in between, for a 2-stop ramp.
+
+**How:** The test calls `colorRamp([[0, 0, 0], [100, 200, 40]], 5)`. The component
+values are chosen so each of the 3 interior steps (t = 0.25, 0.5, 0.75) lands on a
+whole number, so the test does not have to reason about `Uint8ClampedArray`
+rounding. It checks the whole 15-value result: `[0,0,0, 25,50,10, 50,100,20,
+75,150,30, 100,200,40]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_ramp_three_stops_midpoint_is_the_middle_stop`
+
+**Checks:** `colorRamp` places the middle stop of a 3-stop ramp exactly at the
+middle color, for an odd `n`.
+
+**How:** The test calls `colorRamp([[0, 0, 0], [10, 20, 30], [100, 200, 40]], 5)`.
+With 3 stops (2 segments) and `n = 5`, the interpolation parameter `t` runs 0, 0.5,
+1, 1.5, 2; index 2, the middle of the 5 colors, lands exactly on `t = 1`, the middle
+stop. It checks the whole result: `[0,0,0, 5,10,15, 10,20,30, 55,110,35,
+100,200,40]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_ramp_n_equal_1_returns_only_the_first_stop`
+
+**Checks:** `colorRamp` with `n = 1` returns a single color, the first stop.
+
+**How:** The test calls `colorRamp([[10, 20, 30], [200, 100, 0]], 1)` and checks
+that the result has length 3 and equals `[10, 20, 30]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_index_maps_domain_endpoints_to_first_and_last_index`
+
+**Checks:** `colorIndex` gives index 0 at the low end of the domain and `n - 1` at
+the high end.
+
+**How:** The test calls `colorIndex(0, [0, 10], 5)` and checks the result is 0. It
+calls `colorIndex(10, [0, 10], 5)` and checks the result is 4.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_index_maps_the_domain_midpoint_to_the_middle_index`
+
+**Checks:** `colorIndex` gives the middle index for a value at the middle of the
+domain.
+
+**How:** The test calls `colorIndex(5, [0, 10], 5)` and checks that the result is
+2, the middle of the 5 indices (0 to 4).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_index_clamps_below_and_above_the_domain`
+
+**Checks:** `colorIndex` clamps a value outside the domain to index 0 (below) or
+`n - 1` (above), instead of returning an out-of-range index.
+
+**How:** The test calls `colorIndex(-100, [0, 10], 5)` and checks the result is 0.
+It calls `colorIndex(1000, [0, 10], 5)` and checks the result is 4.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_index_is_minus_1_for_nan`
+
+**Checks:** `colorIndex` returns -1 for `NaN`, so a map chart can draw that point
+transparent instead of picking a color.
+
+**How:** The test calls `colorIndex(NaN, [0, 10], 5)` and checks that the result is
+-1.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_color_index_degenerate_domain_is_always_index_0`
+
+**Checks:** `colorIndex` returns index 0 for every value when the domain is
+degenerate (`lo === hi`), since there is no range to place a value in.
+
+**How:** The test calls `colorIndex(5, [5, 5], 8)` and `colorIndex(100, [5, 5], 8)`
+(a value equal to, and a value far from, the single domain point) and checks that
+both return 0.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_nearest_index_at_the_grid_points`
+
+**Checks:** `nearestIndex` gives the exact index of a value that sits exactly on a
+grid point of `linspace(lo, hi, n)`.
+
+**How:** The test uses the grid `linspace(0, 100, 6)` = `[0, 20, 40, 60, 80, 100]`.
+It calls `nearestIndex(0, 100, 6, 0)` and checks the result is 0, `nearestIndex(0,
+100, 6, 20)` and checks the result is 1, and `nearestIndex(0, 100, 6, 100)` and
+checks the result is 5.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_nearest_index_halfway_between_grid_points_rounds_up`
+
+**Checks:** `nearestIndex` rounds a value exactly halfway between two grid points up
+to the higher index, matching `Math.round`'s rounding of a 0.5 fraction towards
++Infinity.
+
+**How:** Using the same grid `[0, 20, 40, 60, 80, 100]`, the test calls
+`nearestIndex(0, 100, 6, 10)` (exactly halfway between index 0 and index 1) and
+checks the result is 1. It calls `nearestIndex(0, 100, 6, 30)` (exactly halfway
+between index 1 and index 2) and checks the result is 2.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_nearest_index_clamps_outside_the_range`
+
+**Checks:** `nearestIndex` clamps a value outside `[lo, hi]` to index 0 (below) or
+`n - 1` (above).
+
+**How:** The test calls `nearestIndex(0, 100, 6, -50)` and checks the result is 0.
+It calls `nearestIndex(0, 100, 6, 500)` and checks the result is 5.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_nearest_index_degenerate_domain_or_single_point_is_index_0`
+
+**Checks:** `nearestIndex` returns index 0 for a degenerate axis (`lo === hi`) and
+for a single-point grid (`n <= 1`).
+
+**How:** The test calls `nearestIndex(5, 5, 4, 5)` (a degenerate domain) and checks
+the result is 0. It calls `nearestIndex(0, 100, 1, 50)` (a single grid point) and
+checks the result is 0.
+
+**Assumptions:** None beyond the file's assumptions.
+
+---
 
 ### 2.5 Timing card (`test_timing_card.py`)
 
