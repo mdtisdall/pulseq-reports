@@ -3528,11 +3528,10 @@ note and table for one file, parity), or one table for each window when
 `block_rows` gives directly, so a test also fixes the exact table that
 `_table` would render from those rows.
 
-#### `test_one_file_note_and_table_match_vb_parity_when_rows_are_cut`
+#### `test_one_file_note_and_table_when_rows_are_cut`
 
-**Checks:** For one file with more blocks than `max_rows`, `body_html`
-equals vb-pulseq's own `__BLOCK_NOTE__` + "\n" + `__BLOCKS__` text (the "First
-N of M blocks." note followed directly by the table), and the card's other
+**Checks:** For one file with more blocks than `max_rows`, `body_html` is the
+"First N of M blocks." note, a newline, and the table, and the card's other
 fields are correct.
 
 **How:** The test builds a synthetic gradient echo sequence with more

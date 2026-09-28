@@ -31,8 +31,8 @@ it adds the same source line (`docs/usage.md`).
 to the released name of the chunk function, and remove the fork paragraph of
 `docs/usage.md`.
 
-**How to check.** `scripts/check`, `scripts/vb_parity.py`, and
-`scripts/cards_scale.py --card pns` for the 370 s file.
+**How to check.** `scripts/check`, and `scripts/cards_scale.py --card pns` for
+the 370 s file.
 
 **When.** After the upstream pull requests are merged and released (the user
 proposes them).
@@ -108,7 +108,7 @@ needs the gamma of each file (or values that are already converted), and
 
 **How to check.** A test for each card with `pp.Opts(gamma=...)` of another
 nucleus: the physical values (mT/m, µT) of an event made with physical units
-equal those units. `scripts/vb_parity.py` for proton sequences.
+equal those units. The existing tests (`scripts/check`) for proton sequences.
 
 **When.** After phases 3 and 4 of `docs/plans/cards-at-scale.md` are merged
 (they change `rf_exposure.py` and `grad_limits.py`), and after phase 4 of

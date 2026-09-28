@@ -22,7 +22,7 @@ def _expected_table(rows: list[dict]) -> str:
     )
 
 
-def test_one_file_note_and_table_match_vb_parity_when_rows_are_cut():
+def test_one_file_note_and_table_when_rows_are_cut():
     seq = gre_sequence(num_trs=5, tr=20e-3)
     max_rows = 10
     card = blocks_card([_named(seq)], max_rows=max_rows)
@@ -31,8 +31,8 @@ def test_one_file_note_and_table_match_vb_parity_when_rows_are_cut():
 
     expected_note = f'<p class="muted">First {max_rows} of {total} blocks.</p>'
     expected_table = _expected_table(rows)
-    # vb-pulseq's own template has "__BLOCK_NOTE__\n__BLOCKS__" between the
-    # <summary> and </details>; `body_html` is exactly that text (parity).
+    # The note, a newline, then the table: the text between the card's
+    # <summary> and </details>.
     assert card.body_html == f"{expected_note}\n{expected_table}"
     assert card.id == "blocks"
     assert card.title == "Blocks (table view)"

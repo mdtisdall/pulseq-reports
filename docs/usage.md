@@ -545,10 +545,6 @@ points) are in milliseconds, even though the Python functions that build
 seconds. Frequencies (the gradient spectrum) are in hertz. Other units, for
 example µT, mT/m, T/m/s and percent, are named in each card's table.
 
-When the library gets the same single sequence as vb-pulseq, the timing,
-definitions, RF exposure, gradient spectrum and PNS cards give the same
-data as vb-pulseq's own report; `scripts/vb_parity.py` checks this.
-
 ## Rotation extension
 
 The Pulseq rotation extension rotates the gradients of a block on the
