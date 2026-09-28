@@ -4,7 +4,7 @@ from synthetic import gre_sequence, spin_echo_sequence
 
 from pulseq_reports import page
 from pulseq_reports.cards.blocks import blocks_card
-from pulseq_reports.markup import _table
+from pulseq_reports.markup import html_table
 from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import TimeWindow, block_rows, duration_s
 
@@ -15,8 +15,8 @@ def _named(seq, name: str = "seq.seq") -> NamedSequence:
 
 def _expected_table(rows: list[dict]) -> str:
     """The block table HTML that vb-pulseq's own `block_table` builds, via
-    `markup._table`, from `waveforms.block_rows`' rows."""
-    return _table(
+    `markup.html_table`, from `waveforms.block_rows`' rows."""
+    return html_table(
         ["Block", "Start (ms)", "Duration (ms)", "Events"],
         [[r["block"], f"{r['start_ms']:g}", f"{r['duration_ms']:g}", r["events"]] for r in rows],
     )

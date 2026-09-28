@@ -90,8 +90,20 @@ def _script_element(source: str) -> str:
     return f"<script>\n{source}\n</script>"
 
 
+def _style_text(extra_css: Sequence[str]) -> str:
+    for source in extra_css:
+        if re.search(r"</style", source, re.IGNORECASE):
+            raise ValueError("page CSS must not contain '</style'")
+    return "\n".join([_asset("report.css"), *extra_css])
+
+
 def render_page(
-    title: str, subtitle: str, cards: Sequence[Card], extra_scripts: Sequence[str] = ()
+    title: str,
+    subtitle: str,
+    cards: Sequence[Card],
+    extra_scripts: Sequence[str] = (),
+    *,
+    extra_css: Sequence[str] = (),
 ) -> str:
     """The HTML of a page with `cards` in the given order.
 
@@ -101,8 +113,12 @@ def render_page(
     from `extra_scripts`, which registers it with `PulseqReport.registerCard`. Each
     script is in its own `<script>` element, so an error in one does not stop the others.
 
-    Raises ValueError when two cards have the same id, or when a card id or a script name
-    does not match `[a-z][a-z0-9-]*`.
+    The page's one `<style>` element has report.css and then `extra_css` in the given
+    order, so a rule of `extra_css` wins over a library rule of the same specificity.
+
+    Raises ValueError when two cards have the same id, when a card id or a script name
+    does not match `[a-z][a-z0-9-]*`, when a script contains `</script`, or when
+    `extra_css` contains `</style`.
     """
     seen: set[str] = set()
     script_names: list[str] = []
@@ -139,7 +155,7 @@ def render_page(
             "__TITLE__": html.escape(title),
             "__SUBTITLE__": html.escape(subtitle),
             "__CARDS__": "\n\n".join(_card_html(card) for card in cards),
-            "__CSS__": _asset("report.css"),
+            "__CSS__": _style_text(extra_css),
             "__JS__": "\n".join(_script_element(s) for s in scripts),
         },
     )
@@ -151,6 +167,11 @@ def write_page(
     subtitle: str,
     cards: Sequence[Card],
     extra_scripts: Sequence[str] = (),
+    *,
+    extra_css: Sequence[str] = (),
 ) -> None:
-    """Write `render_page(title, subtitle, cards, extra_scripts)` to `path` as UTF-8."""
-    Path(path).write_text(render_page(title, subtitle, cards, extra_scripts), encoding="utf-8")
+    """Write `render_page(title, subtitle, cards, extra_scripts, extra_css=extra_css)` to
+    `path` as UTF-8."""
+    Path(path).write_text(
+        render_page(title, subtitle, cards, extra_scripts, extra_css=extra_css), encoding="utf-8"
+    )

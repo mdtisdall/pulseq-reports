@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import pypulseq as pp
 
 from pulseq_reports import rf_exposure as _rf_exposure
-from pulseq_reports.markup import _table
+from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
 from pulseq_reports.rf_exposure import WINDOW_S, RfExposure
 from pulseq_reports.seq_utils import NamedSequence
@@ -40,7 +40,7 @@ def _rf_exposure_html(exposure: dict) -> str:
         return '<p class="muted">No RF pulses.</p>'
     periodic = exposure["periodic"]
     b1rms_label = "B1+rms, sequence repeated (µT)" if periodic else "B1+rms, one pass (µT)"
-    table = _table(
+    table = html_table(
         ["Quantity", "Value"],
         [
             ["RF pulses", exposure["num_pulses"]],
@@ -81,7 +81,7 @@ def _all_files_html(data: dict) -> str:
         return '<p class="muted">No RF pulses in any file.</p>'
     periodic = data["periodic"]
     b1rms_label = "B1+rms, files repeated (µT)" if periodic else "B1+rms, files played once (µT)"
-    table = _table(
+    table = html_table(
         ["Quantity", "Value"],
         [
             ["RF pulses (all files)", data["num_pulses"]],

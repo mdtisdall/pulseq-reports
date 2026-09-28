@@ -259,20 +259,26 @@ chart, a JavaScript file that draws it.
 ### The Python side
 
 ```python
+from pulseq_reports.markup import fmt, html_table, zoom_controls
 from pulseq_reports.page import Card
-from pulseq_reports.waveforms import file_lanes
+from pulseq_reports.waveforms import duration_s, file_lanes
 
 
 def peak_grad_card(named, card_id="peak-grad"):
     lanes = {lane["id"]: lane for lane in file_lanes(named.seq)}
     gx = lanes["gx"]
+    peak = max((abs(y) for segment in gx["segments"] for _, y in segment), default=0.0)
     body = (
-        f'<div class="chart" id="{card_id}-chart">'
+        html_table(["Lane", "Peak (mT/m)"], [["Gx", fmt(peak)]])
+        + '<p class="peak-note">The peak of the lane points.</p>'
+        + zoom_controls(f"{card_id}-diagram")
+        + f'<div class="chart" id="{card_id}-chart">'
         f'<svg id="{card_id}-diagram" tabindex="0" role="img" '
         'aria-label="Gx over time"></svg>'
         f'<div class="tip" id="{card_id}-tip" hidden></div></div>'
     )
-    return Card(id=card_id, title="Peak Gx", body_html=body, data={"lane": gx}, script="peak-grad")
+    data = {"lane": gx, "x_domain": [0.0, duration_s(named.seq) * 1e3]}  # ms
+    return Card(id=card_id, title="Peak Gx", body_html=body, data=data, script="peak-grad")
 ```
 
 `Card.id` (and `Card.script`, when given) must match `[a-z][a-z0-9-]*`, and
@@ -288,6 +294,47 @@ example `{card_id}-chart`. A card script finds its own elements this way,
 so two cards built from the same function, with different `card_id` values,
 can be on one page without clashing.
 
+### Helpers for the card HTML
+
+`pulseq_reports.markup` has the helpers that the library's own cards use, so
+that a project card looks the same:
+
+| Name | Gives |
+|---|---|
+| `html_table(headers, rows)` | An HTML table in a horizontal scroll container. Each header and each cell (after `str`) is HTML-escaped. |
+| `fmt(v)` | A number with 3 significant digits, with the minus sign U+2212, as in the library's tables. |
+| `zoom_controls(svg_id)` | The zoom buttons (×10, ×2, ×0.5, ×0.1, Reset) of the `laneChart` chart whose `<svg>` has the id `svg_id`. Put them directly before the chart's `<div class="chart">`. |
+| `Lane(...)` | One line lane, with the fields of the lane JSON format below, as keyword arguments. |
+| `lanes_json(lanes)` | Each lane as a JSON-ready dict for a card's `data`: a `Lane` in field order, a dict (for example a gate lane) unchanged. |
+
+The other names of `markup`, which start with `_`, are for the library's
+own cards only.
+
+### CSS
+
+Pass the CSS of project cards as `extra_css` to `render_page` or
+`write_page`, a keyword-only list of CSS texts:
+
+```python
+write_page(
+    "report.html",
+    title="my_scan.seq review",
+    subtitle="A custom card",
+    cards=[peak_grad_card(named)],
+    extra_css=[".peak-note { color: var(--ink-2); }"],
+)
+```
+
+The page has one `<style>` element: the library's `report.css`, then each
+`extra_css` text in the order given. So a rule of `extra_css` wins over a
+library rule of the same specificity. A text that contains `</style` raises
+`ValueError`. Use the color tokens of `report.css` (`var(--ink)`,
+`var(--ink-2)`, `var(--muted)`, `var(--grid)`, `var(--axis)`, `var(--rf)`,
+`var(--gx)` and the others), so that a card follows the light and the dark
+theme. Start each selector with a class that only your card uses, not with
+a card id: the caller of a card builder can give a different `card_id`. The
+library's own `report.css` has no id selector for the same reason.
+
 ### The JavaScript side
 
 Pass the script as one of `extra_scripts` to `render_page` or `write_page`.
@@ -301,9 +348,9 @@ PulseqReport.registerCard("peak-grad", (section, data) => {
     chart: document.getElementById(`${section.id}-chart`),
     tip: document.getElementById(`${section.id}-tip`),
     lanes: [data.lane],
-    xDomain: data.lane.domain,
-    xLabel: "Gx (mT/m)",
-    cursorText: v => `${v.toFixed(2)} mT/m`,
+    xDomain: data.x_domain,
+    xLabel: "Time (ms)",
+    cursorText: v => `${v.toFixed(3)} ms`,
   });
 });
 ```
@@ -315,6 +362,7 @@ write_page(
     subtitle="A custom card",
     cards=[peak_grad_card(named)],
     extra_scripts=[open("peak_grad.js").read()],
+    extra_css=[".peak-note { color: var(--ink-2); }"],
 )
 ```
 
@@ -369,7 +417,8 @@ not use `laneChart`.
 ### Lane JSON format
 
 Each entry of `lanes` (and of a `Card`'s own `data`, when it holds lanes) is
-one of:
+one of the two kinds below. `markup.Lane` makes a line lane, and
+`markup.lanes_json` makes the JSON of a list of lanes.
 
 - a **line** lane (the default `kind`): `id`, `title`, `unit`, `color` (a
   `--<color>` CSS custom property name), `segments` (a list of line

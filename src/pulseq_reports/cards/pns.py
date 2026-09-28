@@ -9,7 +9,7 @@ from pathlib import Path
 import pypulseq as pp
 
 from pulseq_reports.extensions import refuse_rotations
-from pulseq_reports.markup import _table
+from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
 from pulseq_reports.pns import pns_prediction
 from pulseq_reports.seq_utils import NamedSequence
@@ -58,7 +58,7 @@ def _pns_html(p: dict) -> str:
         source = ""
         hardware = f"{p['hardware']} ({p['asc_file']})"
     axes = p["axis_peaks_percent"]
-    table = _table(
+    table = html_table(
         ["Quantity", "Value"],
         [
             ["Hardware", hardware],

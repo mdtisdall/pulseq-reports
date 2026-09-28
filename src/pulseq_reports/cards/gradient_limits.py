@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 from ..extensions import refuse_rotations
 from ..grad_limits import GradientLimits, gradient_limits
-from ..markup import _fmt, _table
+from ..markup import fmt, html_table
 from ..page import Card
 from ..seq_utils import NamedSequence
 
@@ -17,7 +17,7 @@ _NO_VALUE = "—"
 
 
 def _pct(value: float, limit: float) -> str:
-    return _fmt(value / limit * 100) if limit > 0 else _NO_VALUE
+    return fmt(value / limit * 100) if limit > 0 else _NO_VALUE
 
 
 def _vector_rms(axis_rms_mt_per_m: dict[str, float]) -> float:
@@ -39,14 +39,14 @@ def _file_rows(windowed: GradientLimits, file_label: str | None) -> list[list]:
         row = [] if file_label is None else [file_label if i == 0 else ""]
         row += [
             _AXIS_LABEL[axis],
-            _fmt(a.peak_mt_per_m),
+            fmt(a.peak_mt_per_m),
             _pct(a.peak_mt_per_m, limits.max_grad_mt_per_m),
-            _fmt(a.max_slew_t_per_m_per_s),
+            fmt(a.max_slew_t_per_m_per_s),
             _pct(a.max_slew_t_per_m_per_s, limits.max_slew_t_per_m_per_s),
-            _fmt(a.rms_mt_per_m),
+            fmt(a.rms_mt_per_m),
         ]
         if whole_rms is not None:
-            row.append(_fmt(whole_rms[axis]))
+            row.append(fmt(whole_rms[axis]))
         rows.append(row)
 
     # |G|, the three-axis vector. There is no vector slew (see GradientLimits), so that
@@ -56,14 +56,14 @@ def _file_rows(windowed: GradientLimits, file_label: str | None) -> list[list]:
     vector_row = [] if file_label is None else [""]
     vector_row += [
         "|G|",
-        _fmt(windowed.vector_peak_mt_per_m),
+        fmt(windowed.vector_peak_mt_per_m),
         _pct(windowed.vector_peak_mt_per_m, limits.max_grad_mt_per_m),
         _NO_VALUE,
         _NO_VALUE,
-        _fmt(_vector_rms({axis: windowed.axes[axis].rms_mt_per_m for axis in _AXES})),
+        fmt(_vector_rms({axis: windowed.axes[axis].rms_mt_per_m for axis in _AXES})),
     ]
     if whole_rms is not None:
-        vector_row.append(_fmt(_vector_rms(whole_rms)))
+        vector_row.append(fmt(_vector_rms(whole_rms)))
     rows.append(vector_row)
     return rows
 
@@ -119,7 +119,7 @@ def gradient_limits_card(
             reason_notes.append(f"{ns.name}: {windowed.reason}.")
         rows.extend(_file_rows(windowed, ns.name if multi else None))
 
-    body = _table(headers, rows)
+    body = html_table(headers, rows)
     for note in reason_notes:
         body += f'<p class="muted">{html.escape(note)}</p>'
     body += (

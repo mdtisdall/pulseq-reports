@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from pulseq_reports.markup import _table
+from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
 from pulseq_reports.seq_utils import NamedSequence
 
@@ -25,7 +25,7 @@ def definitions_card(seqs: Sequence[NamedSequence], card_id: str = "definitions"
     """
     if len(seqs) == 1:
         rows = [[k, _value_cell(v)] for k, v in seqs[0].seq.definitions.items()]
-        body = _table(["Definition", "Value"], rows)
+        body = html_table(["Definition", "Value"], rows)
     else:
         keys: list[str] = []
         seen: set[str] = set()
@@ -50,5 +50,5 @@ def definitions_card(seqs: Sequence[NamedSequence], card_id: str = "definitions"
                 ]
                 for key in keys
             ]
-            body = _table(headers, rows)
+            body = html_table(headers, rows)
     return Card(id=card_id, title="Definitions", body_html=body, data=None, script=None)

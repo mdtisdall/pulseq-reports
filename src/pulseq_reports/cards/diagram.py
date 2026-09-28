@@ -25,7 +25,7 @@ import pypulseq as pp
 
 from ..diagram_data import diagram_tables, encode_tables, lane_meta
 from ..extensions import refuse_rotations
-from ..markup import _zoom_controls
+from ..markup import zoom_controls
 from ..page import Card
 from ..pns import pns_levels_for
 from ..pns_levels import PnsLevels
@@ -191,7 +191,7 @@ def diagram_card(
     body = (
         f'<div class="controls" role="group" aria-label="Time window">{buttons}</div>\n'
         f'<div class="controls" role="group" aria-label="Lanes" id="{card_id}-groups">'
-        "</div>\n" + _zoom_controls(svg_id) + f'\n<div class="chart" id="{card_id}-chart">\n'
+        "</div>\n" + zoom_controls(svg_id) + f'\n<div class="chart" id="{card_id}-chart">\n'
         f'<svg id="{svg_id}" tabindex="0" role="img"\n'
         '  aria-label="Sequence diagram: RF magnitude and phase, ADC, Gx, Gy and Gz against '
         'time"></svg>\n'

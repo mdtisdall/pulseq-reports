@@ -3,7 +3,7 @@
 import html
 from collections.abc import Sequence
 
-from ..markup import _table
+from ..markup import html_table
 from ..page import Card
 from ..seq_utils import NamedSequence
 from ..waveforms import TimeWindow, block_rows
@@ -15,7 +15,7 @@ def _note(total: int, max_rows: int) -> str:
 
 
 def _rows_table(rows: list[dict]) -> str:
-    return _table(
+    return html_table(
         ["Block", "Start (ms)", "Duration (ms)", "Events"],
         [[r["block"], f"{r['start_ms']:g}", f"{r['duration_ms']:g}", r["events"]] for r in rows],
     )

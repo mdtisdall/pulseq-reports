@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import pypulseq as pp
 
-from .markup import Lane, _fmt, _lanes_json, _points
+from .markup import Lane, _points, fmt, lanes_json
 from .seq_utils import GAMMA, NamedSequence, gradient_points
 
 _AXES = ("gx", "gy", "gz")
@@ -178,12 +178,12 @@ def _value_domain(peak: float, symmetric: bool) -> tuple[list[float], list[float
             [-1.1 * peak, 1.1 * peak],
             [-peak, 0.0, peak],
             [
-                _fmt(-peak),
+                fmt(-peak),
                 "0",
-                _fmt(peak),
+                fmt(peak),
             ],
         )
-    return [0.0, 1.1 * peak], [0.0, peak], ["0", _fmt(peak)]
+    return [0.0, 1.1 * peak], [0.0, peak], ["0", fmt(peak)]
 
 
 def _value_lane(lane_id, title, unit, color, segments, symmetric, has_events, fill=0.0) -> Lane:
@@ -306,7 +306,7 @@ def file_lanes(
         # One zero-padded segment across the blocks in the range.
         return [[[lo_ms, 0.0], *[p for part in parts for p in part], [hi_ms, 0.0]]]
 
-    return _lanes_json(_lanes(rf_mag, rf_phase, adc_windows, grads, joined))
+    return lanes_json(_lanes(rf_mag, rf_phase, adc_windows, grads, joined))
 
 
 def first_adc_window(seqs: Sequence[NamedSequence], file_index: int = 0) -> TimeWindow:

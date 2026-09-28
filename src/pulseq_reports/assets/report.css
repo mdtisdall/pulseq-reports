@@ -77,11 +77,4 @@ button[aria-pressed="true"] { background: var(--ink); color: var(--surface); bor
 .tip .key { display: inline-block; width: 10px; height: 2px; margin-right: 6px;
   vertical-align: middle; }
 .muted { color: var(--muted); }
-#pulse-profiles .pulse-block { margin-top: 20px; }
-#pulse-profiles h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--ink-2); }
 details summary { cursor: pointer; font-weight: 600; }
-#column-cross-section table { margin-bottom: 16px; }
-#column-chart { aspect-ratio: 570 / 580; max-width: 620px; width: 100%; margin: 12px auto 0; }
-#column-canvas { position: absolute; }
-#column-axes { position: absolute; inset: 0; width: 100%; height: 100%; }
-.chart .nominal { fill: none; stroke: var(--axis); stroke-width: 1.5; stroke-dasharray: 5,4; }
