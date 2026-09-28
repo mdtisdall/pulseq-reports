@@ -205,11 +205,19 @@ to 10 s or less for the exact values." to say so. For a file with a block
 that is not a whole number of gradient-raster samples, there is no exact
 view at any zoom, and the status line says so instead.
 
+The Gradients group also has a |G| lane after Gz: the magnitude of the
+gradient vector, `sqrt(Gx^2 + Gy^2 + Gz^2)` in mT/m, with each axis read from
+its block's own event (0 outside it). It always shows the exact minimum and
+maximum of |G| in each time bin of the chart, at every zoom, because |G| is
+not a straight line between the corner points of the gradients. It needs no
+argument and no data of its own: the browser computes it from the diagram
+tables.
+
 Above the chart, after the window buttons, one toggle button for each lane
-group shows or hides that group: RF, ADC, Gradients, and PNS when at least
-one file has PNS data. A hidden group costs no computation: hiding the PNS
-group, for example, stops the PNS lane from being computed on the next
-render.
+group shows or hides that group: RF, ADC, Gradients (Gx, Gy, Gz and |G|), and
+PNS when at least one file has PNS data. A hidden group costs no computation:
+hiding the PNS group, for example, stops the PNS lane from being computed on
+the next render.
 
 `pns=True` or a path costs the SAFE model's own time: about 3 s of Python
 for a 370 s file, about 100 s at 10^7 blocks. The stored level added to the
@@ -219,8 +227,7 @@ The diagram, PNS, RF exposure, gradient limits and gradient spectrum cards
 work for a file of up to 10^7 blocks. The time and the added memory of each,
 measured on 2026-09-28 (a Mac with 10 cores and 64 GB,
 `scripts/cards_scale.py`, synthetic repeating sequences; building the
-sequence in pypulseq takes longer than any card at 10^7 blocks: about 90 s and
-3.8 GB):
+sequence of 10^7 blocks in pypulseq itself takes about 90 s and 3.8 GB):
 
 | Card | 370 s file (4 × 10^4 blocks) | 10^7 blocks (3.3 h) |
 |---|---|---|
@@ -381,7 +388,7 @@ one of:
 | `cards.spectrum.spectrum_card(seqs, resonances=PRISMA_AS82_RESONANCES, scanner_label=...)` | The gradient spectrum of each axis and their root-sum-of-squares, against a gradient coil's acoustic resonance bands. |
 | `cards.pns.pns_card(seq, gradient_asc=None)` | The SAFE-model PNS prediction summary for one sequence: a status line, a table of the peaks (all axes, Gx, Gy, Gz) and the hardware note. No chart: the stimulation over time is `diagram_card`'s PNS lane. |
 | `cards.gradient_limits.gradient_limits_card(seqs, window=None, limits=None)` | Peak amplitude, peak slew rate and RMS amplitude of each logical axis and of the three-axis vector, as a percent of the hardware limits. |
-| `cards.diagram.diagram_card(seqs, windows, pns=False)` | RF magnitude and phase, the ADC gate, Gx, Gy, Gz and, when `pns` is not `False`, a PNS lane, against time, with one button for each window. |
+| `cards.diagram.diagram_card(seqs, windows, pns=False)` | RF magnitude and phase, the ADC gate, Gx, Gy, Gz, \|G\| and, when `pns` is not `False`, a PNS lane, against time, with one button for each window and one for each lane group. |
 | `cards.blocks.blocks_card(seqs, windows=None, max_rows=500)` | A collapsed, block-by-block table: block id, start, duration and events. |
 
 All eight functions take `card_id` with a default, so a page can hold two

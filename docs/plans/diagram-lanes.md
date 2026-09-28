@@ -3,9 +3,10 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: not started. The plan was written on 2026-09-24. It was revised on
-2026-09-27 for the fork branch `pns-chunked` (section 2.6): the fork work of
-phase 1 is done, and phase 1 is now only the pin.
+Status: complete (2026-09-28). The plan was written on 2026-09-24. It was
+revised on 2026-09-27 for the fork branch `pns-chunked` (section 2.6): the fork
+work of phase 1 was done, and phase 1 was only the pin. The results are in
+section 8.
 
 ## 1. Goal
 
@@ -794,3 +795,95 @@ Workers inside a phase:
      on long files.
    Answered on 2026-09-27: the block-local method (decision 12, section
    4.1, item 3, task 2.0).
+
+## 8. Results (2026-09-28)
+
+### 8.1 Pull requests
+
+| Phase | PR | Content |
+|---|---|---|
+| 0 | #32 | `TESTS.md` sections 2.24 to 2.26 |
+| 1 | #31 | The pin of the fork branch `pns-chunked` (`20b9e5e`) |
+| 2 | #39 | `GradientSampler.block_samples` and `pns_levels.py` |
+| 3 | #33 | `assets/pns_lanes.js`: exact views, the pyramid, `lanesFor` |
+| 4 | #42 | The PNS lane in the diagram, lane groups, the PNS summary card, the golden test |
+| 5 | #44 | The \|G\| lane |
+| 6 | this PR | `scripts/cards_scale.py --pns-lanes`, the scale check, `docs/usage.md`, this section |
+
+Plan changes during the work: #30 (the fork branch `pns-chunked`), #34
+(questions 5 and 6), #35 (the gyromagnetic ratio, decision 14), #40
+(questions 1 to 3).
+
+### 8.2 Fork commits
+
+`e476200` (`pns-lfilter`: the SAFE filter as a recursion) and `20b9e5e`
+(`pns-chunked`: `calc_pns` in chunks, and `_safe_gwf_to_pns_chunk`), on
+upstream `master` `f2c582b`. Neither is proposed upstream yet (`TODO.md`,
+"Move from the pypulseq fork to a pypulseq release").
+
+### 8.3 Decisions and findings during the work
+
+1. Decisions 10 to 17 of section 2.2 were made during the work (the fork
+   branch, the private chunk function, block-local samples, the 10 s exact
+   view with the factor 2 of section 4.2, `gradScale`, the summary-only
+   `PnsPrediction`, `pns=False`, and phase 5).
+2. `PnsLanes.lanesFor` gets the lane object (`meta`) as an argument, and its
+   `gap` flag means only "the stored level is coarser than half a display
+   bin". A file that is not on the gradient raster has no exact view; the card
+   script reads `model.onRaster` for that.
+3. The exact view is about 7 times faster than the prototype: about 11 ns for
+   each sample, so an exact view of 10 s takes 11 to 15 ms (95th percentile).
+   This made decision 13 possible.
+4. `scripts/vb_parity.py` accepts one more PNS difference: the summary card has
+   no chart, so the script compares the data without `lanes`, `end_ms` and
+   `peak_tr_ms`, and the HTML up to the end of the table of peaks. Parity runs
+   need `--with-editable` of the fork checkout too: with vb-pulseq alone, uv
+   installs pypulseq from PyPI over the pin.
+5. The |G| lane covers each whole block, with |G| = 0 where no gradient
+   event plays (a block can be longer than its gradients). A block edge is a
+   breakpoint of its own only when no event point is within 1e-9 s of it, so a
+   gradient that continues into the next block shows no false 0 at the border.
+
+### 8.4 Measurements (task 6.1)
+
+What the PNS lane adds to the diagram card (`scripts/cards_scale.py --card
+diagram`, with and without `--pns-lanes`, each run in a fresh process, a Mac
+with 10 cores and 64 GB):
+
+| File | Python time added | Peak RSS added | Page size added |
+|---|---|---|---|
+| ex-vivo (370 s) | 2.8 s | 15 MB | 0.46 MB |
+| repeating, 370 s (4 × 10^4 blocks) | 2.8 s | 13 MB | 0.55 MB |
+| repeating, 10^6 blocks (1,198 s) | 10.5 s | 10 MB | 0.05 MB |
+| worst, 10^5 blocks (140 s) | 1.7 s | 16 MB | 0.17 MB |
+| repeating, 10^7 blocks (11,980 s) | 98 s | 23 MB | 0.41 MB |
+
+In the browser (Node, the same engine as Chrome; 95th percentile of 100 random
+views):
+
+| File | PnsLanes decode | PNS exact view of 10 s | PNS pyramid render | GLanes decode | \|G\| render |
+|---|---|---|---|---|---|
+| ex-vivo | 15 ms | 15 ms | 0.12 ms | 25 ms | 3.4 ms |
+| 10^6 blocks | 146 ms | 14 ms | 0.12 ms | 48 ms | 3.9 ms |
+| 10^7 blocks | 1.3 s | 11 ms | 0.10 ms | 0.45 s | 4.2 ms |
+
+Browser check of a page with the diagram card (`pns=True`) for 10^7 repeating
+blocks (0.94 MB), served on 127.0.0.1 (task 6.1):
+
+- The first chart appears 3.7 s after the navigation starts. Of this, the
+  PNS lane adds 1.2 s (`PnsLanes.decode` 1.21 s, and 7 ms to decompress its
+  stored level), and the |G| lane 0.23 s (`GLanes.decode`); the tables and
+  `SeqLanes.decode` take 0.86 s. Budget: at most 3 s added.
+- One render of the PNS and |G| lanes together, 95th percentile of 20 random
+  views: 5 ms for 1 s, 25 ms for 10 s (both exact), 2.7 ms for the whole file.
+  Budget: at most 50 ms.
+- The windows: "First ADC" and "Peak-PNS TR" are exact; the whole file shows
+  the PNS lane in bins of 6.3 s (the pyramid level with bins of at most half a
+  display bin). The Gradients button hides and shows Gx, Gy, Gz and |G|. No
+  console error.
+
+A file of up to 10^7 blocks has no gap (section 4.2), so `TODO.md` gets no item
+for a faster exact view (task 6.2).
+
+Every budget of section 2.4 passes.
+

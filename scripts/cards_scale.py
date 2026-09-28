@@ -6,7 +6,7 @@ memory. Run it in the devShell from the repository root:
 
     nix develop --command uv run python scripts/cards_scale.py \
         --card pns|rf|limits|spectrum|diagram|all --blocks N --case repeating|worst \
-        [--tr-s T] --out DIR
+        [--tr-s T] [--pns-lanes] --out DIR
 
 `--card`: which card to measure. `pns` is `cards.pns.pns_card`, `rf` is
 `cards.rf_exposure.rf_exposure_card`, `limits` is `cards.gradient_limits.gradient_limits_card`
@@ -61,11 +61,19 @@ For each card run, it records (as JSON, and prints a one-line summary):
   the card, minus the RSS after the sequence is built
   (`peak_rss_after_card_bytes - build_rss_bytes`). `null` when `raised_peak` is false:
   then the card did not grow the process's peak, and the added RSS is not measured.
+- `card_bytes`: the size of the card in the page: its body HTML plus its data as JSON
+  (UTF-8 bytes; the data holds the base64 of the compressed tables and levels).
+- `pns_lanes`: whether `--pns-lanes` was given.
 - `python_version`, `numpy_version`, `pypulseq_version`.
 
+`--pns-lanes`: the diagram card is called with `pns=True` (pypulseq's example hardware),
+so it adds the PNS lane (`docs/plans/diagram-lanes.md`); the other cards do not change.
+Its time and `card_bytes` minus those of a run without `--pns-lanes` are what the PNS lane
+adds (section 2.4 of that plan).
+
 It writes one JSON file for each card run to `--out`, named
-`cards-scale-<card>-<case>-<blocks>.json` (pretty-printed; `blocks` is the requested
-`--blocks`). With `--card all`, it also writes the five results, keyed by card name, to
+`cards-scale-<card>-<case>-<blocks>.json`, or `cards-scale-<card>-pns-lanes-<case>-<blocks>.json`
+with `--pns-lanes` (pretty-printed; `blocks` is the requested `--blocks`). With `--card all`, it also writes the five results, keyed by card name, to
 `cards-scale-all-<case>-<blocks>.json` in the same directory.
 
 Example, for a 370 s protocol of about 4e4 blocks:
@@ -97,6 +105,7 @@ from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.cards.rf_exposure import rf_exposure_card
 from pulseq_reports.cards.spectrum import spectrum_card
+from pulseq_reports.page import Card
 from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import first_adc_window, full_window
 
@@ -158,26 +167,32 @@ def resolve_tr_margin(diagram_scale: types.ModuleType, case: str, tr_s: float) -
     return _round_to_raster(_round_to_raster(tr_s) - used)
 
 
-def _run_pns(named: NamedSequence) -> None:
-    pns_card(named)
+def _run_pns(named: NamedSequence, pns_lanes: bool) -> Card:
+    return pns_card(named)
 
 
-def _run_rf(named: NamedSequence) -> None:
-    rf_exposure_card([named])
+def _run_rf(named: NamedSequence, pns_lanes: bool) -> Card:
+    return rf_exposure_card([named])
 
 
-def _run_limits(named: NamedSequence) -> None:
-    gradient_limits_card([named])
+def _run_limits(named: NamedSequence, pns_lanes: bool) -> Card:
+    return gradient_limits_card([named])
 
 
-def _run_spectrum(named: NamedSequence) -> None:
-    spectrum_card([named])
+def _run_spectrum(named: NamedSequence, pns_lanes: bool) -> Card:
+    return spectrum_card([named])
 
 
-def _run_diagram(named: NamedSequence) -> None:
+def _run_diagram(named: NamedSequence, pns_lanes: bool) -> Card:
     seqs = [named]
     windows = [first_adc_window(seqs), full_window(seqs)]
-    diagram_card(seqs, windows)
+    return diagram_card(seqs, windows, pns=pns_lanes)
+
+
+def _card_bytes(card: Card) -> int:
+    """The size of `card` in the page: its body HTML and its data as JSON (UTF-8)."""
+    data = b"" if card.data is None else json.dumps(card.data).encode("utf-8")
+    return len(card.body_html.encode("utf-8")) + len(data)
 
 
 CARD_RUNNERS = {
@@ -189,7 +204,9 @@ CARD_RUNNERS = {
 }
 
 
-def run(card: str, blocks: int, case: str, tr_s: float | None, out_dir: Path) -> dict:
+def run(
+    card: str, blocks: int, case: str, tr_s: float | None, out_dir: Path, pns_lanes: bool = False
+) -> dict:
     diagram_scale = _load_diagram_scale()
     n_trs = blocks // diagram_scale.TR_BLOCKS
     if n_trs < 1:
@@ -214,7 +231,7 @@ def run(card: str, blocks: int, case: str, tr_s: float | None, out_dir: Path) ->
     named = NamedSequence(f"cards-scale-{card}-{case}-{blocks}", seq)
 
     card_start = time.perf_counter()
-    CARD_RUNNERS[card](named)
+    built = CARD_RUNNERS[card](named, pns_lanes)
     card_s = time.perf_counter() - card_start
     peak_rss_after_card_bytes = diagram_scale._peak_rss_bytes()
 
@@ -237,13 +254,15 @@ def run(card: str, blocks: int, case: str, tr_s: float | None, out_dir: Path) ->
         "peak_rss_after_card_bytes": peak_rss_after_card_bytes,
         "raised_peak": raised_peak,
         "added_rss_bytes": added_rss_bytes,
+        "card_bytes": _card_bytes(built),
+        "pns_lanes": pns_lanes,
         "python_version": platform.python_version(),
         "numpy_version": np.__version__,
         "pypulseq_version": pp.__version__,
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    json_path = out_dir / f"cards-scale-{card}-{case}-{blocks}.json"
+    json_path = out_dir / _json_name(card, case, blocks, pns_lanes)
     json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     result["json_path"] = str(json_path)
 
@@ -257,7 +276,14 @@ def run(card: str, blocks: int, case: str, tr_s: float | None, out_dir: Path) ->
     return result
 
 
-def _run_all(blocks: int, case: str, tr_s: float | None, out_dir: Path) -> dict:
+def _json_name(card: str, case: str, blocks: int, pns_lanes: bool) -> str:
+    lanes = "-pns-lanes" if pns_lanes else ""
+    return f"cards-scale-{card}{lanes}-{case}-{blocks}.json"
+
+
+def _run_all(
+    blocks: int, case: str, tr_s: float | None, out_dir: Path, pns_lanes: bool = False
+) -> dict:
     """Runs each of `CARD_NAMES` as a fresh subprocess of this script, with the same
     `--blocks`, `--case`, `--tr-s` and `--out`, and one `--card`, so that the peak RSS
     of one card does not hide another. Reads back each subprocess's own JSON file and
@@ -278,13 +304,15 @@ def _run_all(blocks: int, case: str, tr_s: float | None, out_dir: Path) -> dict:
         ]
         if tr_s is not None:
             cmd += ["--tr-s", str(tr_s)]
+        if pns_lanes:
+            cmd.append("--pns-lanes")
         print(f"---- {card}: running in a fresh process ----", file=sys.stderr)
         subprocess.run(cmd, check=True)
-        json_path = out_dir / f"cards-scale-{card}-{case}-{blocks}.json"
+        json_path = out_dir / _json_name(card, case, blocks, pns_lanes)
         combined[card] = json.loads(json_path.read_text(encoding="utf-8"))
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    combined_path = out_dir / f"cards-scale-all-{case}-{blocks}.json"
+    combined_path = out_dir / _json_name("all", case, blocks, pns_lanes)
     combined_path.write_text(json.dumps(combined, indent=2), encoding="utf-8")
     print(f"all: wrote {combined_path}")
     return combined
@@ -298,6 +326,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--tr-s", type=float, default=None, help="a longer TR (s), rounded to 10 us"
     )
+    parser.add_argument(
+        "--pns-lanes", action="store_true", help="the diagram card with pns=True (the PNS lane)"
+    )
     parser.add_argument("--out", type=Path, required=True, help="output directory")
     return parser.parse_args(argv)
 
@@ -305,9 +336,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.card == "all":
-        _run_all(args.blocks, args.case, args.tr_s, args.out)
+        _run_all(args.blocks, args.case, args.tr_s, args.out, args.pns_lanes)
         return 0
-    result = run(args.card, args.blocks, args.case, args.tr_s, args.out)
+    result = run(args.card, args.blocks, args.case, args.tr_s, args.out, args.pns_lanes)
     print(json.dumps(result, indent=2))
     return 0
 
