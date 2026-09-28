@@ -4175,6 +4175,209 @@ does not re-derive this by a separate brute force; it relies on the
 function under test elsewhere in `seq_lanes.js` doing the addition section
 4.4 describes.
 
+#### `test_sequence_view_num_blocks_and_duration_s`
+
+**Checks:** `sequenceView(model).numBlocks` and `.durationS` are the same
+values the model already has (`model.numBlocks`, `model.durationS`), not
+recomputed.
+
+**How:** The test builds the hand model (`buildHandModel`, 5 blocks, end of
+file 0.01 s) and checks `view.numBlocks` equals both `model.numBlocks` and
+the literal `5`, and `view.durationS` equals both `model.durationS` and the
+literal `0.01`.
+
+**Assumptions:** None beyond the file's assumptions (section 2.19 preamble).
+
+#### `test_sequence_view_block_at_and_block_start_match_seq_lanes`
+
+**Checks:** `view.blockAt(tS)` and `view.blockStart(i)` return exactly what
+`SeqLanes.blockAt(model, tS)` and `SeqLanes.blockStart(model, i)` return, for
+several times (before the file, at each block start, inside a block, at and
+past the end of file) and for every block of the hand model.
+
+**How:** The test builds the hand model and compares `view.blockAt(t)`
+against `SeqLanes.blockAt(model, t)` for `t` in
+`[-0.001, 0, 0.0019, 0.002, 0.005, 0.0075, 0.0086, 0.01, 0.02]`, and
+`view.blockStart(i)` against `SeqLanes.blockStart(model, i)` for `i` in `[0,
+5)`, with `assert.equal` (exact, no tolerance).
+
+**Assumptions:** None beyond the file's assumptions. This test does not
+re-derive the expected block times (that is
+`test_block_start_is_a_sequential_sum_from_zero_exactly` and the `blockAt`
+tests above); it only checks that `sequenceView` forwards to the same
+functions, byte for byte.
+
+#### `test_sequence_view_block_duration`
+
+**Checks:** `view.blockDuration(i)` equals
+`tables.durations[tables.duration_index[i]]`, for every block.
+
+**How:** The test builds the hand model and, for each block `i` in `[0, 5)`,
+compares `view.blockDuration(i)` against `tables.durations[tables.duration_index[i]]`
+read directly from the hand-built tables.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_sequence_view_events_for_blocks_with_and_without_each_event`
+
+**Checks:** `view.events(i)` returns `{rf, gx, gy, gz, adc}`, the dense event
+index of each lane at block `i` (0 = none), for a block with an event on
+each lane and for a block with none.
+
+**How:** The test builds the hand model, whose 5 blocks each carry exactly
+one kind of event (block0 RF, block1 gx, block2 gy, block3 ADC) except
+block4, which is empty, and checks `view.events(i)` against the literal
+object for each of the 5 blocks (`assert.deepEqual`). Every call also
+exercises the lanes that are absent from that block (gz is absent from every
+block; each lane other than the block's own event is 0 at least once).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_sequence_view_grad_event_delay_and_exact_slices`
+
+**Checks:** `view.gradEvent(k)` returns `{delayS, offsetsS, values}` with
+`delayS` equal to `grad_delay[k - 1]`, and `offsetsS`/`values` equal
+(element for element) to the pool slice of length `grad_n[k - 1]` starting
+at `grad_offset_at[k - 1]`/`grad_at[k - 1]`.
+
+**How:** The test builds the hand model and reads `view.gradEvent(1)` (the
+trapezoid used as gx in block1: delay 0.0001, offsets
+`[0, 0.0005, 0.0015, 0.002]`, values `[0, 10, 10, 0]` mT/m, the same event
+`test_exact_lanes_trapezoid_gradient_block` uses) and `view.gradEvent(2)`
+(the arbitrary gradient used as gy in block2: delay 0.00005, offsets
+`[0, 0.0004, 0.0012, 0.002]`, values `[0, -3, -6, 0]` mT/m, the same event
+`test_exact_lanes_arbitrary_gradient_block` uses), and compares each field
+with `assert.equal`/`assert.deepEqual` (`Array.from` the typed-array fields
+first, so `deepEqual` compares plain values).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_sequence_view_grad_event_offsets_are_subarray_views_not_copies`
+
+**Checks:** `offsetsS` and `values` are views over the model's own pool
+arrays (`TypedArray.prototype.subarray`), not copies: they share the
+underlying `ArrayBuffer`, and a write through one is visible in the table
+the model was decoded from.
+
+**How:** The test builds the hand model, reads `view.gradEvent(1)`, checks
+`g1.offsetsS.buffer === tables.grad_offset.buffer` and
+`g1.values.buffer === tables.grad_value.buffer`, then writes a new value
+into `g1.values[1]` and checks that `tables.grad_value[1]` changed to match,
+before restoring the original value (so later tests of the same model
+object, if any ran after this one, would see the pool unchanged; in this
+file each test builds its own model, so this is a defensive habit, not a
+requirement of another test).
+
+**Assumptions:** None beyond the file's assumptions. This test documents
+behavior that the spec of `docs/plans/rf-profiles.md` section 4.1 calls out
+explicitly ("do not change them"): it exists to show that the views are live
+slices, which is exactly why a caller must not change them, not to encourage
+mutation.
+
+#### `test_sequence_view_grad_event_offsets_shared_across_events`
+
+**Checks:** Two different gradient events whose `grad_offset_at`/`grad_n`
+are equal (the pool position that `diagram_data._Pool.add` gives two
+byte-equal offset arrays) give `offsetsS` views with the same contents, one
+for each event, while their `delayS` and `values` differ normally.
+
+**How:** The test builds `buildRandomModel(5, 1)`, whose fixed grad event
+tables (independent of `nBlocks` and the seed) give all three gradient
+events `grad_offset_at = 0` and `grad_n = 4`, i.e. the same slice of the
+offset pool. It checks `tables.grad_offset_at` is `[0, 0, 0]`, then reads
+`view.gradEvent(1)`, `view.gradEvent(2)` and `view.gradEvent(3)` and checks
+that all three `offsetsS` deep-equal `[0, 1e-4, 6e-4, 7e-4]` (the offset
+pool's only slice), while `delayS` is `0`, `5e-5` and `1e-4` and `values` is
+`[0, 15, 15, 0]`, `[0, -22, -22, 0]` and `[0, 9, 9, 0]` respectively (each
+event's own slice of the value pool, at `grad_at` 0, 4 and 8).
+
+**Assumptions:** `buildRandomModel`'s event tables (`grad_delay`, `grad_n`,
+`grad_offset_at`, `grad_at`, `grad_offset`, `grad_value`, and similarly the
+RF tables) are fixed literals in the helper, not derived from its `nBlocks`
+or `seed` parameters; only the per-block columns (`duration_index`, `rf`,
+`gx`, `gy`, `gz`, `adc`) and the checkpoints depend on them. This is read
+directly from `buildRandomModel`'s source in this file, not documented
+elsewhere.
+
+#### `test_sequence_view_grad_hz_per_value`
+
+**Checks:** `view.gradHzPerValue` and the exported constant
+`SeqLanes.GRAD_HZ_PER_VALUE` both equal `42.576e6 * 1e-3`, the inverse of the
+factor `diagram_data.diagram_tables` uses to store gradient values in mT/m
+(`Hz/m / seq_utils.GAMMA * 1e3`, with `GAMMA = 42.576e6` Hz/T).
+
+**How:** The test builds the hand model and checks
+`view.gradHzPerValue === 42.576e6 * 1e-3` and
+`SeqLanes.GRAD_HZ_PER_VALUE === 42.576e6 * 1e-3` with `assert.equal`.
+
+**Assumptions:** The factor `42.576e6 * 1e-3` is taken from `seq_utils.GAMMA`
+and from `diagram_data.diagram_tables`'s `amp / GAMMA * 1e3` (read in this
+task's context, not re-derived from a Python run); the test pins
+`GRAD_HZ_PER_VALUE` to that same arithmetic expression, so a future change to
+either side that breaks the relationship fails this test rather than only
+showing up as a scale error in a chart.
+
+#### `test_sequence_view_adc_event_and_rf_delay`
+
+**Checks:** `view.adcEvent(k)` returns
+`{delayS: adc_delay[k - 1], lengthS: adc_length[k - 1]}`, and
+`view.rfDelayS(k)` returns `rf_delay[k - 1]`.
+
+**How:** The test builds the hand model (one ADC event: delay 0.00002,
+length 0.0006, the same event `test_exact_lanes_adc_window` uses; one RF
+event: delay 0.0002, the same event `test_exact_lanes_rf_pulse_with_phase`
+uses) and checks `view.adcEvent(1)` deep-equals
+`{delayS: 0.00002, lengthS: 0.0006}` and `view.rfDelayS(1)` equals `0.0002`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_sequence_view_block_index_out_of_range_throws`
+
+**Checks:** `blockStart`, `blockDuration` and `events` each throw a
+`RangeError` for a block index `i` outside `[0, numBlocks)`.
+
+**How:** The test builds the hand model (`numBlocks = 5`) and, for `i` in
+`[-1, 5, 100]`, checks with `assert.throws(..., RangeError)` that
+`view.blockStart(i)`, `view.blockDuration(i)` and `view.events(i)` each
+throw.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_sequence_view_event_index_out_of_range_throws`
+
+**Checks:** `gradEvent`, `adcEvent` and `rfDelayS` each throw a `RangeError`
+for an event index `k` outside `[1, count]`, where `count` is the length of
+that event's own table (`grad_n.length`, `adc_delay.length`,
+`rf_delay.length`).
+
+**How:** The test builds the hand model, whose event counts are 2 gradient
+events, 1 ADC event and 1 RF event. For `k` in `[0, -1, 3]` it checks
+`view.gradEvent(k)` throws `RangeError` (3 is one past the 2 gradient
+events); for `k` in `[0, -1, 2]` it checks that both `view.adcEvent(k)` and
+`view.rfDelayS(k)` throw `RangeError` (2 is one past the single ADC and RF
+event of this model).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_sequence_view_is_frozen`
+
+**Checks:** `sequenceView`'s return value is frozen (`Object.isFrozen`), and
+assigning a new value to one of its properties, in strict mode, throws a
+`TypeError` and leaves the property unchanged.
+
+**How:** The test builds the hand model, checks
+`Object.isFrozen(view) === true`, then checks that an arrow function whose
+body opens with a `"use strict"` directive and assigns `view.numBlocks = 999`
+throws `TypeError` (`assert.throws`), and finally checks `view.numBlocks`
+still equals `model.numBlocks`.
+
+**Assumptions:** An arrow function with an empty parameter list may open its
+body with a `"use strict"` directive (the restriction on directive
+prologues applies only to a non-simple parameter list, which an empty list
+is not), so the assignment inside it runs in strict mode and a write to a
+frozen object's own property throws, per the JavaScript specification, not
+per any behavior specific to this file.
+
 ### 2.20 Sequence lanes against Python (`test_seq_lanes_golden.py`)
 
 `test_seq_lanes_golden.py` is the golden test of task 4.4 of
@@ -5811,7 +6014,210 @@ whose every point's value is 0.
 
 ### 2.28 Messages between cards (`test_messages.js`)
 
-Phase 1 of `docs/plans/rf-profiles.md` adds the entries.
+`lane_chart.js`'s `createMessageBus` builds the page-level publish/subscribe bus of
+`docs/plans/rf-profiles.md`, section 4.1: `publish(topic, message)` keeps the last
+message of each `(topic, source)` pair and fans it out to every handler of that topic
+in subscription order; `subscribe(topic, handler, {replay})` returns an unsubscribe
+function and, by default, replays the kept messages of a topic to a new handler, in
+the order those pairs were first published. `PulseqReport.publish` and
+`PulseqReport.subscribe` are the one bus the page itself uses; `PulseqReport.createMessageBus`
+is also exported, so a test builds its own private bus instead of sharing state with
+any other test.
+
+The tests load `lane_chart.js` directly with Node's `require`, after setting
+`global.ChartMath` (the same way a browser page loads `chart_math.js` before
+`lane_chart.js`), and use `node:test` and `node:assert/strict`, with no browser or
+DOM. Every test but one builds a private bus with `createMessageBus`, passing its own
+`onError` collector instead of relying on `console.error`, so a test never depends on
+console output. The one exception, `test_pulseq_report_publish_and_subscribe_share_one_page_level_bus`,
+uses `PulseqReport.publish`/`PulseqReport.subscribe` themselves, on a topic name no
+other test in the file uses, because that singleton bus, unlike one from
+`createMessageBus`, is shared by every test in the same Node process.
+
+#### `test_subscribe_replays_kept_messages_in_publication_order`
+
+**Checks:** A new subscriber with the default `replay: true` is called at once with
+each kept message of a topic, in the order those `(topic, source)` pairs were first
+published.
+
+**How:** Publishes `{source: "a", v: 1}` then `{source: "b", v: 2}` on one topic of a
+fresh bus, before any subscriber exists, then subscribes and checks the handler's
+calls, in order, against `[["a", 1], ["b", 2]]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_replacing_a_source_keeps_its_original_position_in_replay_order`
+
+**Checks:** Publishing again from a source that already published to a topic
+replaces its kept message with the new value, but does not move its position in
+replay order: the position comes from the pair's first publication, not its last.
+
+**How:** Publishes `{source: "a", v: 1}`, then `{source: "b", v: 1}`, then
+`{source: "a", v: 2}` on one topic, subscribes, and checks the replay order is
+`[["a", 2], ["b", 1]]`: "a" first, since it published first, but with its updated
+value.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_subscribe_with_replay_false_does_not_replay`
+
+**Checks:** `{replay: false}` skips the replay of kept messages, but the handler
+still receives a message published after it subscribes.
+
+**How:** Publishes one message, subscribes with `{replay: false}` and checks nothing
+was delivered yet, then publishes a second message and checks the handler received
+exactly that one.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_handlers_run_in_subscription_order`
+
+**Checks:** The handlers of one topic run in the order in which they subscribed.
+
+**How:** Subscribes three handlers, each pushing its own label onto a shared array,
+to one topic in a fixed order, publishes one message, and checks the array equals
+that same order.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_a_throwing_handler_does_not_stop_the_others_or_the_publisher`
+
+**Checks:** A handler that throws is reported to `onError` (with the error, the
+topic and the message) and does not stop the other handlers of the same delivery,
+and does not make `publish` itself throw.
+
+**How:** Subscribes a handler that records its call and then throws, and a second
+handler that only records its call, to a bus built with an `onError` collector;
+publishes one message inside `assert.doesNotThrow`, then checks both handlers ran,
+in order, and that `onError` was called exactly once, with the thrown error, the
+topic and the message's source.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_publish_inside_a_handler_is_delivered_after_the_current_delivery_ends`
+
+**Checks:** A `publish` made from inside a handler is queued and delivered only
+after every handler of the topic has finished running for the message that
+triggered it, never nested inside that delivery.
+
+**How:** Subscribes two handlers to one topic; the first, on the message with
+`v: 1`, publishes a second message (`v: 2`) to the same topic before returning.
+Publishes the first message and checks the recorded call order is
+`["first:1", "second:1", "first:2", "second:2"]`: both handlers see `v: 1` before
+either sees `v: 2`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_unsubscribe_stops_future_deliveries`
+
+**Checks:** The function `subscribe` returns stops that handler from being called by
+any later `publish`.
+
+**How:** Subscribes a handler with `{replay: false}`, publishes one message, calls
+the returned unsubscribe function, publishes a second message, and checks the
+handler's recorded values are only `[1]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_unsubscribe_during_a_delivery_stops_the_rest_of_that_delivery`
+
+**Checks:** A handler unsubscribed by an earlier handler of the same delivery is not
+called for the rest of that delivery, while a handler subscribed before the delivery
+started, and not unsubscribed, still runs.
+
+**How:** Subscribes three handlers to one topic in order: the first unsubscribes the
+second (using its own unsubscribe function) before returning; the second and third
+each record their call. Publishes one message and checks the recorded order is
+`["first", "third"]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_unsubscribe_twice_does_nothing`
+
+**Checks:** Calling an unsubscribe function a second time is a no-op: it neither
+throws nor removes a different, still-subscribed handler.
+
+**How:** Subscribes two handlers with `{replay: false}`; unsubscribes the first,
+then calls its unsubscribe function again inside `assert.doesNotThrow`; publishes
+one message and checks the first handler received nothing while the second still
+received it.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_publish_freezes_the_message`
+
+**Checks:** `publish` freezes the message object (`Object.isFrozen`), both for the
+object the publisher passed in and for the same object as a subscriber receives it,
+and an assignment to one of its fields is silently ignored, not applied.
+
+**How:** Publishes a plain object, checks `Object.isFrozen` on it directly and on
+the object a new subscriber then receives (`replay: true`), then assigns to one of
+its fields and checks the value is unchanged.
+
+**Assumptions:** An assignment to a frozen object's field is a silent no-op rather
+than a thrown error outside strict mode, so the test checks the value, not a thrown
+error (a `node:test` file is not implicitly in strict mode).
+
+#### `test_publish_throws_type_error_for_a_non_string_or_empty_topic`
+
+**Checks:** `publish` throws `TypeError` for a topic that is not a non-empty string:
+an empty string, `null`, and a number.
+
+**How:** Calls `publish` with each of `""`, `null` and `42` as the topic (a valid
+message otherwise) and checks each call throws `TypeError`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_publish_throws_type_error_for_a_message_without_a_string_source`
+
+**Checks:** `publish` throws `TypeError` for a message that is not an object with a
+string `source`: an object with no `source`, an object whose `source` is not a
+string, `null`, and a string.
+
+**How:** Calls `publish` with a valid topic and each of `{}`, `{source: 42}`, `null`
+and `"not an object"` as the message, and checks each call throws `TypeError`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_create_message_bus_returns_independent_buses`
+
+**Checks:** `createMessageBus` is a pure factory: two buses it returns do not share
+kept messages or subscribers.
+
+**How:** Builds two buses, subscribes a handler on one of them, publishes a message
+on the other, and checks the handler was not called.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_pulseq_report_publish_and_subscribe_share_one_page_level_bus`
+
+**Checks:** `PulseqReport.publish` and `PulseqReport.subscribe` are the functions of
+one shared bus (not, for example, two unconnected pairs).
+
+**How:** Subscribes on `PulseqReport` itself with `{replay: false}`, on a topic name
+used nowhere else in this file (so it cannot see a kept message left by another test
+that shares the same singleton bus within the process), publishes one message
+through `PulseqReport.publish`, and checks the handler received it.
+
+**Assumptions:** This is the only test in the file that uses
+`PulseqReport.publish`/`PulseqReport.subscribe` directly, because that bus, unlike
+one from `createMessageBus`, is a module-level singleton shared by every test in
+this file's process; every other test uses its own private bus instead.
+
+#### `test_bus_still_delivers_after_on_error_throws`
+
+**Checks:** When the `onError` callback itself throws, the error leaves `publish` (or
+`subscribe`, for a replay), but the bus is not left in its "delivering" state: a
+later `publish` is still delivered to its subscribers at once, not only queued.
+
+**How:** A bus whose `onError` throws, and a subscriber of topic `t` that throws. The
+`publish` on `t` must throw the `onError` error. Then a new subscriber of topic `u`
+and a `publish` on `u`: the subscriber must receive the message. A second bus checks
+the same after a replay: a kept message on `t`, and a `subscribe` to `t` with a
+throwing handler must throw the `onError` error; then a `publish` on another topic
+must be delivered.
+
+**Assumptions:** None.
 
 ### 2.29 RF simulation (`test_rf_sim.py`)
 

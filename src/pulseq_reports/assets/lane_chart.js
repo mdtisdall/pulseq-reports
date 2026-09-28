@@ -1,5 +1,13 @@
-// The lane chart of the report cards and the card registry, in one global object,
-// PulseqReport. Loaded after chart_math.js and before the card scripts and page.js.
+// The lane chart of the report cards, the card registry, the page-level
+// publish/subscribe message bus (`publish`/`subscribe`/`createMessageBus`,
+// docs/plans/rf-profiles.md section 4.1) and the shared table decoder
+// (`decodeTable`, moved here from assets/cards/diagram.js so any card can use
+// it), in one global object, PulseqReport. Loaded after chart_math.js and
+// before the card scripts and page.js. Node tests `require` this file
+// directly (after setting `global.ChartMath`, since the top level reads it);
+// nothing at the top level touches `document` or `window`, so the file loads
+// under Node even though `laneChart` and `decodeTable` use browser APIs once
+// a card actually calls them.
 const PulseqReport = (() => {
   const NS = "http://www.w3.org/2000/svg";
   const W = 960, LEFT = 128, RIGHT = 20, TOP = 10, LANE_H = 64, LANE_GAP = 18, AXIS_H = 38;
@@ -48,14 +56,25 @@ const PulseqReport = (() => {
   // group's visibility and re-renders. Without `groupControls`, a group's own `visible` flag
   // still governs it, but nothing in the page can change it. Without `groups`, `laneChart`
   // behaves exactly as it did before `groups` existed.
-  // Returns {setView, setLanes, setWindow}: setView changes the view without calling
-  // onViewChange. setWindow replaces the lanes, `xDomain` and `extent` together, and keeps
-  // `lanesFor` and `groups` if they were given.
+  // `onCursor(x, pxX)`, when given, is called whenever the hover cursor's value
+  // changes: `x` in chart units, or null when the pointer leaves the plot or the
+  // cursor is otherwise cleared (Escape, or a `setView`/`setWindow` call); `pxX` is
+  // the chart units per unit of plot width, `(view[1] - view[0]) / PLOT_W`.
+  // `onAnchor(x)`, when given, is called whenever the anchor (the zoom marker that a
+  // click or the arrow keys set) changes, with null when it is cleared (Escape, a
+  // drag-zoom, a reset, `setView` or `setWindow`). Both default to a no-op, so
+  // without them `laneChart` behaves exactly as it did before they existed.
+  // Returns {setView, setLanes, setWindow, setAnchor}: setView changes the view
+  // without calling onViewChange. setWindow replaces the lanes, `xDomain` and
+  // `extent` together, and keeps `lanesFor` and `groups` if they were given.
+  // setAnchor(x) sets the anchor (or clears it with null), draws it and calls
+  // onAnchor.
   function laneChart({svg, chart, tip, lanes, lanesFor, groups, groupControls,
                       xDomain, extent = xDomain,
                       minSpan: minSpanOption, onViewChange = () => {},
                       xLabel, cursorText, bands = [],
-                      bandStyle = "fill:var(--ink);fill-opacity:0.05"}) {
+                      bandStyle = "fill:var(--ink);fill-opacity:0.05",
+                      onCursor = () => {}, onAnchor = () => {}}) {
     // `minSpan` when it is given, else a millionth of the extent.
     const spanOf = ext => minSpanOption ?? (ext[1] - ext[0]) / 1e6;
     let minSpan = spanOf(extent);
@@ -119,6 +138,8 @@ const PulseqReport = (() => {
     let frame = null;
 
     const x = t => LEFT + (t - view[0]) / (view[1] - view[0]) * PLOT_W;
+    // The chart units per unit of plot width, for onCursor's second argument.
+    const pxX = () => (view[1] - view[0]) / PLOT_W;
 
     // The lanes actually drawn by the last render (after `filterLanes`); setCursor reads it
     // for the tooltip, both from render itself and from pointer/keyboard handlers that run
@@ -211,8 +232,10 @@ const PulseqReport = (() => {
     }
 
     function setAnchor(t) {
+      const changed = t !== anchor;
       anchor = t;
       drawAnchor();
+      if (changed) onAnchor(anchor);
     }
 
     function scheduleRender() {
@@ -239,7 +262,10 @@ const PulseqReport = (() => {
     };
 
     function setCursor(t) {
-      cursor = t === null ? null : Math.min(view[1], Math.max(view[0], t));
+      const next = t === null ? null : Math.min(view[1], Math.max(view[0], t));
+      const changed = next !== cursor;
+      cursor = next;
+      if (changed) onCursor(cursor, pxX());
       if (cursor === null) {
         cross.setAttribute("visibility", "hidden");
         tip.hidden = true;
@@ -316,7 +342,7 @@ const PulseqReport = (() => {
     function resetView() {
       if (pan) stopGesture();
       view = xDomain.slice();
-      anchor = null;
+      setAnchor(null);
       render();
       onViewChange(view, true);
     }
@@ -376,7 +402,7 @@ const PulseqReport = (() => {
         const newView = dragView(startT, valueAtPx(viewBoxPoint(ev)[0]), extent, minSpan);
         if (newView === null) return;
         view = newView;
-        anchor = null;
+        setAnchor(null);
         render();
         onViewChange(view, false);
       }
@@ -460,8 +486,8 @@ const PulseqReport = (() => {
       setView(newView) {
         stopGesture();
         view = newView;
-        cursor = null;
-        anchor = null;
+        setCursor(null);
+        setAnchor(null);
         render();
       },
       // Replace the lanes with the same number of lanes, for example on another scale.
@@ -478,11 +504,13 @@ const PulseqReport = (() => {
         extent = newExtent.slice();
         minSpan = spanOf(extent);
         view = xDomain.slice();
-        cursor = null;
-        anchor = null;
+        setCursor(null);
+        setAnchor(null);
         setHeight(filterLanes(lanes).length);
         render();
       },
+      // Sets the anchor (or clears it with null), draws it and calls onAnchor.
+      setAnchor,
     };
   }
 
@@ -495,5 +523,179 @@ const PulseqReport = (() => {
     cards.set(name, init);
   }
 
-  return {laneChart, registerCard, cards, el, text};
+  // ---- The shared table decoder (moved here from assets/cards/diagram.js, docs/plans/
+  // rf-profiles.md section 4.1, item 2, so any card can decode a table the same way) ----
+
+  // The typed array for one table entry {dtype, length, data} (diagram_data.encode_tables,
+  // and any other card that sends a table the same way): base64 -> gzip bytes ->
+  // DecompressionStream -> the typed array for its dtype. Throws for a dtype this
+  // function does not know, and when the decompressed length does not match `length`
+  // (a sign that the table or the decode is wrong).
+  async function decodeTable(entry) {
+    // A plain loop: the text can be tens of MB, and a callback for each character
+    // (Uint8Array.from with a map function) is much slower.
+    const text = atob(entry.data);
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+    const buffer = await new Response(
+      new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))
+    ).arrayBuffer();
+    const ctor = {
+      uint8: Uint8Array,
+      uint16: Uint16Array,
+      uint32: Uint32Array,
+      float64: Float64Array,
+      float32: Float32Array,
+    }[entry.dtype];
+    if (!ctor) throw new Error(`diagram card: unknown table dtype "${entry.dtype}"`);
+    const array = new ctor(buffer);
+    if (array.length !== entry.length) {
+      throw new Error(
+        `diagram card: table length ${array.length} does not match the given length ` +
+          `${entry.length}`
+      );
+    }
+    return array;
+  }
+
+  // ---- The page-level publish/subscribe message bus (docs/plans/rf-profiles.md,
+  // section 4.1, decision 11 of section 2.2) ----
+  //
+  // A card publishes a message (a plain object with a string `source`, its own card
+  // id) on a topic; any card can subscribe, in no particular start-up order. The bus
+  // keeps the last message of each (topic, source) pair, and a new subscriber (with
+  // the default `replay: true`) is called at once with each kept message of the
+  // topic, in the order those (topic, source) pairs were first published -- so the
+  // order in which page.js starts the cards does not matter. A handler that throws
+  // is reported to `onError` and does not stop the other handlers or the publisher.
+  // A `publish` made from inside a handler is queued and only delivered once the
+  // current delivery (the fan-out of one message to every handler of its topic) has
+  // finished, never nested inside it, so handlers always see one message at a time.
+
+  // Written to the console by default when a handler throws; a test passes its own
+  // onError instead, so it does not depend on console output.
+  const defaultOnError = (error, topic, message) => {
+    console.error(
+      `PulseqReport: a subscriber of topic "${topic}" (source "${message.source}") threw:`,
+      error
+    );
+  };
+
+  // A pure factory (no DOM, no globals besides its own closure), so tests can make a
+  // private bus, and so lane_chart.js can build the one bus the page itself uses.
+  function createMessageBus({onError = defaultOnError} = {}) {
+    // topic -> Map(source -> message). A Map keeps the order its keys were first
+    // inserted in even when `set` later replaces an existing key's value, which is
+    // exactly "the last message of each pair, in the order they were published".
+    const kept = new Map();
+    // topic -> array of {handler, removed}, in subscription order. `removed` lets an
+    // unsubscribe take effect for the rest of a delivery already in progress (a
+    // `splice` mid-iteration would also skip the next handler), and makes a second
+    // unsubscribe call a no-op.
+    const subscribers = new Map();
+    // Deliveries not yet run: a publish while `delivering` is true pushes here
+    // instead of fanning out immediately (the queue of the module comment above).
+    const queue = [];
+    let delivering = false;
+
+    function runQueue() {
+      delivering = true;
+      // `finally`: an `onError` that itself throws must not leave `delivering` set,
+      // or every later publish would only be queued and never delivered.
+      try {
+        while (queue.length > 0) {
+          const {topic, message} = queue.shift();
+          const subs = subscribers.get(topic);
+          if (!subs) continue;
+          // A snapshot of the current handlers: one subscribed during this delivery
+          // is not called for it (only for later messages), and `removed` (checked
+          // below) stops one unsubscribed during it without disturbing this loop's
+          // indices.
+          for (const sub of subs.slice()) {
+            if (sub.removed) continue;
+            try {
+              sub.handler(message);
+            } catch (error) {
+              onError(error, topic, message);
+            }
+          }
+        }
+      } finally {
+        delivering = false;
+      }
+    }
+
+    function publish(topic, message) {
+      if (typeof topic !== "string" || topic === "") {
+        throw new TypeError("PulseqReport.publish: topic must be a non-empty string");
+      }
+      if (typeof message !== "object" || message === null || typeof message.source !== "string") {
+        throw new TypeError(
+          "PulseqReport.publish: message must be an object with a string source");
+      }
+      Object.freeze(message);
+      let sourceMap = kept.get(topic);
+      if (!sourceMap) {
+        sourceMap = new Map();
+        kept.set(topic, sourceMap);
+      }
+      sourceMap.set(message.source, message);
+      queue.push({topic, message});
+      // While a delivery is already running, `runQueue`'s own while loop picks this
+      // job up once the current one finishes; calling it again here would deliver
+      // the new message from inside the handler that published it.
+      if (!delivering) runQueue();
+    }
+
+    function subscribe(topic, handler, {replay = true} = {}) {
+      let subs = subscribers.get(topic);
+      if (!subs) {
+        subs = [];
+        subscribers.set(topic, subs);
+      }
+      const sub = {handler, removed: false};
+      subs.push(sub);
+      if (replay) {
+        const sourceMap = kept.get(topic);
+        if (sourceMap) {
+          // Guarded the same way as runQueue's fan-out, so a publish made from a
+          // handler during its own replay is queued, not delivered from inside this
+          // loop (the same rule as a publish made during a normal delivery). Only the
+          // outermost caller (not itself nested inside a delivery) drains the queue
+          // afterwards; a nested subscribe leaves that to the delivery it is inside.
+          const wasDelivering = delivering;
+          delivering = true;
+          try {
+            for (const message of sourceMap.values()) {
+              try {
+                handler(message);
+              } catch (error) {
+                onError(error, topic, message);
+              }
+            }
+          } finally {
+            if (!wasDelivering) delivering = false;
+          }
+          if (!wasDelivering) runQueue();
+        }
+      }
+      return () => {
+        if (sub.removed) return;
+        sub.removed = true;
+        const i = subs.indexOf(sub);
+        if (i >= 0) subs.splice(i, 1);
+      };
+    }
+
+    return {publish, subscribe};
+  }
+
+  // The one bus the page itself uses; PulseqReport.publish/subscribe are its
+  // functions. createMessageBus is exported too, for tests and for a card that wants
+  // a private bus of its own.
+  const pageBus = createMessageBus();
+
+  return {laneChart, registerCard, cards, el, text, decodeTable,
+    createMessageBus, publish: pageBus.publish, subscribe: pageBus.subscribe};
 })();
+if (typeof module !== "undefined") module.exports = PulseqReport;

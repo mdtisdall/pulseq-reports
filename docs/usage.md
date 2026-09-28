@@ -381,6 +381,81 @@ one of:
   `ticks`, `tick_labels`, `empty`, plus `kind: "gate"` and `windows` (a list
   of `[start, end]` ranges that are "on") in place of `segments`.
 
+### Messages between cards
+
+A card never reads the data or the DOM of another card. Cards on one page
+talk only through published messages, on a small publish/subscribe bus that
+`PulseqReport` keeps:
+
+```javascript
+PulseqReport.publish(topic, message)
+PulseqReport.subscribe(topic, handler, {replay = true} = {})
+```
+
+`message` must be a plain object with a string `source` (the id of the
+publishing card), and `topic` must be a non-empty string; otherwise `publish`
+throws `TypeError`. `publish` freezes the message (`Object.freeze`, one
+level). `subscribe` returns an unsubscribe function.
+
+The bus keeps the last message of each `(topic, source)` pair. With the
+default `replay: true`, `subscribe` calls the new handler at once with each
+kept message of that topic, in the order those pairs were first published, so
+the order in which the page starts its cards does not matter. Pass `{replay:
+false}` to skip that and see only messages published after subscribing (for
+example `goto`, below, which is a one-time action, not state to catch up on).
+
+The handlers of a topic run in the order they subscribed. A handler that
+throws does not stop the other handlers or the publisher: the error goes to
+the console, with the topic and the source. A `publish` made from inside a
+handler is queued and delivered only once the current message has finished
+reaching every handler of its topic, never nested inside that delivery.
+
+`PulseqReport.createMessageBus({onError} = {})` builds a private bus with the
+same two functions, for a card (or a test) that wants one of its own; the
+page's own `PulseqReport.publish`/`PulseqReport.subscribe` are one such bus,
+shared by every card on the page.
+
+**The sequence diagram card's messages.** The sequence diagram card
+(`cards.diagram.diagram_card`) publishes these topics. `source` is the card's
+id. Times are file times in seconds. `file` is the index of the file in the
+card's own list, the same index the card's data uses. `block` is the play
+index of a block (0 is the first block).
+
+| Topic | Message | When |
+|---|---|---|
+| `sequence` | `{source, file, name, view}` | Once for each file, right after the diagram has decoded it. `view` is the sequence view, below. |
+| `cursor` | `{source, file, tS, block, pxS}`, or `{source, file: null}` | The hover cursor moves (at most one message in each animation frame), or leaves the plot. `pxS` is the time, in seconds, of one unit of the plot's width in the current view (the plot is 812 units wide, so this is about one pixel at the chart's full width). |
+| `anchor` | `{source, file, tS, block}`, or `{source, file: null}` | A click or the arrow keys set the anchor (the zoom marker), or a reset clears it. |
+| `view` | `{source, file, t0S, t1S}` | After each zoom, pan, reset, window button, change of file and `goto`. |
+
+The diagram card also subscribes to one topic:
+
+| Topic | Message | What the diagram does |
+|---|---|---|
+| `goto` | `{source, target, file, block}` | When `target` is that diagram card's id: shows the first window of `file` (switching files first, if it is showing another file), then sets the view to that block, with half the block's own duration as padding on each side, widened to at least 1 ms and moved inside the file if the padding would reach past an end, then sets the anchor to the middle of the block. A file with no window, or a block that the file does not have: a console warning, and no change. A message for another `target` is ignored. |
+
+**The sequence view.** `SeqLanes.sequenceView(model)` returns a frozen,
+read-only view of one decoded file, for the `view` field of a `sequence`
+message. A subscriber uses only this object, never a card's own tables or
+model:
+
+```javascript
+view.numBlocks, view.durationS
+view.blockAt(tS)      // the block that holds file time tS (s)
+view.blockStart(i)    // the start time (s) of block i
+view.blockDuration(i) // the duration (s) of block i
+view.events(i)        // {rf, gx, gy, gz, adc}: dense event indexes, 0 = none
+view.gradEvent(k)     // {delayS, offsetsS, values}: typed arrays, do not change them
+view.gradHzPerValue
+view.adcEvent(k)      // {delayS, lengthS}
+view.rfDelayS(k)
+```
+
+`gradEvent(k).values` are in mT/m, the same units the diagram shows;
+`gradHzPerValue` is the factor that converts them to Hz/m. The dense event
+indexes are those of `seq_index.SequenceIndex`: a card with its own data for
+the same file can use them as keys.
+
 ## 5. Card builders
 
 | Function | Shows |
