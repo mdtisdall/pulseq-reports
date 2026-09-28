@@ -1,16 +1,26 @@
 """How near a sequence's gradients get to the hardware limits.
 
-Each gradient event is piecewise linear between the points that
-`seq_utils.gradient_points` gives, as the Pulseq specification treats it. This module
-computes, for each logical axis (x, y, z) and for the three-axis vector, the peak
-amplitude, the peak slew rate, and the RMS amplitude over a time range, and compares
-the peak amplitude and the peak slew rate with the hardware limits.
+Each gradient event is piecewise linear between the points that `seq_utils.gradient_points`
+gives, as the Pulseq specification treats it. This module computes, for each logical axis
+(x, y, z) and for the three-axis vector, the peak amplitude, the peak slew rate, and the RMS
+amplitude over a time range, and compares the peak amplitude and the peak slew rate with the
+hardware limits.
 
-The axes are the logical sequence axes, not the physical gradient axes of a scanner.
-The scanner rotates the logical axes onto the physical ones for the prescribed
-orientation, so on an oblique slice one physical axis can see amplitude up to the
-vector peak, `GradientLimits.vector_peak_mt_per_m`, even when no single logical axis
-is near the limit.
+The axes are the logical sequence axes, not the physical gradient axes of a scanner. The
+scanner rotates the logical axes onto the physical ones for the prescribed orientation, so on
+an oblique slice one physical axis can see amplitude up to the vector peak,
+`GradientLimits.vector_peak_mt_per_m`, even when no single logical axis is near the limit.
+
+This computes the per-event values one time for each unique gradient event
+(`seq_index.grad_events`), then combines them over the blocks of `seq_index.sequence_index`
+with numpy, instead of reading every block with `get_block` (`docs/plans/cards-at-scale.md`,
+section 4.6). It reads individual blocks only for the few blocks that a window edge cuts.
+
+The peak slew rate is the largest of two kinds of value (decision 6 of section 2.5 of the
+plan): the slope of each straight segment of each gradient event (as before), and the step at
+each block junction divided by `grad_raster_time` (new: `Sequence.add_block` checks this step,
+but the card did not report it before this module's phase 4 rewrite). The step uses 0 for a
+block with no event on the axis, and 0 before the first block.
 """
 
 import math
@@ -19,7 +29,8 @@ from dataclasses import dataclass
 import numpy as np
 import pypulseq as pp
 
-from .seq_utils import GAMMA, TIME_TOLERANCE, gradient_points, iter_blocks
+from .seq_index import SequenceIndex, block_cache_off, grad_events, sequence_index
+from .seq_utils import GAMMA, TIME_TOLERANCE, gradient_points
 
 _AXES = ("x", "y", "z")
 
@@ -41,10 +52,12 @@ class HardwareLimits:
 class AxisResult:
     """The gradient limit numbers for one logical axis, over a time range.
 
-    `peak_block` and `slew_block` are the block ID (`seq_utils.BlockTiming.block_id`)
-    where the peak amplitude, respectively the peak slew, was found. `rms_mt_per_m` is
-    the RMS amplitude over the range that `GradientLimits.range_s` gives, not over the
-    whole sequence when a window is used.
+    `peak_block` and `slew_block` are the block ID (`seq_index.SequenceIndex.block_id`)
+    where the peak amplitude, respectively the peak slew, was found. For the slew, this is
+    the block after the junction when the peak slew is a junction step (see the module
+    docstring), otherwise the block whose event has the segment. `rms_mt_per_m` is the RMS
+    amplitude over the range that `GradientLimits.range_s` gives, not over the whole sequence
+    when a window is used.
     """
 
     peak_mt_per_m: float
@@ -59,17 +72,21 @@ class AxisResult:
 class GradientLimits:
     """The result of `gradient_limits`.
 
-    `reason` is None when the range has at least one gradient event on some axis.
-    Otherwise it is a short human-readable string, for example "no gradient events in
-    the sequence", and every numeric field is its zero value: 0.0 for an amplitude,
-    slew or RMS field, and 0.0 for `vector_peak_time_s`; every block field
-    (`AxisResult.peak_block`, `AxisResult.slew_block`) is None. `range_s` still holds
-    the range that was used.
+    `reason` is None when the range has at least one gradient event on some axis. Otherwise it
+    is a short human-readable string, for example "no gradient events in the sequence", and
+    every numeric field is its zero value: 0.0 for an amplitude, slew or RMS field, and 0.0 for
+    `vector_peak_time_s`; every block field (`AxisResult.peak_block`, `AxisResult.slew_block`)
+    is None. `range_s` still holds the range that was used.
 
-    `vector_peak_mt_per_m` is the largest magnitude of the three-axis gradient vector
-    over the range. There is no vector slew field. The RMS of the vector magnitude is
-    the square root of the sum of the squares of the three axis RMS values, because the
-    mean of |G|² is the sum of the three axis means of G².
+    `vector_peak_mt_per_m` is the largest magnitude of the three-axis gradient vector over the
+    range. There is no vector slew field. The RMS of the vector magnitude is the square root of
+    the sum of the squares of the three axis RMS values, because the mean of |G|² is the sum of
+    the three axis means of G².
+
+    `whole_rms_mt_per_m` is the RMS amplitude of each axis (mT/m) over the whole sequence,
+    computed in the same call that computes `axes`, so that a caller that wants both the
+    window's values and the whole file's RMS (as the gradient limits card does) needs only one
+    call. It is None when `window` was None (then `axes`' own RMS already is the whole file's).
     """
 
     reason: str | None
@@ -78,6 +95,7 @@ class GradientLimits:
     vector_peak_mt_per_m: float
     vector_peak_time_s: float
     limits: HardwareLimits
+    whole_rms_mt_per_m: dict[str, float] | None = None
 
 
 def _default_limits(seq: pp.Sequence) -> HardwareLimits:
@@ -111,63 +129,14 @@ def _clip_polyline(
     return t_out, amp_out
 
 
-class _AxisAccumulator:
-    """The O(1) running state for one axis: the peak amplitude, the peak slew and the
-    RMS accumulator, updated one clipped piece (one block's worth of points) at a time.
-    All amplitudes here are in Hz/m, and slew in Hz/m/s, the units of `gradient_points`.
-    """
-
-    def __init__(self) -> None:
-        self.has_event = False
-        self.peak_amp = 0.0
-        self.peak_time = 0.0
-        self.peak_block: int | None = None
-        self.max_slew = 0.0
-        self.slew_block: int | None = None
-        self.rms_sum = 0.0  # sum of Δt · (a² + a·b + b²) / 3 over every piece so far
-
-    def add_piece(self, t: np.ndarray, amp: np.ndarray, block_id: int) -> None:
-        self.has_event = True
-        abs_amp = np.abs(amp)
-        i = int(np.argmax(abs_amp))
-        if abs_amp[i] > self.peak_amp:
-            self.peak_amp, self.peak_time, self.peak_block = (
-                float(abs_amp[i]),
-                float(t[i]),
-                block_id,
-            )
-
-        dt = np.diff(t)
-        a, b = amp[:-1], amp[1:]
-        self.rms_sum += float(np.sum(dt * (a * a + a * b + b * b) / 3.0))
-
-        valid = dt >= TIME_TOLERANCE
-        if np.any(valid):
-            slew = np.abs((b - a)[valid] / dt[valid])
-            j = int(np.argmax(slew))
-            if slew[j] > self.max_slew:
-                self.max_slew, self.slew_block = float(slew[j]), block_id
-
-    def result(self, range_length: float) -> AxisResult:
-        rms_hz_per_m = math.sqrt(self.rms_sum / range_length)
-        return AxisResult(
-            peak_mt_per_m=self.peak_amp / GAMMA * 1e3,
-            peak_time_s=self.peak_time,
-            peak_block=self.peak_block,
-            max_slew_t_per_m_per_s=self.max_slew / GAMMA,
-            slew_block=self.slew_block,
-            rms_mt_per_m=rms_hz_per_m / GAMMA * 1e3,
-        )
-
-
 def _vector_peak_in_block(
     axis_points: dict[str, tuple[np.ndarray, np.ndarray]],
 ) -> tuple[float, float]:
-    """The time and the |G| value of the largest three-axis vector magnitude in one
-    block, evaluated at the union of the breakpoints of the axes that have a clipped
-    piece in `axis_points` (a subset of `_AXES`). An axis with no piece here is zero
-    for the whole block. |G| is convex on a stretch where every axis is linear, so its
-    maximum over the block is at one of these breakpoints."""
+    """The time and the |G| value of the largest three-axis vector magnitude, evaluated at the
+    union of the breakpoints of the axes that have a piece in `axis_points` (a subset of
+    `_AXES`, each `(t, amp)`, all sharing one time origin). An axis with no piece here is zero
+    for the whole range. |G| is convex on a stretch where every axis is linear, so its maximum
+    is at one of these breakpoints."""
     times = np.unique(np.concatenate([t for t, _ in axis_points.values()]))
     sum_sq = np.zeros_like(times)
     for axis in _AXES:
@@ -180,6 +149,331 @@ def _vector_peak_in_block(
     magnitude = np.sqrt(sum_sq)
     i = int(np.argmax(magnitude))
     return float(times[i]), float(magnitude[i])
+
+
+@dataclass
+class _EventData:
+    """The per-unique-gradient-event values that `gradient_limits` needs, indexed by the dense
+    event index minus 1 (`seq_index.SequenceIndex.gx`/`gy`/`gz`, 0 = no event). All amplitudes
+    are in Hz/m, slew in Hz/m/s, and times in seconds from the start of the block that plays the
+    event (`seq_utils.gradient_points(g, 0.0)`: the event's own delay is included, the block's
+    start is not)."""
+
+    peak: np.ndarray  # K: the largest |amplitude| of the event's own corner points
+    peak_offset: np.ndarray  # K: the time (from the block start) of that peak
+    slew: np.ndarray  # K: the largest slope between neighbouring corner points
+    first: np.ndarray  # K: the value of the event's first corner point
+    last: np.ndarray  # K: the value of the event's last corner point
+    integral: np.ndarray  # K: the integral of amplitude^2 dt over the whole event
+    t_rel: list[np.ndarray]  # K arrays: the corner point times, from the block start
+    amp: list[np.ndarray]  # K arrays: the corner point amplitudes
+
+
+def _event_values(seq: pp.Sequence, index: SequenceIndex) -> _EventData:
+    """`_EventData` for every unique gradient event of `seq`, computed one time for each event
+    (`seq_index.grad_events`, which calls `get_block` only for the event's first block, with the
+    block cache off)."""
+    k = index.grad_first.size
+    peak = np.zeros(k)
+    peak_offset = np.zeros(k)
+    slew = np.zeros(k)
+    first = np.zeros(k)
+    last = np.zeros(k)
+    integral = np.zeros(k)
+    t_rel: list[np.ndarray] = [np.array([])] * k
+    amp_list: list[np.ndarray] = [np.array([])] * k
+
+    for dense_k, g in grad_events(seq, index):
+        t, amp = gradient_points(g, 0.0)
+        i = dense_k - 1
+        abs_amp = np.abs(amp)
+        pk = int(np.argmax(abs_amp))
+        peak[i] = float(abs_amp[pk])
+        peak_offset[i] = float(t[pk])
+        first[i] = float(amp[0])
+        last[i] = float(amp[-1])
+
+        dt = np.diff(t)
+        a, b = amp[:-1], amp[1:]
+        integral[i] = float(np.sum(dt * (a * a + a * b + b * b) / 3.0))
+        valid = dt >= TIME_TOLERANCE
+        if np.any(valid):
+            slew[i] = float(np.max(np.abs((b - a)[valid] / dt[valid])))
+
+        t_rel[i] = t
+        amp_list[i] = amp
+
+    return _EventData(peak, peak_offset, slew, first, last, integral, t_rel, amp_list)
+
+
+def _triple_vector_peak(
+    ev: _EventData, gx_id: int, gy_id: int, gz_id: int
+) -> tuple[float, float] | None:
+    """`_vector_peak_in_block` for one triple of dense gradient event indexes (0 = no event on
+    that axis), from the events' own corner points (`ev.t_rel`, `ev.amp`), relative to the block
+    start. None when no axis of the triple has an event."""
+    ids = {"x": gx_id, "y": gy_id, "z": gz_id}
+    axis_points = {}
+    for axis, eid in ids.items():
+        if eid == 0:
+            continue
+        axis_points[axis] = (ev.t_rel[eid - 1], ev.amp[eid - 1])
+    if not axis_points:
+        return None
+    return _vector_peak_in_block(axis_points)
+
+
+def _whole_file_rms(
+    index: SequenceIndex, ev: _EventData, total_duration: float
+) -> dict[str, float]:
+    """The RMS amplitude (mT/m) of each axis over the whole sequence, from the per-event
+    integrals and how many times each event plays on each axis (`numpy.bincount`)."""
+    axis_cols = {"x": index.gx, "y": index.gy, "z": index.gz}
+    k = ev.integral.size
+    result = {}
+    for axis, col in axis_cols.items():
+        if k == 0 or total_duration <= 0.0:
+            result[axis] = 0.0
+            continue
+        counts = np.bincount(col, minlength=k + 1)[1:]
+        rms_sum = float(np.sum(counts * ev.integral))
+        result[axis] = math.sqrt(rms_sum / total_duration) / GAMMA * 1e3
+    return result
+
+
+def _axis_slice_stats(
+    col_slice: np.ndarray, ev: _EventData, i0: int, start_s: np.ndarray
+) -> dict | None:
+    """The peak amplitude, the peak slew (segments only) and the RMS sum for one axis, from the
+    per-event values, restricted to the contiguous play-index slice `col_slice = axis_col[i0:i1]`
+    (every block of the slice fully inside the range). None when the axis has no event there.
+
+    The credited block for the peak (respectively the slew) is the smallest play index in the
+    slice whose event reaches the largest value, matching a single pass over the blocks in play
+    order that keeps a value only when a later one is strictly larger.
+    """
+    k = ev.peak.size
+    if k == 0 or col_slice.size == 0:
+        return None
+    counts = np.bincount(col_slice, minlength=k + 1)[1:]
+    present = counts > 0
+    if not np.any(present):
+        return None
+
+    peak_vals = np.where(present, ev.peak, -np.inf)
+    slew_vals = np.where(present, ev.slew, -np.inf)
+    max_peak = float(np.max(peak_vals))
+    max_slew = float(np.max(slew_vals))
+    peak_events = np.flatnonzero(peak_vals == max_peak) + 1
+    slew_events = np.flatnonzero(slew_vals == max_slew) + 1
+    peak_local = int(np.argmax(np.isin(col_slice, peak_events)))
+    slew_local = int(np.argmax(np.isin(col_slice, slew_events)))
+    peak_play = i0 + peak_local
+    peak_time = float(start_s[peak_play] + ev.peak_offset[int(col_slice[peak_local]) - 1])
+
+    return {
+        "peak": max_peak,
+        "peak_play": peak_play,
+        "peak_time": peak_time,
+        "slew": max_slew,
+        "slew_play": i0 + slew_local,
+        "rms_sum": float(np.sum(counts * ev.integral)),
+    }
+
+
+def _range_result(
+    seq: pp.Sequence,
+    index: SequenceIndex,
+    ev: _EventData,
+    lo: float,
+    hi: float,
+    grad_raster: float,
+) -> tuple[dict[str, AxisResult], float, float, bool]:
+    """`axes`, `vector_peak_mt_per_m`, `vector_peak_time_s` and whether any axis has an event,
+    for the range `[lo, hi]`.
+
+    Blocks fully inside the range use the per-event values (`_axis_slice_stats`,
+    `_triple_vector_peak`), over the contiguous play-index range that
+    `seq_index.SequenceIndex.start_s` gives (blocks are in time order, so the "fully inside"
+    blocks are one contiguous run). The few blocks that a range edge cuts (at most two, plus a
+    block of zero duration at an edge) are read with `get_block` and clipped exactly as the
+    implementation before phase 4 of `docs/plans/cards-at-scale.md` did for every block. Passing
+    `lo=0.0, hi=index.end_s` (`window=None`) makes every block "fully inside", so this same code
+    computes the whole-file result too.
+    """
+    n = index.num_blocks
+    start_s = index.start_s
+    axis_cols = {"x": index.gx, "y": index.gy, "z": index.gz}
+    state = {
+        axis: {
+            "peak": 0.0,
+            "peak_play": None,
+            "peak_time": 0.0,
+            "slew": 0.0,
+            "slew_play": None,
+            "rms_sum": 0.0,
+            "has_event": False,
+        }
+        for axis in _AXES
+    }
+
+    if n == 0:
+        axes = {axis: AxisResult(0.0, 0.0, None, 0.0, None, 0.0) for axis in _AXES}
+        return axes, 0.0, 0.0, False
+
+    end_s = start_s + index.duration_s
+    skip = (end_s <= lo) | (start_s >= hi)
+    processed = ~skip
+    fully_inside = processed & (start_s >= lo) & (end_s <= hi)
+    inside_idx = np.flatnonzero(fully_inside)
+    i0, i1 = (int(inside_idx[0]), int(inside_idx[-1]) + 1) if inside_idx.size else (0, 0)
+
+    if i1 > i0:
+        for axis in _AXES:
+            stats = _axis_slice_stats(axis_cols[axis][i0:i1], ev, i0, start_s)
+            if stats is not None:
+                state[axis].update(stats)
+                state[axis]["has_event"] = True
+
+    # The blocks a range edge cuts: read individually and clipped, as the pre-phase-4 code did.
+    edge_positions = np.flatnonzero(processed & ~fully_inside)
+    axis_points_by_play: dict[int, dict[str, tuple[np.ndarray, np.ndarray]]] = {}
+    if edge_positions.size:
+        with block_cache_off(seq):
+            for play in edge_positions.tolist():
+                block = seq.get_block(int(index.block_id[play]))
+                block_start = float(start_s[play])
+                axis_points: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+                for axis in _AXES:
+                    g = getattr(block, f"g{axis}", None)
+                    if g is None:
+                        continue
+                    t, amp = gradient_points(g, block_start)
+                    t_c, amp_c = _clip_polyline(t, amp, lo, hi)
+                    if t_c.size < 2:
+                        continue
+                    axis_points[axis] = (t_c, amp_c)
+                    st = state[axis]
+                    st["has_event"] = True
+                    abs_amp = np.abs(amp_c)
+                    i = int(np.argmax(abs_amp))
+                    if abs_amp[i] > st["peak"]:
+                        st["peak"], st["peak_time"], st["peak_play"] = (
+                            float(abs_amp[i]),
+                            float(t_c[i]),
+                            play,
+                        )
+                    dt = np.diff(t_c)
+                    a, b = amp_c[:-1], amp_c[1:]
+                    st["rms_sum"] += float(np.sum(dt * (a * a + a * b + b * b) / 3.0))
+                    valid = dt >= TIME_TOLERANCE
+                    if np.any(valid):
+                        seg_slew = np.abs((b - a)[valid] / dt[valid])
+                        j = int(np.argmax(seg_slew))
+                        if seg_slew[j] > st["slew"]:
+                            st["slew"], st["slew_play"] = float(seg_slew[j]), play
+                if axis_points:
+                    axis_points_by_play[play] = axis_points
+
+    # The vector peak of |G|: the distinct triples of the "fully inside" range, one
+    # _triple_vector_peak call for each (section 4.6, item 3), plus the edge blocks' own
+    # clipped points, exactly as the pre-phase-4 code computed them.
+    vector_peak_hz, vector_peak_time = 0.0, 0.0
+    k = ev.peak.size
+    if i1 > i0 and k:
+        gx_s = index.gx[i0:i1].astype(np.int64)
+        gy_s = index.gy[i0:i1].astype(np.int64)
+        gz_s = index.gz[i0:i1].astype(np.int64)
+        any_grad = (gx_s > 0) | (gy_s > 0) | (gz_s > 0)
+        if np.any(any_grad):
+            base = k + 1
+            combo = (gx_s * base + gy_s) * base + gz_s
+            _, first_local = np.unique(combo, return_index=True)
+            for local in first_local.tolist():
+                if not any_grad[local]:
+                    continue
+                triple = _triple_vector_peak(
+                    ev, int(gx_s[local]), int(gy_s[local]), int(gz_s[local])
+                )
+                if triple is None:
+                    continue
+                rel_t, mag = triple
+                if mag > vector_peak_hz:
+                    vector_peak_hz = mag
+                    vector_peak_time = float(start_s[i0 + local]) + rel_t
+
+    for axis_points in axis_points_by_play.values():
+        block_time, block_peak = _vector_peak_in_block(axis_points)
+        if block_peak > vector_peak_hz:
+            vector_peak_hz, vector_peak_time = block_peak, block_time
+
+    # The junction steps (decision 6 of section 2.5): for each axis, the step at the incoming
+    # junction of every processed block (0 before the very first block of the file, or where
+    # either side has no event on the axis), restricted to the blocks that are part of this
+    # range so that a window's slew uses only the junctions inside it.
+    axes: dict[str, AxisResult] = {}
+    has_event_any = False
+    for axis in _AXES:
+        col = axis_cols[axis].astype(np.int64)
+        if k:
+            idx = np.clip(col - 1, 0, k - 1)
+            first_vals = np.where(col == 0, 0.0, ev.first[idx])
+            last_vals = np.where(col == 0, 0.0, ev.last[idx])
+        else:
+            first_vals = np.zeros(n)
+            last_vals = np.zeros(n)
+        prev_last = np.concatenate(([0.0], last_vals[:-1]))
+        steps = np.abs(prev_last - first_vals) / grad_raster
+
+        junction_max, junction_play = 0.0, None
+        if np.any(processed):
+            masked = np.where(processed, steps, -np.inf)
+            j = int(np.argmax(masked))
+            candidate = float(masked[j])
+            # Only a strictly positive step is a real junction, matching the segment
+            # search below (which starts its running max at 0.0 too): a step of
+            # exactly 0.0 everywhere (for example an axis with no event at all) must
+            # stay uncredited (slew_block None), like the pre-phase-4 code.
+            if candidate > junction_max:
+                junction_max, junction_play = candidate, j
+
+        st = state[axis]
+        seg_max, seg_play = st["slew"], st["slew_play"]
+        if seg_play is None:
+            final_slew, final_slew_play = junction_max, junction_play
+        elif junction_play is None or seg_max > junction_max:
+            final_slew, final_slew_play = seg_max, seg_play
+        elif junction_max > seg_max:
+            final_slew, final_slew_play = junction_max, junction_play
+        else:  # an exact tie: credit the smaller play index, as a single pass would
+            final_slew, final_slew_play = seg_max, min(seg_play, junction_play)
+
+        # A credited junction step means a real, non-zero step was found even when no
+        # segment of this axis lies inside the range (for example a window that starts
+        # right after a gradient event that ends outside it): that is real gradient
+        # information about the range, so it counts as "has an event" too.
+        has_event = st["has_event"] or final_slew_play is not None
+        has_event_any = has_event_any or has_event
+        range_length = hi - lo
+        rms = (
+            math.sqrt(st["rms_sum"] / range_length) / GAMMA * 1e3
+            if has_event and range_length > 0
+            else 0.0
+        )
+        axes[axis] = AxisResult(
+            peak_mt_per_m=st["peak"] / GAMMA * 1e3,
+            peak_time_s=st["peak_time"],
+            peak_block=int(index.block_id[st["peak_play"]])
+            if st["peak_play"] is not None
+            else None,
+            max_slew_t_per_m_per_s=final_slew / GAMMA,
+            slew_block=(
+                int(index.block_id[final_slew_play]) if final_slew_play is not None else None
+            ),
+            rms_mt_per_m=rms,
+        )
+
+    return axes, vector_peak_hz / GAMMA * 1e3, vector_peak_time, has_event_any
 
 
 def gradient_limits(
@@ -197,24 +491,29 @@ def gradient_limits(
     (`0.0 <= start_s` and `end_s <= total_duration`, each within `TIME_TOLERANCE`),
     or this function raises `ValueError`. A gradient piece that crosses a range edge
     is cut at the edge, with the amplitude at the edge found by linear interpolation.
+    With `window` given, `GradientLimits.whole_rms_mt_per_m` also gives each axis's RMS
+    over the whole sequence, computed in this same call.
 
     With `limits=None`, the limits are `seq.system.max_grad` and `seq.system.max_slew`
     (see `HardwareLimits`).
 
-    This function reads one block at a time (`seq_utils.iter_blocks`) and keeps only a
-    constant amount of state for each axis, so its memory does not grow with the
-    number of blocks.
+    This builds `seq_index.sequence_index(seq)` and the per-event values of
+    `seq_index.grad_events` one time (`_event_values`), then combines them with numpy over the
+    blocks of the range. It reads individual blocks with `get_block` only for the few blocks
+    that a range edge cuts, so its cost does not grow with the number of blocks the way that
+    reading every block would.
     """
     if limits is None:
         limits = _default_limits(seq)
 
-    # The same expression pypulseq's own Sequence.sequence module uses for a
-    # sequence's total duration (verified by reading pypulseq's opts.py and
-    # sequence.py at the version this project depends on).
-    total_duration = sum(seq.block_durations.values())
+    index = sequence_index(seq)
+    ev = _event_values(seq, index)
+    total_duration = index.end_s
+    grad_raster = seq.system.grad_raster_time
 
     if window is None:
         range_s = (0.0, total_duration)
+        whole_rms_mt_per_m = None
     else:
         start_s, end_s = window
         if not start_s < end_s:
@@ -226,48 +525,28 @@ def gradient_limits(
         # Clip to the sequence exactly: start_s/end_s can be off by a rounding error of
         # up to TIME_TOLERANCE and still pass the check above.
         range_s = (max(0.0, start_s), min(total_duration, end_s))
+        whole_rms_mt_per_m = _whole_file_rms(index, ev, total_duration)
+
     lo, hi = range_s
-    range_length = hi - lo
+    axes, vector_peak_mt_per_m, vector_peak_time_s, has_event = _range_result(
+        seq, index, ev, lo, hi, grad_raster
+    )
 
-    axis_state = {axis: _AxisAccumulator() for axis in _AXES}
-    vector_peak, vector_peak_time = 0.0, 0.0
-
-    for block_id, block_start, block_duration, block in iter_blocks(seq):
-        block_end = block_start + block_duration
-        if block_end <= lo or block_start >= hi:
-            continue
-        axis_points: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        for axis in _AXES:
-            g = getattr(block, f"g{axis}", None)
-            if g is None:
-                continue
-            t, amp = gradient_points(g, block_start)
-            t_clipped, amp_clipped = _clip_polyline(t, amp, lo, hi)
-            if t_clipped.size < 2:
-                continue
-            axis_points[axis] = (t_clipped, amp_clipped)
-            axis_state[axis].add_piece(t_clipped, amp_clipped, block_id)
-        if axis_points:
-            block_time, block_peak = _vector_peak_in_block(axis_points)
-            if block_peak > vector_peak:
-                vector_peak, vector_peak_time = block_peak, block_time
-
-    has_event = any(state.has_event for state in axis_state.values())
     if not has_event:
         reason = (
             "no gradient events in the window"
             if window is not None
             else "no gradient events in the sequence"
         )
-        axes = {axis: AxisResult(0.0, 0.0, None, 0.0, None, 0.0) for axis in _AXES}
-        return GradientLimits(reason, range_s, axes, 0.0, 0.0, limits)
+        zero_axes = {axis: AxisResult(0.0, 0.0, None, 0.0, None, 0.0) for axis in _AXES}
+        return GradientLimits(reason, range_s, zero_axes, 0.0, 0.0, limits, whole_rms_mt_per_m)
 
-    axes = {axis: axis_state[axis].result(range_length) for axis in _AXES}
     return GradientLimits(
         reason=None,
         range_s=range_s,
         axes=axes,
-        vector_peak_mt_per_m=vector_peak / GAMMA * 1e3,
-        vector_peak_time_s=vector_peak_time,
+        vector_peak_mt_per_m=vector_peak_mt_per_m,
+        vector_peak_time_s=vector_peak_time_s,
         limits=limits,
+        whole_rms_mt_per_m=whole_rms_mt_per_m,
     )

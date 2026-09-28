@@ -20,19 +20,19 @@ def _pct(value: float, limit: float) -> str:
     return _fmt(value / limit * 100) if limit > 0 else _NO_VALUE
 
 
-def _vector_rms(result: GradientLimits) -> float:
+def _vector_rms(axis_rms_mt_per_m: dict[str, float]) -> float:
     """The RMS of |G|: the mean of |G|² is the sum of the three axis means of G²."""
-    return math.sqrt(sum(result.axes[axis].rms_mt_per_m ** 2 for axis in _AXES))
+    return math.sqrt(sum(axis_rms_mt_per_m[axis] ** 2 for axis in _AXES))
 
 
-def _file_rows(
-    windowed: GradientLimits, whole: GradientLimits | None, file_label: str | None
-) -> list[list]:
-    """The four rows (Gx, Gy, Gz, |G|) for one file. `whole` is the whole-file result,
-    used only for the extra RMS column when `windowed` is over a window; None when
-    there is no window. `file_label` is the file name for the first cell of the first
-    row (blank for the other three rows), or None to leave out that column."""
+def _file_rows(windowed: GradientLimits, file_label: str | None) -> list[list]:
+    """The four rows (Gx, Gy, Gz, |G|) for one file, from one `gradient_limits` call.
+    `windowed.whole_rms_mt_per_m` gives the extra "RMS over whole file" column when
+    `windowed` is over a window (computed in that same call); it is None when there is
+    no window. `file_label` is the file name for the first cell of the first row
+    (blank for the other three rows), or None to leave out that column."""
     limits = windowed.limits
+    whole_rms = windowed.whole_rms_mt_per_m
     rows = []
     for i, axis in enumerate(_AXES):
         a = windowed.axes[axis]
@@ -45,8 +45,8 @@ def _file_rows(
             _pct(a.max_slew_t_per_m_per_s, limits.max_slew_t_per_m_per_s),
             _fmt(a.rms_mt_per_m),
         ]
-        if whole is not None:
-            row.append(_fmt(whole.axes[axis].rms_mt_per_m))
+        if whole_rms is not None:
+            row.append(_fmt(whole_rms[axis]))
         rows.append(row)
 
     # |G|, the three-axis vector. There is no vector slew (see GradientLimits), so that
@@ -60,10 +60,10 @@ def _file_rows(
         _pct(windowed.vector_peak_mt_per_m, limits.max_grad_mt_per_m),
         _NO_VALUE,
         _NO_VALUE,
-        _fmt(_vector_rms(windowed)),
+        _fmt(_vector_rms({axis: windowed.axes[axis].rms_mt_per_m for axis in _AXES})),
     ]
-    if whole is not None:
-        vector_row.append(_fmt(_vector_rms(whole)))
+    if whole_rms is not None:
+        vector_row.append(_fmt(_vector_rms(whole_rms)))
     rows.append(vector_row)
     return rows
 
@@ -110,12 +110,14 @@ def gradient_limits_card(
     reason_notes: list[str] = []
     limits_label = None
     for ns in seqs:
+        # One call: with a window, gradient_limits also computes the whole-file RMS in the
+        # same pass over the index (GradientLimits.whole_rms_mt_per_m), instead of a second
+        # call for it.
         windowed = gradient_limits(ns.seq, window=window, limits=limits)
-        whole = gradient_limits(ns.seq, window=None, limits=limits) if window is not None else None
         limits_label = windowed.limits.label
         if windowed.reason is not None:
             reason_notes.append(f"{ns.name}: {windowed.reason}.")
-        rows.extend(_file_rows(windowed, whole, ns.name if multi else None))
+        rows.extend(_file_rows(windowed, ns.name if multi else None))
 
     body = _table(headers, rows)
     for note in reason_notes:
