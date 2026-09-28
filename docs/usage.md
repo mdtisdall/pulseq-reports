@@ -325,8 +325,8 @@ an id that starts with `section.id`, and scope any `querySelectorAll` for
 buttons or other controls to `section`, not to the whole document, so a
 second copy of the same card does not answer to the first one's controls.
 
-Script order on the page: `chart_math.js`, `lane_chart.js`, `seq_lanes.js`,
-`pns_lanes.js`, `g_lanes.js`, the library's own card scripts (each included once, by
+Script order on the page: `chart_math.js`, `lane_chart.js`, `map_chart.js`,
+`seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, the library's own card scripts (each included once, by
 name, from `assets/cards/`), then `extra_scripts` in the order given, then `page.js`.
 `page.js` runs last and
 calls each card's registered `init` function. `PulseqReport` (from
@@ -365,6 +365,66 @@ new `xDomain`; the diagram card's window buttons use it, including to
 switch to another file's model. `PulseqReport.el` and `PulseqReport.text`
 are small helpers for building SVG elements directly, for a card that does
 not use `laneChart`.
+
+### `PulseqReport.mapChart` options
+
+`mapChart(options)` draws a 2D heat map: a canvas raster (one canvas pixel
+per grid point) with an SVG overlay for the axes, a color legend, a
+crosshair and a hover tooltip. It generalizes vb-pulseq's column
+cross-section chart to any grid and any values. There is no zoom.
+
+```html
+<div class="chart map-chart" id="{card_id}-map">
+  <canvas id="{card_id}-map-canvas"></canvas>
+  <svg id="{card_id}-map-axes" tabindex="0" role="img"
+    aria-label="Excitation |Mxy| map"></svg>
+  <div class="tip" id="{card_id}-map-tip" hidden></div>
+</div>
+```
+
+```javascript
+PulseqReport.mapChart({
+  canvas: document.getElementById(`${section.id}-map-canvas`),
+  svg: document.getElementById(`${section.id}-map-axes`),
+  chart: document.getElementById(`${section.id}-map`),
+  tip: document.getElementById(`${section.id}-map-tip`),
+  x: {lo: -0.02, hi: 0.02, n: 128, label: "x (m)"},
+  y: {lo: -0.02, hi: 0.02, n: 128, label: "y (m)"},
+  values: data.mxy, // a Float32Array of length 128 * 128, row-major over (y, x)
+  domain: [0, 1],
+  scale: "sequential",
+  valueLabel: "|Mxy|",
+});
+```
+
+| Option | Meaning |
+|---|---|
+| `canvas`, `svg`, `chart`, `tip` | Existing DOM elements: the chart's `<canvas>`, its `<svg>` overlay (needs `tabindex="0"`, `role="img"` and an `aria-label`, as above), its wrapping element, and the tooltip element. `mapChart` makes no ids of its own for the caller's elements, so several maps can be on one page. |
+| `x`, `y` | The two axes, `{lo, hi, n, label}`: the axis value at each end of the grid, the number of grid points, and the axis label. |
+| `values` | A `Float32Array` or `Float64Array` of length `x.n * y.n`, row-major over `(y.n, x.n)`: `values[iy * x.n + ix]` is the value at grid point `(x` index `ix`, `y` index `iy)`. |
+| `domain` | `[lo, hi]` for the color scale. A value outside it is clamped to the nearer end; `NaN` is drawn transparent. |
+| `scale` | `"sequential"` or `"diverging"` (default `"sequential"`); which of `report.css`'s color ramps (`--map-seq-*`, a single-hue ramp, or `--map-div-*`, a ramp with a neutral middle for a value that can be negative or positive) the raster and the legend are drawn with. |
+| `valueLabel` | The legend's label, for example `"\|Mxy\|"`. |
+| `cursorText(x, y, v)` | Formats the tooltip text at the grid point nearest the pointer. Default: the two axis labels and `valueLabel`, each with its value formatted by `ChartMath.fmt`. |
+| `outlines` | A list of `[x0, x1, y0, y1]` rectangles, in axis units, drawn dashed over the raster, for example a `W × W` slice-thickness box. |
+
+The returned `setData({x, y, values, domain})` replaces the axes, the
+values and the color domain, and redraws, without making a new chart: for
+example to show another pulse or another view. The cursor and the
+crosshair are hidden after a `setData` call. `scale`, `valueLabel`,
+`cursorText` and `outlines` are not replaced; they stay as given to
+`mapChart`.
+
+The hover cursor and the arrow keys (when the `svg` has focus) both snap to
+the nearest grid point; Escape hides the cursor. The chart redraws its
+raster with the new theme's colors after a change to
+`prefers-color-scheme` or to the page root's `data-theme` attribute, as
+`laneChart`'s own charts do.
+
+The caller's container needs `class="chart map-chart"`: `.chart` gives it
+the tokens, the `position: relative` and the tooltip rules that the other
+charts also use; `.map-chart` sizes the chart and positions its canvas and
+SVG absolutely over one another.
 
 ### Lane JSON format
 

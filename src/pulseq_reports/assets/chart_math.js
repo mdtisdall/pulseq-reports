@@ -203,7 +203,47 @@ const ChartMath = (() => {
     });
   }
 
+  // Returns n RGB colors, linear between `stops` (a list of [r, g, b] triples, 0-255,
+  // spaced equally along the ramp), as a flat Uint8ClampedArray of 3*n values: color k
+  // is at ramp[3*k], ramp[3*k+1], ramp[3*k+2]. The first color is stops[0] and the last
+  // is stops[stops.length - 1]. n = 1 gives stops[0] alone; n <= 0 gives an empty array.
+  // Used by a map chart to build a canvas color lookup table from the CSS custom
+  // properties of its color scale (report.css --map-seq-* and --map-div-*).
+  function colorRamp(stops, n) {
+    const out = new Uint8ClampedArray(Math.max(0, n) * 3);
+    if (n <= 0) return out;
+    const last = stops.length - 1;
+    for (let k = 0; k < n; k++) {
+      const t = n === 1 ? 0 : k / (n - 1) * last;
+      const lo = Math.floor(t), hi = Math.min(lo + 1, last), f = t - lo;
+      for (let c = 0; c < 3; c++) {
+        out[k * 3 + c] = stops[lo][c] + (stops[hi][c] - stops[lo][c]) * f;
+      }
+    }
+    return out;
+  }
+
+  // Returns the index (0 to n - 1) of `value` in an n-color ramp over [lo, hi] =
+  // `domain`, clamped to the domain at each end. NaN returns -1, so a map chart can
+  // draw it transparent instead of picking a color. A degenerate domain (lo === hi)
+  // returns 0 for every value, since there is no range to place it in.
+  function colorIndex(value, [lo, hi], n) {
+    if (Number.isNaN(value)) return -1;
+    if (hi === lo) return 0;
+    const t = (value - lo) / (hi - lo);
+    return Math.max(0, Math.min(n - 1, Math.round(t * (n - 1))));
+  }
+
+  // Returns the index (0 to n - 1) of the grid point of linspace(lo, hi, n) nearest to
+  // `value`, clamped to [0, n - 1]. A degenerate domain (lo === hi) or a single grid
+  // point (n <= 1) always returns 0. Used by a map chart to snap the hover cursor and
+  // the arrow keys to the nearest grid point of an axis.
+  function nearestIndex(lo, hi, n, value) {
+    if (n <= 1 || hi === lo) return 0;
+    return Math.max(0, Math.min(n - 1, Math.round((value - lo) / (hi - lo) * (n - 1))));
+  }
+
   return {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
-    dragView, laneGroupMap, visibleLanes};
+    dragView, laneGroupMap, visibleLanes, colorRamp, colorIndex, nearestIndex};
 })();
 if (typeof module !== "undefined") module.exports = ChartMath;
