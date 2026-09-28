@@ -36,7 +36,8 @@ the gradient slew rate".
 - Read `docs/plans/pulseq-reports.md`, `docs/plans/diagram-event-table.md` and
   `docs/plans/cards-at-scale.md`. Their workflow rules apply to this plan too.
 - `docs/plans/pns-lanes-prototype.md` planned a prototype. Its code and results
-  are on the branch `chore/pns-lanes-prototype` (never merged), in
+  are in the tag `archive/pns-lanes-prototype` (commit `ad60985`, never
+  merged; the branch `chore/pns-lanes-prototype` was deleted), in
   `prototypes/pns_lanes/`. Read `prototypes/pns_lanes/README.md` there: it has
   the exact SAFE model of pypulseq with line numbers, the block-map formulas,
   and the measurements of section 2.3.
@@ -614,7 +615,7 @@ of the stored level, for the ex-vivo file, 10^6 and 10^7 repeating blocks, and
 Branch: `feature/pns-lanes-js`. Tier: S, with O review of the inner loop.
 
 **Task 3.1: `assets/pns_lanes.js`.** Tier S. Section 4.3. Start from
-`prototypes/pns_lanes/pns_lanes.js` on the prototype branch.
+`prototypes/pns_lanes/pns_lanes.js` in the tag `archive/pns-lanes-prototype`.
 
 **Task 3.2: The pyramid.** Tier S.
 

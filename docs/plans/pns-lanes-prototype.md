@@ -199,7 +199,8 @@ whole file, in JavaScript.
 
 1. **Branch and worktree.** `chore/pns-lanes-prototype`, in
    `.worktrees/pns-lanes-prototype`, made with the `dev-workflow:start-task`
-   skill.
+   skill. (After the work, on 2026-09-28, the branch was deleted. Its commit
+   `ad60985` is kept as the tag `archive/pns-lanes-prototype`.)
 2. **Directory.** `prototypes/pns_lanes/` on that branch:
    - `README.md`: the formulas of section 2.2 with pypulseq line numbers, how
      to run each script, and the results.

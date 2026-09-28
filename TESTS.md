@@ -5081,8 +5081,8 @@ division of `CHUNK_SAMPLES` by `bin_samples`, computed independently of
 no DOM and no network (`docs/plans/diagram-lanes.md`, phase 3): `PnsLanes.decode`
 builds a model from the diagram tables and a file's `pns` hardware/raster data;
 `exactView` gives the exact PNS of a short time range with the block maps of
-the prototype (`prototypes/pns_lanes/pns_lanes.js` on the unmerged branch
-`chore/pns-lanes-prototype`) (a scan with a checkpoint every `GROUP_BLOCKS`
+the prototype (`prototypes/pns_lanes/pns_lanes.js` in the tag
+`archive/pns-lanes-prototype`) (a scan with a checkpoint every `GROUP_BLOCKS`
 blocks), not a per-sample recursion over the whole file; `levels` builds the coarser
 pyramid levels of a stored level; `lanesFor` picks between the exact view and the
 pyramid for one render, as `SeqLanes.lanesFor` picks between the exact and the
@@ -5552,8 +5552,8 @@ whatever the block's own duration -- so a block can be longer than its events (a
 short trapezoid with a longer delay, ADC or RF ringdown in the same block, or a
 gradient that starts only after a delay) and the padding still reads as the real
 value 0, never "no value". It is the prototype's `gMagMinMax`
-(`prototypes/pns_lanes/slew_g.js` on the unmerged branch
-`chore/pns-lanes-prototype`, its "|G|" section only) made into library code, with
+(`prototypes/pns_lanes/slew_g.js` in the tag
+`archive/pns-lanes-prototype`, its "|G|" section only) made into library code, with
 that padding added: `GLanes.decode` builds, once, the per-(triple, block duration)
 piecewise-quadratic geometry (keyed by duration as well as by the triple of dense
 gradient event ids, because the padding depends on the block's own duration, which
