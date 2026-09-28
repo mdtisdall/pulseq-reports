@@ -3,9 +3,10 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: ready. The plan was written on 2026-09-28 (PR #51) and revised on the
-same day with the user's answers (decisions 8 to 22 of section 2.2). No
-question is open (section 7).
+Status: in progress. The plan was written on 2026-09-28 (PR #51) and revised on
+the same day with the user's answers (decisions 8 to 22 of section 2.2). On the
+same day the user replaced parity with vb-pulseq by external references
+(decision 5, phase 2b). No question is open (section 7).
 
 ## 1. Goal
 
@@ -73,8 +74,8 @@ These items are not in this plan:
   (`html_table`, `fmt`, `zoom_controls`, `lanes_json`, `Lane`), and adds
   `extra_css` to `render_page` and `write_page`. If it merges before phase 5,
   the card of phase 5 uses the public names.
-- The vb-pulseq code that this plan starts from is at the parity commit
-  `3a1c7dd` in `~/dev/vb_pulseq`. Read each file with
+- The vb-pulseq code that this plan starts from is at commit `3a1c7dd` (the
+  commit that the library copied its first cards from) in `~/dev/vb_pulseq`. Read each file with
   `git -C ~/dev/vb_pulseq show 3a1c7dd:<path>`. These files did not change
   from `3a1c7dd` to the vb-pulseq `HEAD` of 2026-09-28 (`2d81816`):
   - `src/vb_pulseq/rf_sim.py` (41 lines): the spin-domain simulator.
@@ -122,9 +123,17 @@ Do not open these decisions again. The user made them or approved them.
    Node tests cover pure functions, and a browser check covers each chart
    (decision 10). Lean on pypulseq: do not test pypulseq in this project
    (decision 6 of `docs/plans/diagram-lanes.md`).
-5. **Parity with vb-pulseq.** For the two vb-pulseq sequences of
-   `scripts/vb_parity.py`, the Python reference gives the same pulse numbers
-   and profiles as vb-pulseq at `3a1c7dd` (section 3.5).
+5. **External references, not vb-pulseq** (the user, 2026-09-28; this
+   replaces "parity with vb-pulseq" of the first version). vb-pulseq shares
+   its authors with this library, so agreement with it does not validate the
+   physics. The Python reference is checked against analytic results, an
+   independent oracle (task 2.3), and external references (phase 2b): MATLAB
+   Pulseq's `mr.simRf`, sigpy's `abrm_nd`, and pulse design theory (the
+   specifications of an SLR design, the inversion band of an adiabatic
+   pulse). No phase compares with vb-pulseq. The user also retired
+   `scripts/vb_parity.py` on 2026-09-28 (its own chore PR). The `TODO.md`
+   item "Validate every card against external references" finds references
+   for the other cards.
 6. **The gyromagnetic ratio of the sequence.** The new code converts Hz to µT
    with `abs(seq.system.gamma)`, as the `TODO.md` item "Use the gyromagnetic
    ratio of the sequence" asks. The simulation itself needs no gyromagnetic
@@ -420,21 +429,21 @@ If a budget fails, stop and tell the user. Do not change a budget yourself.
 
 ### 3.1 Workflow
 
-As in `docs/plans/cards-at-scale.md`, section 3.1, items 1 to 9. At most three
-PRs open at one time. Each phase that changes `scripts/vb_parity.py` puts its
-output in the PR.
+As in `docs/plans/cards-at-scale.md`, section 3.1, items 1 to 8. At most three
+PRs open at one time. There is no vb-pulseq parity check (decision 5).
 
 ### 3.2 Worker model tiers
 
 As in `docs/plans/cards-at-scale.md`, section 3.2: H (`haiku`), S (`sonnet`),
-O (the executing agent). Give each worker the exactness and parity rule
+O (the executing agent). Give each worker the exactness and reference rule
 (section 3.5).
 
 ### 3.3 Order and parallel work
 
 ```
 Phase 0 (TESTS.md) ─┬─► Phase 1 (messages) ──────────────────────────────────┐
-                    ├─► Phase 2 (Python reference) ──► Phase 3 (JavaScript) ──┼─► Phase 5 (card) ─► Phase 6
+                    ├─► Phase 2 (Python reference) ─┬► Phase 3 (JavaScript) ──┼─► Phase 5 (card) ─► Phase 6
+                    │                               └► Phase 2b (external references) ─► Phase 6
                     └─► Phase 4 (map chart) ─────────────────────────────────┘
 ```
 
@@ -443,6 +452,8 @@ Phase 0 (TESTS.md) ─┬─► Phase 1 (messages) ─────────�
 - Phase 3 after phases 2 and 4: its golden test needs the reference of phase
   2, and it adds a line to the script order of `page.py` after the line of
   phase 4.
+- Phase 2b after phase 2, at the same time as phases 3 and 5: it adds only
+  its own files.
 - Phase 5 after phases 1, 3 and 4. Phase 6 last.
 
 ### 3.4 File ownership
@@ -453,18 +464,19 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 |---|---|
 | 0 | `TESTS.md` (only: placeholder sections 2.28 to 2.34, task 0.1) |
 | 1 | `assets/lane_chart.js` (the message functions, `decodeTable`, and the `laneChart` options `onCursor` and `onAnchor` and the method `setAnchor` only), `assets/seq_lanes.js` (only the new function `sequenceView`), `assets/cards/diagram.js`, `tests/js/test_messages.js` (new), `tests/js/test_seq_lanes.js` (new tests only), `docs/usage.md` (a new section "Messages between cards"), `TESTS.md` sections 2.19 (new entries only) and 2.28 |
-| 2 | `rf_sim.py` (new), `profile_metrics.py` (new), `rf_profiles.py` (new), `tests/oracles/rf_sim.py` (new), `tests/test_rf_sim.py` (new), `tests/test_profile_metrics.py` (new), `tests/test_rf_profiles.py` (new), `scripts/vb_parity.py` (new `pulses` and `column` checks, `VB_REPORT_PATHS`, and `ACCEPTED["pulses"]` and `ACCEPTED["column"]` only after the user accepts a difference), `TESTS.md` sections 2.29, 2.30 and 2.31 |
+| 2 | `rf_sim.py` (new), `profile_metrics.py` (new), `rf_profiles.py` (new), `tests/oracles/rf_sim.py` (new), `tests/test_rf_sim.py` (new), `tests/test_profile_metrics.py` (new), `tests/test_rf_profiles.py` (new), `TESTS.md` sections 2.29, 2.30 and 2.31 |
+| 2b | `scripts/rf_references.py` (new), `tests/fixtures/rf_references/` (new), `tests/test_rf_references.py` (new), `TESTS.md` (a new section 2.35 at the end) |
 | 3 | `assets/rf_profiles.js` (new), `page.py` (only the script order), `tests/js/test_rf_profiles.js` (new), `tests/test_rf_profiles_golden.py` (new), `tests/js/golden_rf_profiles.js` (new), `tests/test_page.py` (only `test_script_order`), `TESTS.md` sections 2.3 (that entry only), 2.32 and 2.33 |
 | 4 | `assets/map_chart.js` (new), `assets/chart_math.js` (new pure functions only), `assets/report.css` (new map chart rules only), `page.py` (only the script order), `tests/js/test_chart_math.js` (new tests only), `tests/test_page.py` (only `test_script_order`), `docs/usage.md` (a new subsection of section 4 only), `TESTS.md` sections 2.3 (that entry only) and 2.4 (new entries only) |
 | 5 | `cards/rf_profile.py` (new), `assets/cards/rf-profile.js` (new), `tests/test_rf_profile_card.py` (new), `examples/gre_report.py`, `docs/examples/gre.html` (rebuilt), `docs/usage.md` (sections 2 and 5, and a new subsection), `README.md` (the card table of "The cards" only), `TESTS.md` section 2.34 |
-| 6 | `scripts/cards_scale.py` (only a new card name), `TODO.md`, `docs/usage.md` (the scale table only), `docs/plans/pulseq-reports.md` (one note on decision 7 of section 2.2 and one on item 2 of section 2.3 only), this plan file (status and results only) |
+| 6 | `scripts/cards_scale.py` (only a new card name), `TODO.md`, `docs/usage.md` (the scale table, and the references paragraph of the card's subsection), `docs/plans/pulseq-reports.md` (one note on decision 7 of section 2.2 and one on item 2 of section 2.3 only), this plan file (status and results only) |
 
 Rules: as in `docs/plans/cards-at-scale.md`, section 3.3, items 1 to 3.
 `tests/oracles/` is a namespace package: add no `__init__.py`. Phases 3 and 4
 both change the script order of `page.py` and `test_script_order`. Phase 3
 starts after phase 4 is merged, so they do not conflict.
 
-### 3.5 The exactness and parity rule
+### 3.5 The exactness and reference rule
 
 1. **The Python simulator against the oracle.** `rf_sim.spin_domain` and the
    oracle `tests/oracles/rf_sim.py` must agree within 1e-10 on each component
@@ -478,12 +490,15 @@ starts after phase 4 is merged, so they do not conflict.
    (write the reason in the test). The golden test of phase 3 checks this.
 3. **Analytic cases.** Each analytic test writes its tolerance and the reason
    for it in the test.
-4. **Parity.** `scripts/vb_parity.py` compares the pulse numbers and the
-   profiles of the reference, and its combined profile, with those of
-   vb-pulseq at `3a1c7dd` (`rf_profiles.py` and `column.py`), within a
-   relative 1e-9 (its `RTOL`). The position grids must be equal. Each
-   difference is an accepted difference that the user approves
-   (`ACCEPTED["pulses"]`, `ACCEPTED["column"]`).
+4. **External references** (phase 2b). Each comparison with an external
+   reference has a tolerance, and the test writes the reason for it: the
+   same rotation computed by another program (sigpy) agrees to float
+   rounding; a program that resamples the RF (MATLAB Pulseq's `mr.simRf`)
+   agrees within the error of its resampling, which task 2b.3 measures; a
+   design specification (SLR) or an analytic band (adiabatic inversion) is a
+   bound, not a value. A difference larger than its reason explains is a
+   finding: stop and tell the user. Do not widen a tolerance to make a test
+   pass.
 5. **The map values in the page.** The card sends no map values: the browser
    computes them. The legend and the tooltip show the computed values.
 
@@ -765,11 +780,8 @@ to the pulse (the card then shows the reason).
      phase over `|u - c| <= 0.4 W` (weights \|Mxy\|), times W.
    - **non-linear residual** (rad): the peak-to-peak of the echo phase minus
      that linear fit, over the same range.
-   - **centre phase** (rad): as vb-pulseq `center_phase_rad`.
-
-   The reference also computes the vb-pulseq `residual_phase_rad` for the
-   parity check (`phase_peak_to_peak` of the echo phase). The card does not
-   show it.
+   - **centre phase** (rad): the phase of the echo Mxy at the slice centre
+     (as vb-pulseq `center_phase_rad`).
 7. **The combined profile** (decision 21, `combined_profile`).
    - **The pulses.** The period must have an ADC. The excitation is the last
      excitation block before the first ADC of the period. The refocusing
@@ -951,8 +963,7 @@ Node), pure functions only:
 
 1. Use the diagram card and `rf_profile_card` (with `views=("profile",
    "2d")`) instead of its pulse profiles card and its column cross-section
-   card: the combined map of a vb-pulseq period is the column cross-section
-   (the parity check of task 2.6 compares them).
+   card: the combined map of a vb-pulseq period is the column cross-section.
 2. Delete its `rf_sim.py`, `rf_profiles.py`, `profile_metrics.py` and
    `column.py`, or keep its column card and draw it with
    `PulseqReport.mapChart` and a W × W outline.
@@ -1099,10 +1110,10 @@ each component.
      as the excitation on the same axis; the combined profile equals the
      product of the two `profile` views at the same points (exact), and the
      signal kept is below 1;
-   - two logical directions (vb-pulseq-like: excitation on z, refocusing on
-     y): the map equals the outer product (exact), and the numbers equal
-     those of vb-pulseq `column.py` computed by hand in the test on the same
-     grids (1e-12);
+   - two logical directions (excitation on z, refocusing on y): the map
+     equals the outer product (exact), and the numbers equal the definitions
+     of section 4.3, item 7, computed by hand in the test on the same grids
+     (1e-12);
    - three directions (PRESS-like: excitation on x, refocusing on y and z):
      the three central sections;
    - an oblique direction: each pulse at the projection of each grid point
@@ -1131,32 +1142,92 @@ each component.
 
 `TESTS.md` sections 2.29, 2.30 and 2.31.
 
-**Task 2.6: Parity.** Tier O. In `scripts/vb_parity.py`:
-
-1. Add `src/vb_pulseq/rf_profiles.py`, `src/vb_pulseq/rf_sim.py`,
-   `src/vb_pulseq/profile_metrics.py` and `src/vb_pulseq/column.py` to
-   `VB_REPORT_PATHS`.
-2. Add the check `pulses`. For each vb-pulseq sequence, and for each pulse of
-   vb-pulseq `rf_profiles.pulse_profiles(seq)`: the reference `block_pulse`
-   of its first block and its `profile` view. Compare the use, the axis, the
-   flip angle, the peak B1, the energy, W, the position grid, each vb-pulseq
-   profile (`mxy_abs`, `mz`, `phase`, `beta_sq`) and each vb-pulseq metric
-   (`residual_phase_rad` against the reference value of section 4.3, item 6).
-3. Add the check `column`. For each vb-pulseq sequence: vb-pulseq
-   `column.column_cross_section(seq)` against the reference
-   `combined_profile` of the first period with an ADC, on the vb-pulseq
-   grids (`n=NUM_POSITIONS`, over `±2W`). Compare the two axis profiles,
-   `signal_fraction` and `center_signal`.
-4. Run it (section 3.5, item 4). Show each difference to the user. Record
-   each difference that the user accepts in `ACCEPTED["pulses"]` or
-   `ACCEPTED["column"]`.
-
-**Task 2.7: Measure.** Tier S. The time of `block_pulse` and of each view for
-the vb-pulseq sequences and the example GRE, and the time and the added RSS
+**Task 2.6: Measure.** Tier S. The time of `block_pulse` and of each view for
+the example GRE and a vb-pulseq-like spin echo, and the time and the added RSS
 of `pulse_list` at 10^6 repeating blocks (`scripts/diagram_scale.py`).
 
-Acceptance: `scripts/check` passes. `scripts/vb_parity.py` prints `ok` for
-`pulses`, `column` and the other cards.
+Acceptance: `scripts/check` passes.
+
+---
+
+### Phase 2b: external references
+
+Branch: `feature/rf-references`. Tier: O for the cases and the tolerances, S
+for the script and the tests. After phase 2. Decision 5 and section 3.5,
+item 4.
+
+**Task 2b.1: The reference script.** Tier S, with O review.
+`scripts/rf_references.py` writes the fixtures of task 2b.2. It is not part
+of `scripts/check` or CI (as `scripts/cards_scale.py`), and it records, in
+each fixture, the tool, its version or commit, the command and the inputs.
+It needs these tools only when it runs; none of them is a dependency of
+this project:
+
+1. **MATLAB Pulseq's `mr.simRf`** in GNU Octave (`nix shell --inputs-from .
+   nixpkgs#octave`), with MATLAB Pulseq (`github.com/pulseq/pulseq`) cloned
+   at a pinned commit into the session scratchpad; the script takes its
+   path. For each case, pypulseq writes the sequence to a `.seq` file,
+   MATLAB Pulseq reads it (`mr.Sequence`, `read`, `getBlock`), and
+   `mr.simRf(rf)` gives the frequency axis `F`, `Mz_z` and `Mz_xy` of the
+   pulse as played. `mr.simRf` has no gradient: a slice-selective pulse is
+   compared on its frequency axis (section 2.3, "z × Δf with a constant
+   gradient is a 1D simulation"). \|β\|² is `(1 - Mz_z) / 2` for a
+   rotation.
+2. **sigpy's `abrm_nd`** (sigpy 0.1.27, BSD-3, in a scratch environment:
+   `uv run --no-project --with sigpy==0.1.27`, never in the project
+   environment), for the cases with a gradient that changes during the RF,
+   an oblique gradient, and positions in 2D: `a` and `b` on the spatial grid
+   from the same hold samples and interval gradients.
+3. **sigpy's SLR design** (`sigpy.mri.rf.slr.dzrf`) for the SLR case: the
+   pulse and its design parameters (time-bandwidth product, passband and
+   stopband ripples, pulse type).
+
+**Task 2b.2: The fixtures.** Tier S. `tests/fixtures/rf_references/`, one
+small JSON file for each case (at most 200 KB each), with the provenance,
+the inputs (RF samples, `dt`, gradients, grid) and the reference outputs.
+The cases:
+
+1. A pypulseq sinc excitation, 90°, time-bandwidth product 4, 3 ms, with a
+   slice-select gradient (MATLAB Pulseq and sigpy).
+2. A pypulseq sinc refocusing pulse, 180° (MATLAB Pulseq: \|β\|²).
+3. A block pulse, 20°, 100 µs (MATLAB Pulseq: the spectral profile).
+4. A sinc excitation with a frequency offset and a phase offset (MATLAB
+   Pulseq: the pulse as played).
+5. A Gaussian fat saturation pulse at −3.45 ppm (MATLAB Pulseq).
+6. A hyperbolic secant adiabatic inversion (`pp.make_adiabatic_pulse`,
+   "hypsec") (MATLAB Pulseq; the analytic band of task 2b.3).
+7. An SLR 90° excitation (sigpy design; MATLAB Pulseq profile).
+8. A sinc excitation on the ramps of its gradient, and one on an oblique
+   gradient (sigpy).
+9. A pulse with a gradient that turns on x and y (a short spiral) on an x-y
+   grid (sigpy).
+
+**Task 2b.3: The tests.** Tier S, O for the tolerances.
+`tests/test_rf_references.py` computes each case with the reference
+functions of phase 2 and compares:
+
+1. With MATLAB Pulseq: \|Mxy\| and Mz on its frequency axis. First measure
+   the difference; it comes from the resampling of `mr.simRf` (it
+   interpolates the RF linearly to a step of 1 to 10 µs). Set each tolerance
+   from that measurement and write the reason in the test (section 3.5,
+   item 4).
+2. With sigpy `abrm_nd`: `a` and `b` within 1e-10 (the same rotation, with
+   another order of float operations).
+3. SLR: the passband ripple and the stopband level of the simulated profile
+   are within the design ripples.
+4. Hyperbolic secant: Mz is at most −0.9 across the inversion band of the
+   analytic formula of this pulse type (write the formula and its source in
+   the test), for the pulse's B1 above its adiabatic threshold.
+
+`TESTS.md`: a new section at the end, "2.35 RF profiles against external
+references (`test_rf_references.py`)".
+
+**Task 2b.4: Results.** Tier O. The measured differences and the chosen
+tolerances go into section 8 of this plan (phase 6). A difference that the
+resampling does not explain is a finding: stop and tell the user.
+
+Acceptance: `scripts/check` passes with the fixtures. CI needs neither
+Octave nor sigpy.
 
 ---
 
@@ -1290,12 +1361,12 @@ stay in the scratchpad. Never commit them. Check:
    report works.
 8. The tooltips, both themes, and that there is no console error.
 
-**Task 5.6: Measure.** Tier S. The budgets of section 2.4 for the vb-pulseq
-sequences, the example GRE and the ex-vivo file, in the browser (the
-performance panel or `performance.now` in a scratch page).
+**Task 5.6: Measure.** Tier S. The budgets of section 2.4 for a
+vb-pulseq-like spin echo, the example GRE and the ex-vivo file, in the
+browser (the performance panel or `performance.now` in a scratch page).
 
-Acceptance: `scripts/check` passes. `scripts/vb_parity.py` prints `ok` for
-each card. The budgets pass. The browser check passes.
+Acceptance: `scripts/check` passes. The budgets pass. The browser check
+passes.
 
 ---
 
@@ -1310,9 +1381,11 @@ RF block pulse (kind `none`). A browser check of the 10^7-block page with the
 diagram and this card: the cursor and the anchor work, and the budgets of the
 browser pass.
 
-**Task 6.2.** `docs/usage.md`: the card in the scale table. This plan: status
+**Task 6.2.** `docs/usage.md`: the card in the scale table, and the external
+references of phase 2b in the card's subsection. This plan: status
 "complete", the PR numbers, the decisions made during the work, and the
-results in section 8. `docs/plans/pulseq-reports.md`: the two notes of phase
+results in section 8 (with the measured differences and tolerances of task
+2b.4). `docs/plans/pulseq-reports.md`: the two notes of phase
 6 in section 3.4. `TODO.md`: an item for relaxation during the pulse only if
 the user asks for it.
 
@@ -1326,16 +1399,17 @@ make a tag without the user's approval.
 |---|---|---|
 | 1 | 0 | This plan is merged. |
 | 2 | 1, 2, 4 | Phase 0 merged. |
-| 3 | 3 | Phases 2 and 4 merged. |
+| 3 | 3, 2b | Phase 3: phases 2 and 4 merged. Phase 2b: phase 2 merged. |
 | 4 | 5 | Phases 1, 3 and 4 merged. |
-| 5 | 6 | Phase 5 merged. |
+| 5 | 6 | Phases 5 and 2b merged. |
 
 Workers inside a phase:
 
 | Phase | Parallel workers |
 |---|---|
 | 1 | The executing agent decides the form of task 1.1. Then one S worker for tasks 1.1 and 1.2, and one S worker for task 1.3, at the same time. Task 1.4 after both. |
-| 2 | The executing agent does task 2.1. Then one S worker for task 2.2 (simulator) and task 2.3, one H worker for task 2.2 (metrics), and one S worker for task 2.4, at the same time. Task 2.5 after them. The executing agent does task 2.6. |
+| 2 | The executing agent does task 2.1. Then one S worker for task 2.2 (simulator) and task 2.3, one H worker for task 2.2 (metrics), and one S worker for task 2.4, at the same time. Task 2.5 after them. One S worker for task 2.6. |
+| 2b | The executing agent chooses the pinned MATLAB Pulseq commit and runs task 2b.1's tools. One S worker for tasks 2b.1 and 2b.2, then one S worker for task 2b.3; the executing agent sets the tolerances and does task 2b.4. |
 | 3 | One S worker for tasks 3.1 and 3.3, and one H worker for task 3.2, at the same time. The executing agent designs task 3.4 and gives the code to an S worker. |
 | 4 | One S worker for tasks 4.1 and 4.2, and one S worker for task 4.3, at the same time. |
 | 5 | One S worker for tasks 5.1 and 5.3, and one S worker for task 5.2, at the same time. Task 5.4 after both. |
@@ -1365,6 +1439,8 @@ decisions 8 to 12. The questions of this version were answered on 2026-09-28:
    echo pathway of the first echo, with a clear note (decision 21).
 10. **Files without RF use labels.** Answered: a note in the card, and the
     helper `rf_uses_labeled` (decision 22).
+11. **Parity with vb-pulseq.** Answered: dropped; external references
+    instead (decision 5, phase 2b).
 
 ## 8. Results
 
