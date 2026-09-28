@@ -3,7 +3,10 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: not started. The plan was written on 2026-09-23.
+Status: in progress. The plan was written on 2026-09-23. Phases 0, 1 and 2
+are merged (#27, #28, #29). On 2026-09-27 the fork branches moved onto
+upstream `master`, and the pin moves to the fork branch `pns-chunked`
+(section 3.6, and `docs/plans/diagram-lanes.md` section 2.6).
 
 ## 1. Goal
 
@@ -54,9 +57,12 @@ After this plan, the user can tag `v0.2.0` (phase 7).
   `pulseq/pypulseq` on GitHub. On 2026-09-23, upstream `master` had the same
   `safe_tau_lowpass` as 1.5.0.post1. A search of the upstream issues found none
   about the speed of PNS. That search was not complete.
-- The fork `mdtisdall/pypulseq` does not exist yet. The user makes it with the
-  GitHub Fork button, because the token of this project can see only
-  `pulseq-reports` (task 1.1).
+- The fork `mdtisdall/pypulseq` did not exist when this plan was written. The
+  user made it with the GitHub Fork button, because the token of this project
+  can see only `pulseq-reports` (task 1.1). It is cloned to `~/dev/pypulseq`.
+- Since phase 1, this project uses the fork, not PyPI (section 3.6). From
+  `docs/plans/diagram-lanes.md` phase 1 on, the pin is the fork branch
+  `pns-chunked`, on upstream `master`, not on 1.5.0.post1.
 
 ### 2.2 Measurements (2026-09-23, a Mac with 10 cores and 64 GB)
 
@@ -265,7 +271,9 @@ If a budget fails, stop and tell the user. Do not change a budget yourself.
   time. Chunks keep the memory bounded.
 - **Stock pypulseq.** pypulseq 1.5.0.post1 from PyPI, without a change.
 - **Fork.** The repository `mdtisdall/pypulseq`, cloned to `~/dev/pypulseq`
-  (question 5 of section 7).
+  (question 5 of section 7). Stock pypulseq is not in the environment of
+  this project after phase 1. A test compares with `seq.calculate_pns` of
+  the pinned fork.
 - **Upstream.** The repository `pulseq/pypulseq`.
 - **Worker.** A sub-agent that the executing agent starts with the Agent tool.
 
@@ -374,7 +382,10 @@ Rules:
    if the imports need it. The first phase adds it, and the others rebase.
 6. `pyproject.toml`, `uv.lock`, `pns.py` and `tests/test_pns.py` are in phase
    1, and later in `docs/plans/diagram-lanes.md`, which starts after phase 1
-   is merged. No other phase of this plan changes the dependencies.
+   is merged. No other phase of this plan changes the dependencies. Phase 1
+   of `docs/plans/diagram-lanes.md` moves the pin while phases 3, 4 and 5 can
+   be open. They do not edit these files. A phase that is open when the pin
+   moves rebases, and runs `scripts/check` and `scripts/vb_parity.py` again.
 
 ### 3.5 The exactness and parity rule
 
@@ -400,16 +411,19 @@ Rules:
 1. **Clone.** `git clone git@github.com:mdtisdall/pypulseq.git ~/dev/pypulseq`.
    Add the upstream repository as the remote `upstream`. The worktree rules of
    this project do not apply to the fork.
-2. **Base.** Start each fork branch from the release tag that this project
-   uses (1.5.0.post1: find the exact tag name). Do not start from upstream
-   `master`: it has changes that are not released. Before the first change,
-   compare the tag's `src/pypulseq` with the installed package
-   (`.venv/lib/python3.12/site-packages/pypulseq`). They must be the same.
-3. **One change, one commit, one branch.** Phase 1 uses the branch
-   `pns-lfilter`. `docs/plans/diagram-lanes.md` uses `pns-chunks`, which
-   starts from `pns-lfilter`.
-   Each change can then move to upstream `master` with a rebase, if the user
-   decides so.
+2. **Base.** Phase 1 started its fork branch from the release tag
+   1.5.0.post1 (`9acd4f0`), and pinned `40f61d3`. On 2026-09-27 the user
+   rebased the fork branches onto upstream `master` (`f2c582b`), so that
+   each one can go upstream as a pull request. A new fork branch starts from
+   upstream `master`, or from a fork branch on it. The pin thus has upstream
+   changes that are not released (`docs/plans/diagram-lanes.md`, section
+   2.6, item 5).
+3. **One change, one commit, one branch.** The branches, on 2026-09-27:
+   - `pns-lfilter` (`e476200`): `safe_tau_lowpass` on `lfilter`.
+   - `pns-chunked` (`20b9e5e`, on `pns-lfilter`): `calc_pns` in chunks, and
+     the chunk function `_safe_gwf_to_pns_chunk`. The user wrote it. It
+     replaces the branch `pns-chunks` that `docs/plans/diagram-lanes.md`
+     planned.
 4. **Tests of the change** go in pypulseq's own test suite, in the fork. Run
    the whole suite of the fork before each commit. Use the Python of this
    project's devShell (`nix develop ~/dev/pulseq-reports --command ...`) and
@@ -426,7 +440,11 @@ Rules:
    ```
    The requirement in `[project] dependencies` stays `pypulseq`. `uv.lock`
    records the commit. CI fetches the public fork. Pin a full commit hash, not
-   a branch name.
+   a branch name. The pinned commit must be on a branch of the fork. GitHub
+   can remove a commit that no branch contains, and then `uv sync` and CI
+   fail. Before a fork branch is rebased or deleted, move the pin, or keep
+   the old commit on a branch. (After the rebase of 2026-09-27, `40f61d3` is
+   on no branch. `docs/plans/diagram-lanes.md` phase 1 moves the pin.)
 7. **Consumers.** uv uses `[tool.uv.sources]` only for this project's own
    environment. A project that depends on pulseq-reports gets stock pypulseq
    from PyPI, unless it adds the same source line (question 6 of section 7).
@@ -542,7 +560,9 @@ class GradientSampler:
      the old value).
 4. `calc_pns` still keeps whole-file arrays, so the memory still grows with
    the duration. Phase 1 measures how much. `docs/plans/diagram-lanes.md`
-   removes this.
+   removes this. (The fork branch `pns-chunked` runs `calc_pns` in chunks.
+   It still returns whole-file arrays, about 40 bytes for each sample:
+   `docs/plans/diagram-lanes.md`, section 2.6, item 3.)
 
 **Step 2: chunks, for 10^7 blocks.** This moved to
 `docs/plans/diagram-lanes.md` (its phases 1 and 2), together with the PNS
@@ -734,6 +754,14 @@ time budget of section 2.6 passes. If the 370 s memory budget fails because
 `docs/plans/diagram-lanes.md` removes this. The
 user decides whether to merge phase 1 first. The parity script prints `ok` for
 PNS, or the user accepts each difference.
+
+Result: merged as #28 (pin `40f61d3`). The 370 s file: 257.6 s → 5.5 s (the
+time budget passes); added RSS 7.84 → 7.51 GB (the 1 GB budget fails, as
+expected). Task 1.7, item 3: the user rebased the fork branches onto
+upstream `master` (section 3.6, item 2). With the fork branch `pns-chunked`,
+the ex-vivo file takes 4.70 s and 2.44 GB added RSS. The 1 GB budget still
+fails, because `calculate_pns` returns whole-file arrays and the card keeps
+them. Phase 4 of `docs/plans/diagram-lanes.md` removes them.
 
 ---
 
@@ -973,7 +1001,11 @@ and 5 are merged. Tier of the phase: O, with H for the documents.
 1. `TODO.md`: delete the item "Make the other cards work at 10^7 blocks".
 2. If the pin to the fork stays, add the `TODO.md` item "Move from the
    pypulseq fork to a pypulseq release". Give the fork commits and the state
-   of each upstream proposal.
+   of each upstream proposal. Say that the pin is on upstream `master`, so a
+   release must have those upstream changes too (section 3.6, item 2). Say
+   that `pns_levels.py` imports the private `_safe_gwf_to_pns_chunk`, and must
+   change if the upstream review renames or changes it
+   (`docs/plans/diagram-lanes.md`, decision 11).
 3. `docs/usage.md`: state that all cards work for a file of up to 10^7 blocks,
    with the measured times, except PNS (`docs/plans/diagram-lanes.md`).
    While the pin exists, state that a project that depends on pulseq-reports
@@ -1032,4 +1064,6 @@ Tasks inside a phase that can run as parallel workers:
    decides whether to tell such projects (for example the one of section 2.2).
 7. **The release and the pin.** The fork changes can be missing from the
    pypulseq releases at phase 7. Then the user decides whether to tag
-   `v0.2.0` with the pin, or to wait.
+   `v0.2.0` with the pin, or to wait. The pin is now on upstream `master`
+   (section 3.6, item 2), so `v0.2.0` with the pin also has upstream changes
+   that no pypulseq release has.

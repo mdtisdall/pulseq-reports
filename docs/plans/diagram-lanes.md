@@ -3,7 +3,9 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: not started. The plan was written on 2026-09-24.
+Status: not started. The plan was written on 2026-09-24. It was revised on
+2026-09-27 for the fork branch `pns-chunked` (section 2.6): the fork work of
+phase 1 is done, and phase 1 is now only the pin.
 
 ## 1. Goal
 
@@ -37,12 +39,14 @@ the gradient slew rate".
   `prototypes/pns_lanes/`. Read `prototypes/pns_lanes/README.md` there: it has
   the exact SAFE model of pypulseq with line numbers, the block-map formulas,
   and the measurements of section 2.3.
-- `docs/plans/cards-at-scale.md` must reach these points before this plan
-  starts (section 3.3):
-  - Its phase 1: the fork `mdtisdall/pypulseq` with `safe_tau_lowpass` on
-    `scipy.signal.lfilter`, pinned in this project.
-  - Its phase 2: `seq_index.py` (`SequenceIndex`), `block_cache_off` and
-    `sampling.py` (`GradientSampler`).
+- `docs/plans/cards-at-scale.md` had to reach these points before this plan
+  starts (section 3.3). Both are merged:
+  - Its phase 1 (#28): the fork `mdtisdall/pypulseq` with `safe_tau_lowpass`
+    on `scipy.signal.lfilter`, pinned in this project (commit `40f61d3`).
+  - Its phase 2 (#29): `seq_index.py` (`SequenceIndex`), `block_cache_off`
+    and `sampling.py` (`GradientSampler`).
+- The fork has the branch `pns-chunked` (section 2.6). This plan builds on
+  it (decision 10 of section 2.2).
 - The real ex-vivo file is `data/exvivo_gre_seg_0.seq` (git-ignored, linked
   into each worktree). Never commit it or copy it.
 
@@ -78,6 +82,17 @@ Do not open these decisions again. The user made them or approved them.
    gradient lanes under the PNS lane show which axis causes a peak. The
    per-axis peaks stay as numbers in the PNS summary card. This makes the
    stored level 4 times smaller than with four lanes.
+10. **Build on the fork branch `pns-chunked`** (the user, 2026-09-27). This
+    project pins its commit `20b9e5e` (phase 1). The user wrote the fork
+    change. This plan does not change the fork.
+11. **Call the private chunk function** (the user, 2026-09-27).
+    `pns_levels.py` imports `_safe_gwf_to_pns_chunk` from the pinned fork. The
+    fork adds no public name for it, so that the upstream proposal stays
+    small. If an upstream review renames or changes the function,
+    `pns_levels.py` changes with it when the pin moves (the `TODO.md` item
+    "Move from the pypulseq fork to a pypulseq release",
+    `docs/plans/cards-at-scale.md` task 7.2). No other module of this library
+    imports it.
 
 ### 2.3 Facts from the prototype (2026-09-24, a Mac with 10 cores and 64 GB)
 
@@ -125,7 +140,78 @@ If a budget fails, stop and tell the user. Do not change a budget yourself.
 - **Exact view.** A view of the PNS lane computed in the browser from the
   diagram tables, sample by sample.
 - **Fork.** `mdtisdall/pypulseq` (see `docs/plans/cards-at-scale.md`,
-  section 3.6).
+  section 3.6), cloned to `~/dev/pypulseq`.
+- **Chunk function.** `_safe_gwf_to_pns_chunk` of the fork (section 2.6).
+
+### 2.6 The fork branch `pns-chunked` (2026-09-27)
+
+The user rebased the fork branches onto upstream `master` (`f2c582b`), so
+that each one can go upstream as a pull request:
+
+| Fork branch | Commit | Parent | Change |
+|---|---|---|---|
+| `pns-lfilter` | `e476200` | upstream `master` `f2c582b` | `safe_tau_lowpass` on `scipy.signal.lfilter` (the change of `40f61d3`, rebased) |
+| `pns-chunked` | `20b9e5e` | `e476200` | `calc_pns` in chunks, and the chunk function |
+
+1. **The pin of this project is not on a fork branch now.** `40f61d3` (the
+   pin of `docs/plans/cards-at-scale.md` phase 1) is based on the tag
+   1.5.0.post1. After the rebase, no branch of the fork contains it. GitHub
+   can remove such a commit, and then `uv sync` and CI fail. Phase 1 moves
+   the pin to `20b9e5e` first, before the other phases.
+2. **The chunk function** (`src/pypulseq/utils/safe_pns_prediction.py`):
+   ```python
+   def _safe_gwf_to_pns_chunk(gwf, dt, hw, state=None) -> tuple[np.ndarray, SimpleNamespace]
+   ```
+   - `gwf`: shape `(n, 3)`, in T/m, on the raster `dt` (s). No padding.
+   - `state`: `None` for the first chunk (then it calls `safe_hw_check(hw)`),
+     else the state that the previous call returned. The state is the last
+     gradient sample of each axis (`g_last`, shape `(3,)`) and the 9 filter
+     states (`zi`, shape `(3, 3)`: axis, then the filters of `tau1`, `tau2`
+     and `tau3`).
+   - It returns the SAFE value of each axis in percent (shape `(n, 3)`), and
+     the state for the next chunk.
+   - The chunks of a waveform, joined, equal bit for bit the rows of
+     `safe_gwf_to_pns` that `calc_pns` keeps. The zero state of the first
+     chunk is the zero padding before the waveform. The model is causal, so
+     the padding after the waveform changes no kept row. The fork tests
+     this for chunk sizes from 1 sample to the whole waveform (decision 6:
+     do not test it again here).
+3. **`calc_pns` in the fork** now samples `get_gradients()` and runs the
+   chunk function in chunks of `_PNS_CHUNK_SAMPLES = 30,000` samples (0.3 s).
+   It multiplies the chunk values by 0.01 (a fraction of the limit) and
+   computes the total of each sample. Its arguments and results do not
+   change. It still returns whole-file arrays: `t`, the total and the 3 axes,
+   about 40 bytes for each sample. That is 1.5 GB for a 370 s file and about
+   48 GB at 10^7 blocks. So `pns_levels.py` (phase 2) is still necessary.
+4. **Cost (the fork's commit message, Apple M1 Max).** About 80 µs for each
+   chunk and 87 ns for each sample, including the gradient sampling of
+   `calc_pns`. A smaller chunk adds time and does not decrease the memory. A
+   larger chunk adds memory and does not decrease the time. Estimates for
+   the SAFE part: 3.7e7 samples (370 s) take about 3 s, 1.2e9 samples (10^7
+   repeating blocks) take about 105 s.
+5. **The base moved from the release tag to upstream `master`.** The pin
+   thus has 28 upstream commits that are not in a release. Those that change
+   pypulseq functions that this library uses: `readasc` reads hexadecimal
+   values (#386; `pns.read_gradient_asc`), `check_timing` has `max_errors`
+   (#363; the timing card), `add_block` and `calc_duration` accept `None`
+   (#388, #389), `make_*` RF fixes (#352: `rf_raster_time` in `n_samples`;
+   #392: `phase_offset` and `phase_ppm` units), the `.seq` reader stops on a
+   file without a signature (#359), and `write_seq` writes the RF delay as
+   `.0f` (#406).
+6. **Measured on 2026-09-27** (Mac, 10 cores, 64 GB). The branch was put on
+   top of the project environment with `uv run --with-editable` (no tracked
+   file changed):
+   - `pytest tests`: 227 passed, the same as with `40f61d3`.
+   - `scripts/vb_parity.py`: `ok` for each card (vb-pulseq runs in the same
+     environment, so both sides use the fork).
+   - The current PNS card (`cards.pns.pns_card`) on the ex-vivo file: 5.82 s
+     and 7.78 GB added RSS with `40f61d3`; 4.70 s and 2.44 GB with
+     `20b9e5e`. By computation (item 3), about 1.5 GB of the 2.44 GB are
+     the arrays that `calculate_pns` returns. The rest was not measured separately
+     (`get_gradients`, and the whole-file arrays of `cards/pns.pns_data`).
+     The PNS budget of `docs/plans/cards-at-scale.md` section 2.6 (1 GB for
+     the 370 s file) thus still fails. Phase 4 removes the whole-file arrays
+     from the card.
 
 ## 3. How to execute this plan
 
@@ -143,19 +229,24 @@ O (the executing agent).
 ### 3.3 Order and parallel work
 
 ```
-cards-at-scale phase 1 (fork lfilter) ──┐
-cards-at-scale phase 2 (sampler) ───────┼─► Phase 0 ─► Phase 1 (fork: streaming) ─► Phase 2 (Python levels) ─┐
-                                        │                                                                   ├─► Phase 4 (diagram, card) ─► Phase 6
-                                        └────────────────────────────► Phase 3 (JavaScript PNS) ────────────┘
-                                                                         Phase 5 (|G| lane, optional) ─► Phase 6
+Phase 1 (pin pns-chunked) ─────────┐
+Phase 0 (TESTS.md) ─┬──────────────┴─► Phase 2 (Python levels) ─┐
+                    │                                           ├─► Phase 4 (diagram, card) ─► Phase 6
+                    └─► Phase 3 (JavaScript PNS) ───────────────┘
+                                          Phase 5 (|G| lane, optional) ─► Phase 6
 ```
 
-- This plan starts after phases 1 and 2 of `docs/plans/cards-at-scale.md` are
-  merged. It can run at the same time as phases 3, 4 and 5 of that plan: they
-  edit different files (section 3.4).
-- Phase 0 first. Then phases 1 and 3 at the same time. Phase 2 after phase 1.
-  Phase 4 after phases 2 and 3. Phase 5 (if the user keeps it) after phase 4.
-  Phase 6 last.
+- Phases 1 and 2 of `docs/plans/cards-at-scale.md` are merged, so this plan
+  can start. It can run at the same time as phases 3, 4 and 5 of that plan:
+  they edit different files (section 3.4).
+- Phase 1 starts at once, before phase 0 (section 2.6, item 1). It does not
+  need phase 0: it adds no test.
+- Phase 0 at the same time as phase 1. Phase 3 after phase 0. Phase 2 after
+  phases 0 and 1. Phase 4 after phases 2 and 3. Phase 5 (if the user keeps
+  it) after phase 4. Phase 6 last.
+- A phase of `docs/plans/cards-at-scale.md` that is open when phase 1 merges
+  rebases onto it, and runs `scripts/check` and `scripts/vb_parity.py` again
+  (the pin changes pypulseq, section 2.6, item 5).
 
 ### 3.4 File ownership
 
@@ -164,7 +255,7 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 | Phase | Files that the phase creates or edits |
 |---|---|
 | 0 | `TESTS.md` (only: add three placeholder sections, task 0.1) |
-| 1 | In the fork: `src/pypulseq/utils/safe_pns_prediction.py` (a new streaming function) and one test file of pypulseq's suite. In this project: `pyproject.toml` (only `[tool.uv.sources]`), `uv.lock` |
+| 1 | `pyproject.toml` (only `[tool.uv.sources]` and its comment), `uv.lock`. No fork file: the fork work is done (section 2.6) |
 | 2 | `pns_levels.py` (new), `tests/test_pns_levels.py` (new), `TESTS.md` section 2.24 |
 | 3 | `assets/pns_lanes.js` (new), `page.py` (only the script order), `tests/js/test_pns_lanes.js` (new), `tests/test_page.py` (only `test_script_order`), `TESTS.md` sections 2.3 and 2.25 |
 | 4 | `cards/diagram.py`, `assets/cards/diagram.js`, `assets/lane_chart.js`, `cards/pns.py`, `assets/cards/pns.js`, `pns.py`, `tests/test_diagram_card.py`, `tests/test_pns_card.py`, `tests/test_pns.py`, `tests/test_pns_lanes_golden.py` (new), `tests/js/golden_pns_lanes.js` (new), `tests/js/test_chart_math.js` and `assets/chart_math.js` (only if lane groups need a pure function), `docs/usage.md`, `scripts/vb_parity.py` (only `ACCEPTED["pns"]` and `ACCEPTED["diagram"]`), `TESTS.md` sections 2.4, 2.11, 2.12, 2.16 and 2.26 |
@@ -183,8 +274,12 @@ time as this plan.
 1. The stored level and the exact view both sample each block at exact
    raster offsets from the tables. They must agree to a relative 1e-12 of the
    peak (float rounding only). The golden test of phase 4 checks this.
-2. Against stock pypulseq `calculate_pns`, allow 1e-6 of the peak (item 1 of
-   section 2.3). Write the reason in each test that uses this tolerance.
+2. Against `seq.calculate_pns` of the pinned fork, allow 1e-6 of the peak.
+   Stock pypulseq is not in the environment of this project. `calc_pns` and
+   `pns_levels` run the same chunk function, so a difference comes only from
+   the gradient samples: `calc_pns` samples `get_gradients()`, which has the
+   time drift of section 2.3, item 1. Write the reason in each test that uses
+   this tolerance.
 3. `scripts/vb_parity.py`: the PNS card data changes (section 4.6). Each
    change is an accepted difference that the user approves.
 
@@ -192,28 +287,30 @@ time as this plan.
 
 ### 4.1 PNS in Python (phases 1 and 2)
 
-1. **The fork (phase 1).** Add a streaming function to
-   `safe_pns_prediction.py`:
-   - It takes gradient samples in chunks: shape `(n, 3)`, T/m, on the raster
-     `dt`.
-   - It keeps the 9 filter states and the last sample between chunks.
-   - It gives the per-axis values of each chunk.
-   - On the chunks of a whole file, it gives the values of `safe_gwf_to_pns`
-     on the whole file, within 1e-12 of the peak. The padding stays at the two ends of the file. See
-   `docs/plans/cards-at-scale.md`, former phase 6, task 6.1, for the method.
+1. **The fork (done).** The chunk function of section 2.6, item 2, on the
+   pinned commit `20b9e5e`. Phase 1 only pins it.
 2. **`pns_levels.py` (phase 2).** `pns_levels(seq, hw=None, index=None) ->
    PnsLevels`:
    - It gets the gradient samples from `GradientSampler`, block by block, at
      the exact local times `(j + 0.5) * dt` of each block. So it has no time
-     drift (section 2.3, item 1).
-   - It sends the samples through the fork function in chunks of about 2^20
-     samples.
+     drift (section 2.3, item 1). See question 6 of section 7.
+   - It divides the samples (Hz/m) by `seq.system.gamma` to get T/m, as
+     `calc_pns` does.
+   - It sends the samples through the chunk function (decision 11), in
+     chunks of `binSamples × ceil(30,000 / binSamples)` samples: near the
+     fork's chunk size (section 2.6, items 3 and 4), and a whole number of
+     bins, so that no bin crosses two chunks. The first call gives
+     `state=None`. Each later call gives the state of the call before it.
+   - It multiplies the values by 0.01, as `calc_pns` does (1 is the
+     stimulation limit), and computes the total of each sample,
+     `sqrt(x^2 + y^2 + z^2)`.
    - It keeps the minimum and the maximum of the total in each bin of
      `binSamples` samples (section 4.2).
    - It keeps the summary: the peak of the total, the peak of each axis, and
      the peak time. The peak time is the time of the first sample at or above
      `peak * (1 − 1e-6)`, as in `PnsPrediction.peak_time_s` now.
    - Memory is bounded by the chunk size and the stored level.
+   - `pns_levels.py` is the only module that imports the chunk function.
 
 ### 4.2 The stored level and its size
 
@@ -350,28 +447,44 @@ If the numbers 2.22 and 2.23 are not yet used, keep these numbers anyway.
 
 ---
 
-### Phase 1: the streaming SAFE function in the fork
+### Phase 1: pin the fork branch `pns-chunked`
 
-Branch in the fork: `pns-chunks` (from `pns-lfilter`, the branch of
-`docs/plans/cards-at-scale.md` phase 1). Branch in this project:
-`chore/pypulseq-fork-pns-chunks`. Tier: O for the interface, S for the code.
+The fork work of this phase is done: the user wrote the chunk function and
+the chunked `calc_pns` on the fork branch `pns-chunked`, with the fork tests
+(section 2.6). The fork branch is `pns-chunked`, not `pns-chunks`. This
+phase only moves the pin. Branch in this project:
+`chore/pypulseq-fork-pns-chunked`. Tier: O. It starts at once (section 3.3).
 
-**Task 1.1: The interface.** Tier O. Read `calc_pns.py` and
-`safe_gwf_to_pns`. Write the function signature and its docstring in the
-fork, with the formulas and the pypulseq line of each.
+**Task 1.1: The pin.** Tier O.
 
-**Task 1.2: The code and the fork test.** Tier S.
+1. Check that `20b9e5e` is still the head of `origin/pns-chunked` in
+   `~/dev/pypulseq` (`git fetch origin`). If the branch moved, stop and ask
+   the user which commit to pin.
+2. `[tool.uv.sources]`: `rev` = the full hash of `20b9e5e`
+   (`20b9e5e996df93d7a46ef39e3a66b555d9a85915`). Change the comment above
+   it: pypulseq upstream `master` `f2c582b` with two fork commits (the SAFE
+   filter as a recursion, and `calculate_pns` in chunks), branch
+   `pns-chunked` of the fork, and a reference to section 2.6 of this plan.
+3. `uv lock`, then check that `uv sync --frozen` installs the fork commit
+   (`pypulseq.__file__` and the commit in `uv.lock`).
 
-1. The fork test uses random gradient input and the samples of a few pypulseq
-   sequences. The chunks must give the values of `safe_gwf_to_pns` on the
-   whole input, within 1e-12 of the peak.
-2. Use the chunk sizes 1, 7, 1000 and one larger than the input.
-3. Run the whole test suite of the fork.
+**Task 1.2: Checks and measurements.** Tier O.
 
-**Task 1.3: Commit, push and pin.** Tier O. Show each commit message to the
-user and wait for approval. Pin the new fork commit in this project.
+1. `scripts/check`. No test changes (section 2.6, item 6).
+2. `scripts/vb_parity.py`: it must print `ok` for each card.
+3. The PNS card on the ex-vivo file and on the synthetic 370 s file
+   (`scripts/cards_scale.py --card pns --blocks 40000 --case repeating
+   --tr-s 0.04707`), in a baseline worktree of `origin/main` (`40f61d3`) and
+   on this branch. The ex-vivo file needs a scratch script, because
+   `cards_scale.py` builds only synthetic sequences. Record the time and the
+   added RSS of each in the PR.
 
-Acceptance: the fork suite passes. `scripts/check` passes with the new pin.
+**Task 1.3: The PR.** Tier O. The PR text lists the upstream commits that
+the pin adds (section 2.6, item 5) and the measurements of task 1.2. It
+says that `40f61d3` is on no fork branch now (section 2.6, item 1).
+
+Acceptance: `scripts/check` passes with the new pin. `scripts/vb_parity.py`
+prints `ok` for each card.
 
 ---
 
@@ -388,14 +501,18 @@ hardware name.
 
 1. Use the synthetic sequences and a "border" sequence, with gradients that
    are not zero at a block border. The peak, the peak time and the axis peaks
-   equal stock pypulseq `calculate_pns` within 1e-6 of the peak (section 3.5,
-   item 2).
-2. Each stored bin equals the minimum and the maximum of stock
-   `calculate_pns` values in that bin, within the same tolerance, on the
+   equal `seq.calculate_pns` of the pinned fork within 1e-6 of the peak
+   (section 3.5, item 2).
+2. Each stored bin equals the minimum and the maximum of the
+   `seq.calculate_pns` values in that bin, within the same tolerance, on the
    synthetic sequences.
 3. `binSamples` follows the formula of section 4.2 for short and long
    (synthetic, built on the fly) sequences.
-4. The result does not change with the chunk size.
+4. The result does not change with the chunk size: exact equality
+   (`numpy.array_equal`) for chunks of 1, 2 and 7 bins and one chunk larger
+   than the file. The fork makes the chunk function exact for any chunk
+   size, so a difference is an error of the binning in this library. Make
+   the chunk size a keyword argument of `pns_levels` for this test only.
 5. `TESTS.md` section 2.24.
 
 **Task 2.3: Measure.** Tier S. The time, the peak RSS and the compressed size
@@ -514,15 +631,16 @@ section 2.4. A browser check of the 10^7-block page.
 **Task 6.2.** `docs/usage.md` final text. This plan: status "complete", the PR
 numbers, the fork commits, the decisions made during the work and the
 results. `TODO.md`: add an item for a faster exact view if the gap of section
-4.2 matters to the user.
+4.2 matters to the user. In the `TODO.md` item "Move from the pypulseq fork
+to a pypulseq release" (`docs/plans/cards-at-scale.md`, task 7.2), name the
+chunk function and `pns_levels.py` (decision 11 of section 2.2).
 
 ## 6. Summary of parallel work
 
 | Wave | Phases | Condition to start |
 |---|---|---|
-| 1 | 0 | Phases 1 and 2 of `docs/plans/cards-at-scale.md` merged. |
-| 2 | 1, 3 | Phase 0 merged. |
-| 3 | 2 | Phase 1 merged. |
+| 1 | 0, 1 | Now (phases 1 and 2 of `docs/plans/cards-at-scale.md` are merged). Phase 1 first if only one PR can open. |
+| 2 | 2, 3 | Phase 3: phase 0 merged. Phase 2: phases 0 and 1 merged. |
 | 4 | 4 | Phases 2 and 3 merged. |
 | 5 | 5 (optional) | Phase 4 merged. |
 | 6 | 6 | Phases 4 and 5 merged. |
@@ -531,7 +649,7 @@ Workers inside a phase:
 
 | Phase | Parallel workers |
 |---|---|
-| 1 | The executing agent writes the interface. One S worker for the code and the fork test. |
+| 1 | The executing agent. No worker: the phase is a pin and measurements. |
 | 2 | One S worker for task 2.1, then one S worker for tasks 2.2 and 2.3. |
 | 3 | One S worker for tasks 3.1 and 3.2, and one H worker for task 3.3, at the same time. Task 3.4 after 3.2. |
 | 4 | Task 4.1 (S) and task 4.2 (S) at the same time. Task 4.3 after both. Task 4.4 (S) at the same time as 4.3. The executing agent designs task 4.5 and gives the code to an S worker. Task 4.6 after 4.3 and 4.4. |
@@ -542,8 +660,9 @@ Workers inside a phase:
 
 1. **The PNS arrays.** `PnsPrediction` has the whole arrays `t_s`, `norm` and
    `axes` now. Proposal: remove them. A caller that wants the samples of a
-   short sequence can use the fork's streaming function. This changes the
-   public API of `v0.1.0`.
+   short sequence can call `seq.calculate_pns`: with the pinned fork, its
+   memory is near the size of its result (about 40 bytes for each sample,
+   section 2.6, item 3). This changes the public API of `v0.1.0`.
 2. **The default of `pns`** in `diagram_card`. Proposal: `False`, so that a
    caller asks for the PNS lane and its cost (about 3 s for a 370 s file).
 3. **Phase 5 (|G| lane).** Keep it, or drop it.
@@ -552,3 +671,17 @@ Workers inside a phase:
    the compressed size is too large.
 5. **A faster exact view.** If phase 3 measures a much faster loop, the user
    decides whether `EXACT_MAX_S` grows and the stored level gets smaller.
+6. **Samples at block-local times** (found in the review of 2026-09-27).
+   Section 4.1, item 2, samples each block at `(j + 0.5) * dt` from the block
+   start, to remove the time drift. `GradientSampler.sample(axis, t)` of
+   `docs/plans/cards-at-scale.md` phase 2 takes file times, and it places the
+   corner points at `block start + delay + offset`, as `get_gradients()`
+   does. So it has the same drift. Phase 2 needs one of these, and the file
+   list of phase 2 changes with it:
+   - A block-local method in `sampling.py`. `sampling.py` is not in the
+     file list of phase 2 now.
+   - File times `(k + 0.5) * dt`, as `calc_pns` uses. Then `pns_levels`
+     agrees with `calculate_pns` to about float rounding, and the JavaScript
+     exact view (which has no drift) differs from it by up to about 1e-6 of
+     the peak. The 1e-12 golden tolerance of section 3.5, item 1, then fails
+     on long files.
