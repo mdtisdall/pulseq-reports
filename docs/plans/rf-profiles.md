@@ -202,8 +202,10 @@ Do not open these decisions again. The user made them or approved them.
     question 8). The hover cursor and the anchor select the period that
     contains their time (section 2.5), and the card shows each distinct pulse
     of that period. The user does not have to point at a pulse: a click
-    anywhere in a TR pins that TR. The rule uses only the ADCs, not the use
-    labels (section 4.2, item 8).
+    anywhere in a TR pins that TR. Revised by the user on 2026-09-28 (phase 2
+    found it): refocusing pulses never start a period. With the ADCs alone, a
+    TSE was one period for each echo, because a refocusing pulse follows an
+    ADC. The card needs the use labels anyway (decision 22).
 21. **The combined profile of the first echo, primary echo pathway only**
     (the user, 2026-09-28, question 9). The excitation \|Mxy\| times \|β\|²
     of each refocusing pulse between that excitation and the first ADC of
@@ -335,14 +337,22 @@ frequency and phase offsets are ignored.
    `make_*_pulse` function has `use: str = 'undefined'`. The pypulseq
    examples, vb-pulseq and the ex-vivo file (format 1.5, `e` on each RF event)
    set it.
-6. **A file older than format 1.5 has no use field.** `Sequence.read` then
-   guesses the use by default (`detect_rf_use`, `read_seq.py`): a flip angle
-   below 90.01° is `excitation`; any other pulse is `refocusing`, or
-   `saturation` when it is longer than 6 ms and between −3.5 and −3.4 ppm off
-   resonance. So an inversion pulse of such a file is read as `refocusing`.
-   With `detect_rf_use=False`, each use is `undefined`. The `Sequence` object
-   does not keep the format version of the file, so this library cannot tell
-   a guessed label from a label of the author.
+6. **A file older than format 1.5 has no use field.** The method
+   `Sequence.read` has `detect_rf_use=False` by default, so each use of such a
+   file is `undefined`. With `detect_rf_use=True`, pypulseq guesses the use
+   (`read_seq.py`): a flip angle below 90.01° is `excitation`; any other pulse
+   is `refocusing`, or `saturation` when it is longer than 6 ms and between
+   −3.5 and −3.4 ppm off resonance. So an inversion pulse is then read as
+   `refocusing`. (The function `read_seq.read` itself guesses by default for
+   such a file; `Sequence.read` passes False.) The `Sequence` object does not
+   keep the format version of the file, so this library cannot tell a guessed
+   label from a label of the author. (Corrected on 2026-09-28: the first text
+   said that `Sequence.read` guesses by default.)
+7. **pypulseq stores `use="other"` as undefined.** `register_rf_event`
+   (`Sequence/block.py`) keeps the letter of only five uses; `other` becomes
+   `u`, so `get_block` and a written file give `undefined` for such a pulse,
+   and the card refuses its file. MATLAB Pulseq keeps `o`. A draft upstream
+   issue with a fix is in `github.com/mdtisdall/pypulseq-issues` (08).
 
 ### 2.4 Budgets (approved by the user on 2026-09-28, decision 17)
 
@@ -377,9 +387,10 @@ If a budget fails, stop and tell the user. Do not change a budget yourself.
 - **Anchor.** The marker of the diagram chart that a click or the arrow keys
   set. It pins the period of the RF profile card.
 - **Period.** The blocks from one period start to the block before the next
-  period start. A block is a **period start** when it has an RF and the last
-  block before it that has an RF or an ADC has an ADC, or when it is the
-  first block with an RF. (A block with both counts its ADC after its RF.)
+  period start. A block is a **period start** when it has an RF that is not a
+  refocusing pulse, and the last block before it that has an RF or an ADC has
+  an ADC; the first block with an RF is always a start. (A block with both
+  counts its ADC after its RF.)
   In a GRE a period is one TR; in a TSE it is one echo train; dummy scans
   without an ADC join the period of the first ADC after them.
 - **The period at the cursor.** The period that contains the block at the
@@ -884,9 +895,9 @@ def rf_profile_card(
 
    > This file has RF pulses without a use label (N of M RF events). The RF
    > profile card needs a use label on each RF pulse: set `use=` in the
-   > pypulseq `make_*_pulse` functions. For a `.seq` file older than format
-   > 1.5, pypulseq guesses the labels from the flip angle when it reads the
-   > file; see `docs/usage.md`.
+   > pypulseq `make_*_pulse` functions. A `.seq` file older than format 1.5
+   > has no labels: read it with `detect_rf_use=True` for labels that pypulseq
+   > guesses from the flip angle, or set them by hand; see `docs/usage.md`.
 2. **The data.** For each file:
    - `name`, W (`SliceThickness`, m, or null), FOV (the `FOV` definition, m,
      or null), `B0` and `abs(gamma)`.
@@ -1080,8 +1091,12 @@ each component.
    interval with a corner, and a flat interval equal the means computed by
    hand (1e-12). A pulse longer than the flat top: not constant.
 3. As played: a block with the total frequency offset `f` and a constant
-   gradient `G`. Its profile equals the profile of the same block without
-   the offset, moved by `f / G` (\|Mxy\|, Mz and \|β\|² within 1e-9). The
+   gradient `G`. Its profile is the profile of the same block without the
+   offset, moved by `f / G`, within the error of the hold model: the
+   modulation is sampled at the interval centres, so the difference is of
+   second order in `dt` (measured in phase 2: 1.4e-4 at a 5 µs raster and
+   800 Hz). The test checks a bound of 1e-3, and that the difference falls
+   when `dt` halves. (Corrected on 2026-09-28: the first text had 1e-9.) The
    `freq_ppm` of an RF event adds `freq_ppm * 1e-6 * abs(gamma) * B0`.
 4. The pulse key: an MPRAGE-like block with a phase-encode gradient after the
    RF has the key of a block with the RF alone; blocks of an RF-spoiled GRE
@@ -1129,9 +1144,11 @@ each component.
    definition, and with neither (None and the reason); `2d` for kind `one`
    (None).
 10. The quantities and the widths for each use of the table in section 4.3,
-    item 2. The rephasing error of a sequence with a rephaser of 1.5 times
-    the correct moment equals `0.5 * 2π * (the moment) * W` within 1e-6
-    (the linear fit).
+    item 2. The rephasing error with a rephaser of 1.5 times the correct
+    moment, minus the error with the correct moment, equals
+    `0.5 * 2π * (the moment) * W` within 1e-6 (the linear fit). (The
+    difference, because a 90° sinc has its own phase error of about 1 rad
+    with the correct rephaser.)
 11. Spec errors: one test for each rule of the specs.
 12. `pulse_list`: RF spoiling and slices give one entry; the MPRAGE-like case
     gives one entry.
@@ -1326,10 +1343,10 @@ After phases 1, 3 and 4.
    example of section 2, and a new subsection with the options (`views`,
    `plane`, `extent_m`), the rule that the card follows one diagram card, the
    period rule, the combined profile with the note of section 4.3, item 7,
-   and the labels: `rf_uses_labeled`, and `Sequence.read(...,
-   detect_rf_use=False)` for a file older than format 1.5, if the caller
-   wants the card to refuse the labels that pypulseq guesses (section 2.3,
-   pypulseq fact 6).
+   and the labels: `rf_uses_labeled`, `Sequence.read(...,
+   detect_rf_use=True)` for guessed labels of a file older than format 1.5
+   (section 2.3, pypulseq fact 6), and the pypulseq `use="other"` problem
+   (fact 7).
 2. `examples/gre_report.py`: add the card, with `views=("profile", "z_df")`.
    Rebuild `docs/examples/gre.html`.
 3. `README.md`: a row for the card in the table of "The cards".
