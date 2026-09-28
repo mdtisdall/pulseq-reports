@@ -159,12 +159,19 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
 def encode_tables(tables: dict[str, np.ndarray]) -> dict[str, dict]:
     """Each table as `{"dtype", "length", "data"}`, where `data` is the little-endian
     bytes of the array, gzipped (level 6) and base64-encoded. Each table is compressed
-    separately, so each decompressed buffer is aligned for its typed array."""
+    separately, so each decompressed buffer is aligned for its typed array. The gzip
+    header has no time stamp and a fixed OS byte, so the same tables always give the
+    same bytes."""
     encoded: dict[str, dict] = {}
     for name, arr in tables.items():
         arr = np.asarray(arr)
         little = arr.astype(arr.dtype.newbyteorder("<"), copy=False)
-        compressed = gzip.compress(little.tobytes(), compresslevel=6)
+        # mtime=0: no time stamp in header bytes 4-7 (else a rebuilt report differs).
+        # With mtime=0, Python 3.12 lets zlib write the header, and zlib's OS byte
+        # (byte 9) depends on the platform (3 on Linux, 19 on macOS). Set it to 255
+        # ("unknown"), the value Python's own gzip header uses. No decoder reads either.
+        compressed = gzip.compress(little.tobytes(), compresslevel=6, mtime=0)
+        compressed = compressed[:9] + b"\xff" + compressed[10:]
         encoded[name] = {
             "dtype": arr.dtype.name,
             "length": int(arr.size),

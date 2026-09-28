@@ -3537,6 +3537,27 @@ equal the original (`numpy.array_equal`).
   `test_pns_levels.py`) is what turns an arbitrary float64 minimum/maximum into a
   float32 that still bounds it — this test only checks the wire form's round trip.
 
+#### `test_encode_tables_gives_the_same_bytes_at_different_times`
+
+**Checks:** `encode_tables` gives byte-identical output for the same tables at two
+different clock times, so a report built again from the same sequence is the same
+file. In the gzip header of each table, the time stamp (bytes 4-7) is 0 and the OS
+byte (byte 9) is 255.
+
+**How:** The test builds the tables of a synthetic gradient echo sequence once. It
+encodes them with `time.time` monkeypatched to return 1,000,000,000 s, then again with
+2,000,000,000 s, and checks that the two results are equal. It then base64-decodes each
+table's `data` and checks bytes 4-7 and byte 9 of the header.
+
+**Assumptions:**
+
+- `gzip.compress` reads the clock through `time.time`, so the monkeypatch changes the
+  time stamp that a call without `mtime=0` would write. Without the fix, the two results
+  differ.
+- The OS byte check is for the case the first check cannot see on one machine. With
+  `mtime=0`, Python 3.12 lets zlib write the header, and zlib's OS byte is 3 on Linux
+  and 19 on macOS. So a report built on macOS and one built on Linux would differ.
+
 #### `test_index_dtype_widths`
 
 **Checks:** `_index_dtype` gives `uint8` for a maximum index up to 255,
