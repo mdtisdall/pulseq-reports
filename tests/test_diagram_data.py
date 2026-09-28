@@ -10,7 +10,9 @@ decoded tables with the time formulas of section 4.3, entirely independently of
 tautology.
 """
 
+import base64
 import math
+import time
 
 import numpy as np
 import pypulseq as pp
@@ -189,6 +191,23 @@ def test_encode_then_decode_accepts_float32():
     decoded = diagram_data.decode_tables(diagram_data.encode_tables(tables))
     assert decoded["level_min"].dtype == np.float32
     assert np.array_equal(decoded["level_min"], values)
+
+
+def test_encode_tables_gives_the_same_bytes_at_different_times(monkeypatch):
+    """Two `encode_tables` calls at different clock times give byte-identical output, so
+    a report built again from the same sequence is the same file. The gzip header of
+    each table has no time stamp (bytes 4-7 are 0) and the OS byte (byte 9) is 255 on
+    every platform, not zlib's own value (3 on Linux, 19 on macOS)."""
+    tables = diagram_data.diagram_tables(gre_sequence(num_trs=5))
+    monkeypatch.setattr(time, "time", lambda: 1_000_000_000.0)
+    first = diagram_data.encode_tables(tables)
+    monkeypatch.setattr(time, "time", lambda: 2_000_000_000.0)
+    second = diagram_data.encode_tables(tables)
+    assert first == second
+    for name, meta in first.items():
+        header = base64.b64decode(meta["data"])[:10]
+        assert header[4:8] == bytes(4), name
+        assert header[9] == 255, name
 
 
 @pytest.mark.parametrize(
