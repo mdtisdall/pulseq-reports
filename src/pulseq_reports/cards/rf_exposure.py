@@ -4,7 +4,6 @@ import html
 import math
 from collections.abc import Sequence
 
-import numpy as np
 import pypulseq as pp
 
 from pulseq_reports import rf_exposure as _rf_exposure
@@ -109,36 +108,33 @@ def _all_files_html(data: dict) -> str:
 
 
 def _combined_data(
-    seqs: Sequence[NamedSequence], exposures: list[RfExposure], periodic: bool, window_s: float
+    exposures: list[RfExposure],
+    trains: list[_rf_exposure._PulseTrain],
+    periodic: bool,
+    window_s: float,
 ) -> dict:
     """The "All files" data: the files played one after another with no gap, and, when
-    `periodic` is True, that concatenation repeated."""
+    `periodic` is True, that concatenation repeated. `trains` are the pulse trains that
+    gave `exposures`, so no file is read again."""
     total_duration = sum(e.duration_s for e in exposures)
     total_pulses = sum(e.num_pulses for e in exposures)
     peak_b1 = max((e.peak_b1_ut for e in exposures), default=0.0)
     total_energy = sum(e.energy_ut2_s for e in exposures)
 
-    times_parts: list[np.ndarray] = []
-    energy_parts: list[np.ndarray] = []
+    # Each file's offset is the sum of the durations before it, one file at a time.
+    offsets: list[float] = []
     offset = 0.0
-    for named, exposure in zip(seqs, exposures):
-        raster = named.seq.system.rf_raster_time
-        times, energies, _duration, _peak_b1, _peak_block, _num_pulses = _rf_exposure._rf_samples(
-            named.seq, raster
-        )
-        if times:
-            times_parts.append(np.concatenate(times) + offset)
-            energy_parts.append(np.concatenate(energies))
+    for exposure in exposures:
+        offsets.append(offset)
         offset += exposure.duration_s
 
     if total_pulses == 0 or total_duration <= 0:
         window_used = window_s if periodic else total_duration
         window_energy = 0.0
     else:
-        combined_times = np.concatenate(times_parts)
-        combined_energy = np.concatenate(energy_parts)
+        combined = _rf_exposure._concat_trains(trains, offsets)
         window_used, window_energy = _rf_exposure._windowed_energy(
-            combined_times, combined_energy, total_duration, window_s, periodic
+            combined, total_duration, window_s, periodic
         )
     b1rms = math.sqrt(total_energy / total_duration) if total_duration > 0 else 0.0
     b1rms_window = math.sqrt(window_energy / window_used) if window_used > 0 else 0.0
@@ -175,13 +171,15 @@ def rf_exposure_card(
         data = rf_exposure_data(seqs[0].seq, periodic=periodic, window_s=window_s)
         return Card(id=card_id, title="RF exposure", body_html=_rf_exposure_html(data))
 
-    exposures = [
-        _rf_exposure.rf_exposure(named.seq, window_s=window_s, periodic=periodic) for named in seqs
-    ]
+    trains, exposures = [], []
+    for named in seqs:
+        train, duration = _rf_exposure._pulse_train(named.seq)
+        trains.append(train)
+        exposures.append(_rf_exposure._exposure(train, duration, window_s, periodic))
     sections = [
         f"<h3>{html.escape(named.name)}</h3>" + _rf_exposure_html(_to_dict(exposure, periodic))
         for named, exposure in zip(seqs, exposures)
     ]
-    all_files = _combined_data(seqs, exposures, periodic, window_s)
+    all_files = _combined_data(exposures, trains, periodic, window_s)
     body = "\n".join(sections) + "<h3>All files</h3>" + _all_files_html(all_files)
     return Card(id=card_id, title="RF exposure", body_html=body)

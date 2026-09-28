@@ -1297,6 +1297,17 @@ The tests use a train of 1 ms, 90° block pulses on the synthetic system
 (`tests/synthetic.py`'s `SYSTEM`), each followed by a delay. One pulse has
 B1 = (1/4 cycle) / 1 ms, converted to µT, and ∫B1² dt = B1² × 1 ms.
 
+Since phase 3 of `docs/plans/cards-at-scale.md`, `rf_exposure.py` sums the RF energy
+once for each unique event (`seq_index.rf_events`) and once for each pulse in play
+order, and its highest-window search (`_Search`) tries only certain candidate starts
+(section 4.5 of that plan), instead of building one array of every RF sample in play
+order and searching over all of them. The tests below the first group add: comparisons
+with the oracle (`tests/oracles/rf_exposure.py`, the implementation from before phase 3)
+on the synthetic sequences, both `periodic` values, three window-length categories and
+200 random pulse trains made with pypulseq; a tie at a window boundary; and a direct
+comparison of `_Search`'s candidate-only search with a brute-force search over every
+sample.
+
 **Assumptions for the whole file:**
 
 - The values do not depend on the scanner, the transmit coil or the patient.
@@ -1407,6 +1418,103 @@ sequence's own (zero-RF) duration.
 
 **Assumptions:** None.
 
+#### `test_matches_oracle_on_synthetic_sequences`
+
+**Checks:** `rf_exposure` matches the oracle (`tests/oracles/rf_exposure.py`, the
+implementation from before phase 3 of `docs/plans/cards-at-scale.md`) on each of
+`tests/synthetic.py`'s sequences (parametrized: `spin_echo_sequence`, `gre_sequence`,
+`empty_sequence`), for both `periodic` values and three window lengths.
+
+**How:** For each sequence, each `periodic` value and window lengths of 1 ms, 10 s and
+100 s, the test calls both `rf_exposure` and the oracle's, and compares `num_pulses`,
+`peak_block`, `window_s` and `window_used_s` exactly, and `duration_s`, `peak_b1_ut`,
+`energy_ut2_s`, `b1rms_ut` and `b1rms_window_ut` within a relative 1e-12
+(`_assert_matches_oracle`).
+
+**Assumptions:**
+
+- The new code sums the energy once for each unique RF event and once for each pulse in
+  play order, not over every sample in play order like the oracle, so the summed float
+  fields can differ from the oracle's by float rounding (section 3.5, item 2 of the
+  plan). `num_pulses`, `peak_block`, `window_s` and `window_used_s` do not depend on a
+  sum over samples, so they must match exactly.
+
+#### `test_matches_oracle_for_window_length_categories`
+
+**Checks:** `rf_exposure` matches the oracle for a window shorter than one pulse, a
+window between one pulse and the whole sequence, and a window longer than the whole
+sequence, for both `periodic` values.
+
+**How:** The test builds two 1 ms pulses with 3 s and 17 s gaps (about 20 s total), and
+calls both `rf_exposure` and the oracle's with a 0.3 ms window (shorter than one 1 ms
+pulse), a 5 s window (between one pulse and the 20 s sequence) and a 50 s window (longer
+than the sequence), for both `periodic` values, comparing with `_assert_matches_oracle`.
+
+**Assumptions:** Same as `test_matches_oracle_on_synthetic_sequences`.
+
+#### `test_matches_oracle_on_random_pulse_trains`
+
+**Checks:** 200 seeded random pulse trains, each with several random window lengths and
+both `periodic` values, match the oracle.
+
+**How:** For each of 200 seeds, `_random_pulse_train` builds 1 to 11 blocks on the
+synthetic system: about 70% of them a block or a sinc RF pulse (`make_block_pulse` or
+`make_sinc_pulse`) with a random flip angle and a random duration on the 10 us raster,
+each followed by a random gap (`make_delay`), also on the 10 us raster. For each of four
+window lengths (well under the sequence's duration, about half of it, well over it, and
+the default 10 s) and both `periodic` values, the test calls both `rf_exposure` and the
+oracle's and compares them with `_assert_matches_oracle`.
+
+**Assumptions:** Same as `test_matches_oracle_on_synthetic_sequences`.
+
+#### `test_tie_at_window_end_matches_oracle_exactly`
+
+**Checks:** With pulses at a regular spacing and a window length equal to that spacing
+(a window end that lands exactly on the next pulse's first sample, a tie), the window
+value equals the oracle's exactly, not just within the general tolerance.
+
+**How:** The test builds a train of 5 pulses 2 ms apart plus a 2 ms delay: the first
+pulse has a 180° flip angle and the other four (equal to each other) have a 45° flip
+angle, so the first pulse alone has the highest one-pulse energy and the search picks it
+without a further tie among equal candidates. The window length is set to the exact
+spacing between two pulse starts (read from the built sequence's own block durations), a
+whole number (1) of that spacing. For both `periodic` values, it checks that
+`window_used_s` and `b1rms_window_ut` equal the oracle's exactly (`==`).
+
+**Assumptions:**
+
+- The module docstring says the highest-window search uses the same float sample times
+  and the same float comparisons as a search over every sample, so a tie at a window end
+  excludes the tied sample the same way as the oracle's `<` comparison, and each window
+  here can then hold only the one pulse it starts on.
+- The peak pulse's own window energy is an isolated sum of its own per-sample energies,
+  in the same order, in both implementations (the oracle's cumulative sum over every
+  sample starts at this first pulse, and the new code's `energy_before` for its own
+  first pulse is exactly 0), so it is not subject to the general tolerance's rounding.
+
+#### `test_search_candidates_match_brute_force_over_every_sample`
+
+**Checks:** `_Search(train, period).max_energy(length)`, which tries only the candidate
+starts of section 4.5 item 4 of `docs/plans/cards-at-scale.md`, equals a brute-force
+search over every sample start, written independently in the test.
+
+**How:** For each of 30 seeds, `_small_random_pulse_train` builds a smaller random pulse
+train (1 to 4 blocks, shorter pulses) than `_random_pulse_train`, small enough for a
+brute-force search. `_brute_force_max_energy` collects every sample's time (from
+`_Search._time`) and energy (from the per-event cumulative energies) across the search
+(both copies, when periodic), sorts them, and for every sample of the first copy as a
+candidate start, sums the energy between that start and the start plus the window length
+with `np.searchsorted` on the sorted times. The test compares this against
+`_Search.max_energy` for both a wrapping (`period=duration`) and a non-wrapping
+(`period=None`) search, and three window lengths (well under, about half of, and well
+over the train's duration), within a relative 1e-12.
+
+**Assumptions:**
+
+- A seed whose random train has no RF pulses is skipped: `_Search.max_energy` and the
+  brute-force search both give 0.0 for a train with no pulses, so there is nothing to
+  compare.
+
 ### 2.8 RF exposure card (`test_rf_exposure_card.py`)
 
 `test_rf_exposure_card.py` tests `cards/rf_exposure.py`. `rf_exposure_data`
@@ -1422,6 +1530,14 @@ that concatenation repeated.
 
 The tests use `tests/synthetic.py`'s `spin_echo_sequence`, `gre_sequence` and
 `empty_sequence`.
+
+Since phase 3 of `docs/plans/cards-at-scale.md`, the "All files" table comes from the
+pulse trains that `rf_exposure_card` already built for each file's own table
+(`rf_exposure._pulse_train`, `cards/rf_exposure.py`'s `_combined_data`), so the card
+does not read a file a second time to build it (section 4.5 item 7 of that plan). The
+tests below the first group add: a comparison of the "All files" table with the
+oracle's own way of combining files, for two and for three files, and a check that each
+file is read only once.
 
 **Assumptions for the whole file:**
 
@@ -1502,6 +1618,36 @@ sequence is repeated, and says instead that the files play once.
 **How:** The test builds the two-file card with `periodic=False` and checks
 that "sequence repeated" is not in the "All files" section and that "files
 played once" is.
+
+**Assumptions:** None.
+
+#### `test_all_files_table_matches_oracle`
+
+**Checks:** The "All files" table (`_combined_data`'s dict) for two files (spin echo and
+GRE) and for three (those two plus a spin echo variant with the readout prephaser after
+the second crusher instead of before it) matches the oracle's own way of combining
+files, for both `periodic` values.
+
+**How:** `_oracle_combined_data` rebuilds the "All files" data the way the card computed
+it before phase 3: each file's samples from `oracle._rf_samples`, offset by the
+durations before it, concatenated, then `oracle._windowed_energy` on the concatenation
+(`cards/rf_exposure.py`'s own `_combined_data`, before this task's changes). The test
+compares this with `_combined_data_from_new_module`'s dict (one `_pulse_train` per file,
+then the new `_combined_data`): `num_pulses`, `peak_block`, `window_s`, `window_used_s`
+and `periodic` exactly, and `duration_ms`, `peak_b1_ut`, `energy_ut2_ms`, `b1rms_ut` and
+`b1rms_window_ut` exactly too, because these are already rounded to 4 decimals and a
+relative 1e-12 difference before rounding is far too small to change the rounded value.
+
+**Assumptions:** None.
+
+#### `test_all_files_reads_each_file_once`
+
+**Checks:** `rf_exposure_card` calls `rf_exposure._pulse_train` exactly once for each
+file, for two and for three files.
+
+**How:** The test wraps `rf_exposure._pulse_train` with a counting wrapper
+(`monkeypatch`), calls `rf_exposure_card` with the two-file and the three-file cases,
+and checks that the wrapper was called exactly once for each file.
 
 **Assumptions:** None.
 
