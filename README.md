@@ -7,7 +7,9 @@ project that uses it supplies its own sequences, selects the cards it wants
 (timing check, sequence diagram, gradient spectrum, RF exposure, PNS, gradient
 limits), and can add its own cards.
 
-The first release is v0.1.0. For how to add the dependency, build a report and
+The first release is v0.1.0. v0.2.0rc1 is a release candidate for 0.2.0: every
+card for files of up to 10^7 blocks, and the PNS and |G| lanes of the sequence
+diagram. For how to add the dependency, build a report and
 add your own card, see [docs/usage.md](docs/usage.md). The design is in
 [docs/plans/pulseq-reports.md](docs/plans/pulseq-reports.md), and the planned
 work is in [TODO.md](TODO.md).

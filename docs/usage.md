@@ -25,7 +25,10 @@ uv add "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.1.0"
 ```
 
 To move to a later tag, change `@v0.1.0` and run `uv lock --upgrade-package
-pulseq-reports` (or the equivalent command of your tool).
+pulseq-reports` (or the equivalent command of your tool). This document
+describes `main`; the release candidate `v0.2.0rc1` has everything in it. To
+try it, pin `@v0.2.0rc1`, and add the pypulseq source line of the next
+paragraph.
 
 The PNS summary card and the diagram card's PNS lane need a chunked SAFE
 recursion that stock pypulseq does not have: `pns_levels.py` imports a
