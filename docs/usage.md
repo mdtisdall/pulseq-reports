@@ -240,7 +240,7 @@ buttons or other controls to `section`, not to the whole document, so a
 second copy of the same card does not answer to the first one's controls.
 
 Script order on the page: `chart_math.js`, `lane_chart.js`, `seq_lanes.js`,
-the library's own card scripts (each included once, by name, from
+`pns_lanes.js`, the library's own card scripts (each included once, by name, from
 `assets/cards/`), then `extra_scripts` in the order given, then `page.js`.
 `page.js` runs last and
 calls each card's registered `init` function. `PulseqReport` (from
