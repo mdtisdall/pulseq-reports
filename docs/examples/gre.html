@@ -164,7 +164,7 @@ Click the chart to mark the centre for the zoom buttons. Drag across the chart t
 
 <section class="card" id="gradient-limits">
 <h2>Gradient limits</h2>
-<div class="scroll"><table><thead><tr><th>Axis</th><th>Peak (mT/m)</th><th>% of limit</th><th>Max slew (T/m/s)</th><th>% of limit</th><th>RMS (mT/m)</th></tr></thead><tbody><tr><td>Gx</td><td>28</td><td>99.9</td><td>147</td><td>98.1</td><td>4.99</td></tr><tr><td>Gy</td><td>3.41</td><td>12.2</td><td>24.4</td><td>16.3</td><td>0.722</td></tr><tr><td>Gz</td><td>28</td><td>99.9</td><td>149</td><td>99.4</td><td>11</td></tr><tr><td>|G|</td><td>39.7</td><td>142</td><td>—</td><td>—</td><td>12.1</td></tr></tbody></table></div><p class="muted">Peak is the largest gradient amplitude at any point of the waveform. Max slew is the largest rate of change between neighbouring points of one gradient event. RMS is the root-mean-square amplitude over the range shown. For |G|, the peak is the largest magnitude of the three-axis gradient vector, evaluated at every point where any axis changes slope, and the RMS is the RMS of that magnitude. These are the logical sequence axes: the scanner rotates them onto the physical gradient axes, so on an oblique slice, one physical axis can reach up to the |G| row's peak even when no logical axis is near the limit. Limits: pypulseq system limits.</p>
+<div class="scroll"><table><thead><tr><th>Axis</th><th>Peak (mT/m)</th><th>% of limit</th><th>Max slew (T/m/s)</th><th>% of limit</th><th>RMS (mT/m)</th></tr></thead><tbody><tr><td>Gx</td><td>28</td><td>99.9</td><td>147</td><td>98.1</td><td>4.99</td></tr><tr><td>Gy</td><td>3.41</td><td>12.2</td><td>24.4</td><td>16.3</td><td>0.722</td></tr><tr><td>Gz</td><td>28</td><td>99.9</td><td>149</td><td>99.4</td><td>11</td></tr><tr><td>|G|</td><td>39.7</td><td>142</td><td>—</td><td>—</td><td>12.1</td></tr></tbody></table></div><p class="muted">Peak is the largest gradient amplitude at any point of the waveform. Max slew is the largest rate of change between neighbouring points of one gradient event, or the step at a block junction divided by the gradient raster time, as pypulseq's <code>add_block</code> checks it. RMS is the root-mean-square amplitude over the range shown. For |G|, the peak is the largest magnitude of the three-axis gradient vector, evaluated at every point where any axis changes slope, and the RMS is the RMS of that magnitude. These are the logical sequence axes: the scanner rotates them onto the physical gradient axes, so on an oblique slice, one physical axis can reach up to the |G| row's peak even when no logical axis is near the limit. Limits: pypulseq system limits.</p>
 </section>
 
 <section class="card" id="definitions">
@@ -4673,11 +4673,12 @@ const SeqLanes = (() => {
   }
 
   // True when an ADC window overlaps the bin [e0, e1), given the blocks
-  // that hold the bin's two edges. The blocks of the two groups at the
-  // ends are checked one by one, because a window there can start before
-  // the bin and reach into it, or start inside it and reach past its end.
-  // The groups strictly between them are answered by the prefix count
-  // alone: if any of them holds an ADC block, that block lies wholly
+  // that hold the bin's two edges. The two end scans are block by block:
+  // the first covers `first - 1` (one block before the bin, whose window
+  // can reach into it) to the end of the group of `first` (at most 65
+  // blocks), and the second covers the start of the group of `last` to
+  // `last`. The groups strictly between them are answered by the prefix
+  // count alone: if any of them holds an ADC block, that block lies wholly
   // inside the bin, so a window starts inside the bin and the bin is on.
   // Without this, a bin of a whole-file view would walk every block it
   // spans, which is the whole file.
@@ -4695,7 +4696,10 @@ const SeqLanes = (() => {
     };
     // One block before the bin's first: its window can reach into the bin.
     const from = Math.max(0, first - 1);
-    const gFrom = Math.floor(from / GROUP_BLOCKS);
+    // The group of `first`, not of `from`: block `first` holds e0, so its ADC
+    // window can end before the bin. Its group is an end group: scanned block
+    // by block, never answered by the prefix count.
+    const gFrom = Math.floor(first / GROUP_BLOCKS);
     const gLast = Math.floor(last / GROUP_BLOCKS);
     const scan = (a, b) => {
       if (b < a) return false;
@@ -5887,19 +5891,30 @@ const GLanes = (() => {
   // includes any stretch of the block where every axis reads 0).
   //
   // Computed once for each distinct (triple, duration) and memoized in
-  // `evCache.triple`, keyed by one integer, `((kx * M + ky) * M + kz) * D + durIdx`
-  // with `M = numGradEvents + 1` and `D` the number of distinct block durations
-  // (`decode` checks that this stays an exact integer below 2^53, the same defensive
-  // bound pns_lanes.js's own per-event cache key keeps): a numeric cache key, not the
-  // prototype's string key, per the worker spec. Keyed by duration as well as triple
-  // (not by triple alone, as the prototype's own `slew_g.js` is) because the padding
-  // this function adds depends on the block's own duration, which the same triple can
-  // play at more than one length (for example a spoiler gradient shared by blocks
-  // with different trailing delays); a file's own durations are pooled to a small
-  // number of distinct values (`diagram_data.diagram_tables`), so this does not
-  // multiply the number of distinct cache entries by the number of blocks.
-  function _tripleGeometry(tb, kx, ky, kz, dur, evCache, key) {
-    let g = evCache.triple.get(key);
+  // `evCache.triple`, a `Map` of `Map`s: the outer key `kx * M + ky`
+  // (`M = numGradEvents + 1`) selects an inner `Map`, and the inner key
+  // `kz * D + durIdx` (`D` the number of distinct block durations) selects the entry
+  // in it. Two levels, not the one flat key `((kx * M + ky) * M + kz) * D + durIdx`
+  // the prototype's own `slew_g.js` style would give, because that single key stops
+  // being an exact integer past 2^53 at about 1.2 * 10^5 gradient events; the two
+  // keys above need only `M * M` and `M * D` to stay exact integers (`decode`'s
+  // check), which raises the limit to about 9.5 * 10^7 events. The caller
+  // (`_tripleKeyOf`) computes both keys once and passes them in as
+  // `outerKey`/`innerKey`, so a block makes no extra object on the hot path. Keyed by
+  // duration as well as triple (not by triple alone, as the prototype's own
+  // `slew_g.js` is) because the padding this function adds depends on the block's own
+  // duration, which the same triple can play at more than one length (for example a
+  // spoiler gradient shared by blocks with different trailing delays); a file's own
+  // durations are pooled to a small number of distinct values
+  // (`diagram_data.diagram_tables`), so this does not multiply the number of distinct
+  // cache entries by the number of blocks.
+  function _tripleGeometry(tb, kx, ky, kz, dur, evCache, outerKey, innerKey) {
+    let inner = evCache.triple.get(outerKey);
+    if (inner === undefined) {
+      inner = new Map();
+      evCache.triple.set(outerKey, inner);
+    }
+    let g = inner.get(innerKey);
     if (g !== undefined) return g;
 
     const times = _tripleTimes(tb, kx, ky, kz, dur, evCache.geom);
@@ -5937,18 +5952,18 @@ const GLanes = (() => {
       blockMax = 0;
     }
     g = { times, pieceA, pieceB, pieceC, blockMin, blockMax };
-    evCache.triple.set(key, g);
+    inner.set(innerKey, g);
     return g;
   }
 
-  // The dense triple id of block `i`, its duration, and its numeric cache key
-  // (`M`, `D` from `decode`): `((kx * M + ky) * M + kz) * D + durIdx`.
+  // The dense triple id of block `i`, its duration, and its two-level numeric cache
+  // key (`M`, `D` from `decode`): the outer key `kx * M + ky` and the inner key
+  // `kz * D + durIdx` (the comment of `_tripleGeometry` above).
   function _tripleKeyOf(tb, i, M, D) {
     const kx = tb.gx[i], ky = tb.gy[i], kz = tb.gz[i];
     const durIdx = tb.duration_index[i];
     const dur = tb.durations[durIdx];
-    const key = ((kx * M + ky) * M + kz) * D + durIdx;
-    return { kx, ky, kz, dur, key };
+    return { kx, ky, kz, dur, outerKey: kx * M + ky, innerKey: kz * D + durIdx };
   }
 
   // The minimum/maximum |G| range of block `i`: the whole-block extrema of its
@@ -5959,7 +5974,7 @@ const GLanes = (() => {
   // contributes nothing to.
   function _blockGRange(tb, i, evCache, M, D) {
     const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.key);
+    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
     return [g.blockMin, g.blockMax];
   }
 
@@ -5977,7 +5992,7 @@ const GLanes = (() => {
     if (overlapHi <= overlapLo) return null;
 
     const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.key);
+    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
     const n = g.times.length;
     // Defensive, not reached in practice: `n < 2` only when `dur === 0` (the times
     // are `{0, dur}`, collapsed), and a 0-duration block's `[bStart, bStart]` can
@@ -6066,16 +6081,17 @@ const GLanes = (() => {
   // pass over the blocks). Returns a model for `minMax`/`lanesFor`/`laneMeta`.
   //
   // `D`, the number of distinct block durations (`tb.durations.length`, at least 1 so
-  // an empty file's unused key space is still well-formed), is part of every
-  // per-(triple, duration) cache key (`_tripleKeyOf`). Throws when the largest such
-  // key would not stay an exact integer below 2^53, the same defensive check
-  // pns_lanes.js's `decode` makes for its own per-event cache key.
+  // an empty file's unused key space is still well-formed), is part of the two-level
+  // cache key `_tripleKeyOf` computes (the comment of `_tripleGeometry`). Throws when
+  // either of the two keys' own bound, `M * M - 1` (the outer key) or `M * D - 1`
+  // (the inner key), would not stay an exact integer below 2^53, the same defensive
+  // check pns_lanes.js's `decode` makes for its own per-event cache key.
   function decode(seqModel) {
     const tb = seqModel.tables;
     const numGradEvents = tb.grad_n.length;
     const M = numGradEvents + 1;
     const D = Math.max(1, tb.durations.length);
-    if ((M * M * M - 1) * D + (D - 1) > Number.MAX_SAFE_INTEGER) {
+    if (M * M - 1 > Number.MAX_SAFE_INTEGER || M * D - 1 > Number.MAX_SAFE_INTEGER) {
       throw new Error(
         "GLanes.decode: the per-(triple, duration) cache key of this file would exceed 2^53");
     }
@@ -6232,13 +6248,17 @@ if (typeof module !== "undefined") module.exports = GLanes;
 // has few enough points, or the minimum and the maximum of each lane in each of the
 // plot's time bins otherwise); when the Gradients group is visible, appends the |G|
 // lane (GLanes.lanesFor, docs/plans/diagram-lanes.md phase 5) after gz, building the
-// file's GLanes model the first time a render needs it (a hidden Gradients group costs
-// no |G| computation, the same rule the PNS lane already follows); and, when the PNS
-// group is visible and the current file has PNS data, appends the PNS lane from
-// PnsLanes.lanesFor after that. A hidden PNS group costs no PNS computation: `lanesFor`
-// never calls PnsLanes.lanesFor for it. The status line under the chart
-// (`{card_id}-mode`) says which data drew the waveform lanes, then, when the PNS lane
-// is drawn, PnsLanes.statusText's sentence for it.
+// file's GLanes model the first time a render needs it, through `buildGLane` (a hidden
+// Gradients group costs no |G| computation, the same rule the PNS lane already
+// follows). `buildGLane` runs `GLanes.decode` in a try/catch: a failure (for example a
+// file with very many gradient events, or no memory) removes only the |G| lane instead
+// of stopping the whole card from drawing, and is not retried on a later render of the
+// same file. And, when the PNS group is visible and the current file has PNS data,
+// appends the PNS lane from PnsLanes.lanesFor after that. A hidden PNS group costs no
+// PNS computation: `lanesFor` never calls PnsLanes.lanesFor for it. The status line
+// under the chart (`{card_id}-mode`) says which data drew the waveform lanes, then,
+// when the |G| lane failed to build, why it is not drawn, then, when the PNS lane is
+// drawn, PnsLanes.statusText's sentence for it.
 //
 // A file's tables can be large (up to 10^7 blocks), so decoding runs only for the
 // file of the first window at start, and for another file the first time a button
@@ -6273,11 +6293,16 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // render, else null (the PNS group is hidden, or the current file has no PNS data):
   // then the status line is the SeqLanes sentence alone, as it was before this lane
   // existed. `onRaster` is `current.pns.model.onRaster`, read by the caller so this
-  // function itself never reads `current`.
-  function showStatus(exact, bins, pnsResult, onRaster) {
+  // function itself never reads `current`. `gError` is `current.g.error` when the
+  // Gradients group is visible and `buildGLane` (below) caught a `GLanes.decode`
+  // failure for the current file, else null: then the sentence "The |G| lane is not
+  // drawn: <message>" (decision 13 of docs/plans/review-bugs.md) is added, so the
+  // card explains why the chart has one fewer lane instead of leaving it unsaid.
+  function showStatus(exact, bins, pnsResult, onRaster, gError) {
     let text = exact
       ? "Exact waveform."
       : `Minimum and maximum in each of ${bins} time bins. Zoom in to see the exact waveform.`;
+    if (gError) text += ` The |G| lane is not drawn: ${gError.message || String(gError)}`;
     if (pnsResult) text += ` ${PnsLanes.statusText(pnsResult, onRaster)}`;
     statusEl.textContent = text;
   }
@@ -6286,12 +6311,16 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // `{seq, pns, g, view}`, `seq` the SeqLanes model (as before), `pns` either null
   // (the file has no "pns" key) or `{model, laneMeta}`, the PnsLanes model and its
   // lane object without segments (PnsLanes.laneMeta(file.pns.summary), built once
-  // here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta}`
-  // pair, built lazily by `lanesFor` (below) the first time a render needs it: `g`
-  // starts null here, unlike `pns`, because GLanes.decode needs no data beyond the
-  // diagram tables already decoded below, so there is nothing to fetch in parallel
-  // with them, and building it costs a pass over the file's blocks that a render
-  // with the Gradients group hidden should not pay for. Decodes every one of the
+  // here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta,
+  // error}` (`buildGLane`, defined near the chart below), built lazily by `lanesFor`
+  // the first time a render needs it: `g` starts null here, unlike `pns`, because
+  // GLanes.decode needs no data beyond the diagram tables already decoded below, so
+  // there is nothing to fetch in parallel with them, and building it costs a pass
+  // over the file's blocks that a render with the Gradients group hidden should not
+  // pay for. Once built, `g` stays in the cache even when `GLanes.decode` failed
+  // (`model` and `laneMeta` null, `error` the caught exception), so a later render of
+  // the same file does not try again: the |G| lane is left out, and the status line
+  // says why. Decodes every one of the
   // file's diagram tables, and, when the file has PNS data, its two stored-level
   // tables, all in parallel; the diagram tables are reused for both SeqLanes.decode
   // and PnsLanes.decode (a PNS model reads grad_*/duration_* out of the same tables,
@@ -6446,6 +6475,28 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     });
   }
 
+  // The |G| lane's `{model, laneMeta, error}` for one file (plan section 4.3 of
+  // docs/plans/review-bugs.md, B3). `GLanes.decode` can throw (for example a file with
+  // very many gradient events, or no memory); this is the one place that calls it, so
+  // catching it here covers every path that can reach a `GLanes` failure: the first
+  // file's initial render inside `laneChart` below, a later file shown through a
+  // window button (`showWindow`), and a window shown through the `goto` message
+  // (`gotoBlock`, which calls `showWindow` too) -- all three run through `lanesFor`
+  // below. On success, `error` is null. On failure, `model` and `laneMeta` are null (so
+  // the caller below appends no |G| lane) and `error` is the caught exception (so the
+  // status line can say why); logged once here with `console.error`, not on every
+  // render, because the caller keeps the returned object in `current.g` and never
+  // calls this again for the same file.
+  function buildGLane(seqModel) {
+    try {
+      const model = GLanes.decode(seqModel);
+      return { model, laneMeta: GLanes.laneMeta(model), error: null };
+    } catch (error) {
+      console.error(`diagram card "${section.id}": the |G| lane is not drawn:`, error);
+      return { model: null, laneMeta: null, error };
+    }
+  }
+
   const chart = PulseqReport.laneChart({
     svg: document.getElementById(`${section.id}-diagram`),
     chart: document.getElementById(`${section.id}-chart`),
@@ -6456,19 +6507,24 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     lanesFor: (view, bins, visibleGroupIds) => {
       const r = SeqLanes.lanesFor(current.seq, view, bins);
       let lanes = r.lanes;
+      let gError = null;
       if (visibleGroupIds.has("gradients")) {
-        if (!current.g) {
-          const gModel = GLanes.decode(current.seq);
-          current.g = { model: gModel, laneMeta: GLanes.laneMeta(gModel) };
+        if (!current.g) current.g = buildGLane(current.seq);
+        gError = current.g.error;
+        if (current.g.model) {
+          lanes = lanes.concat(
+            [GLanes.lanesFor(current.g.model, current.g.laneMeta, view, bins)]
+          );
         }
-        lanes = lanes.concat([GLanes.lanesFor(current.g.model, current.g.laneMeta, view, bins)]);
       }
       let pnsResult = null;
       if (current.pns && visibleGroupIds.has("pns")) {
         pnsResult = PnsLanes.lanesFor(current.pns.model, current.pns.laneMeta, view, bins);
         lanes = lanes.concat([pnsResult.lane]);
       }
-      showStatus(r.exact, bins, pnsResult, current.pns ? current.pns.model.onRaster : null);
+      showStatus(
+        r.exact, bins, pnsResult, current.pns ? current.pns.model.onRaster : null, gError
+      );
       return lanes;
     },
     xDomain: windows[0].view_ms,
