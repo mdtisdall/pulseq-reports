@@ -9,11 +9,12 @@ const PnsLanes = require(
 // ---- Shared fixtures -------------------------------------------------------
 //
 // `pns_lanes.js` never reads pypulseq output (there is none in this test
-// file: `docs/plans/diagram-lanes.md` and the prototype's README have the
+// file: `docs/plans/diagram-lanes.md` and the README in the tag
+// `archive/pns-lanes-prototype` (`prototypes/pns_lanes/README.md`) have the
 // SAFE model with line numbers). Every model here is hand-made: typed
 // arrays built in this file, as `test_seq_lanes.js` builds its own. The
 // hardware numbers are pypulseq's own `safe_example_hw()`, copied from the
-// prototype README's table, not read from pypulseq.
+// table of that README, not read from pypulseq.
 
 const DT = 1e-5; // the gradient raster, s (10 microseconds)
 
@@ -198,12 +199,105 @@ function bruteForceTotals(tables, dt, hw) {
   return { total, numSamples, blockLen };
 }
 
-// The whole-file total from `_internal._plainRecursion`, collected into one
-// array (the model's own per-sample recursion, module code, unlike
-// `bruteForceTotals` above).
+// The per-sample recursion (the plain method) for one block: advances
+// `state` and `lastG` in place, sample by sample, and calls
+// `emit(globalSampleIndex, total, px, py, pz)` for every sample of the
+// block. Used only by `plainRecursion` (the whole-file baseline that the
+// tests compare `exactView` against), never by `exactView` itself:
+// `exactView`'s own inner loop is written out by hand instead, so that it
+// reads no object property and calls no function for each sample. The
+// per-event samples come from the module (`PnsLanes._internal.eventEntry`);
+// the recursion over them is written here.
+function runBlockSamples(model, n, eventIdx, state, lastG, sampleCursor, emit) {
+  if (n === 0) return;
+  const dt = model.dt;
+  const g = [null, null, null];
+  for (let axis = 0; axis < 3; axis++) {
+    const ev = eventIdx[axis];
+    g[axis] = ev === 0 ? null : PnsLanes._internal.eventEntry(model, axis, ev, n).g;
+  }
+  const alpha = model.alpha, c = model.c, aCoef = model.aCoef, axisFactor = model.axisFactor;
+  for (let j = 0; j < n; j++) {
+    let px = 0, py = 0, pz = 0;
+    for (let axis = 0; axis < 3; axis++) {
+      const garr = g[axis];
+      const cur = garr === null ? 0 : garr[j];
+      const x = (cur - lastG[axis]) / dt;
+      lastG[axis] = cur;
+      const base = axis * 3;
+      const y0 = alpha[base] * x + c[base] * state[base];
+      const y1 = alpha[base + 1] * Math.abs(x) + c[base + 1] * state[base + 1];
+      const y2 = alpha[base + 2] * x + c[base + 2] * state[base + 2];
+      state[base] = y0; state[base + 1] = y1; state[base + 2] = y2;
+      const p = (aCoef[base] * Math.abs(y0) + aCoef[base + 1] * y1 + aCoef[base + 2] * Math.abs(y2))
+        * axisFactor[axis];
+      if (axis === 0) px = p; else if (axis === 1) py = p; else pz = p;
+    }
+    const total = Math.sqrt(px * px + py * py + pz * pz);
+    emit(sampleCursor + j, total, px, py, pz);
+  }
+}
+
+// The per-sample recursion over the whole file, from a zero initial state
+// (the filter and the boundary sample before the first real sample are
+// both zero, from the zero padding before the file). Used only as the
+// brute-force baseline that `exactView` (the block maps) is checked against
+// (`docs/plans/diagram-lanes.md`, phase 3, task 3.4, item 1), never by
+// `exactView` itself. Calls `onChunk({fromSample, count, t, total, x, y, z})`
+// once for each chunk of up to `chunkSize` samples, in play order.
+function plainRecursion(model, onChunk, chunkSize = 65536) {
+  const dt = model.dt;
+  const state = new Float64Array(9);
+  const lastG = new Float64Array(3);
+  const tb = model.tables;
+  const eventIdx = [0, 0, 0];
+
+  let chunkFrom = 0;
+  let chunkT = new Float64Array(chunkSize);
+  let chunkTotal = new Float64Array(chunkSize);
+  let chunkX = new Float64Array(chunkSize);
+  let chunkY = new Float64Array(chunkSize);
+  let chunkZ = new Float64Array(chunkSize);
+  let chunkLen = 0;
+
+  const flush = () => {
+    if (chunkLen === 0) return;
+    onChunk({
+      fromSample: chunkFrom,
+      count: chunkLen,
+      t: chunkT.subarray(0, chunkLen),
+      total: chunkTotal.subarray(0, chunkLen),
+      x: chunkX.subarray(0, chunkLen),
+      y: chunkY.subarray(0, chunkLen),
+      z: chunkZ.subarray(0, chunkLen),
+    });
+    chunkFrom += chunkLen;
+    chunkLen = 0;
+  };
+
+  const emit = (k, tot, px, py, pz) => {
+    if (chunkLen === chunkSize) flush();
+    chunkT[chunkLen] = (k + 0.5) * dt;
+    chunkTotal[chunkLen] = tot; chunkX[chunkLen] = px; chunkY[chunkLen] = py; chunkZ[chunkLen] = pz;
+    chunkLen++;
+  };
+
+  let sampleCursor = 0;
+  for (let i = 0; i < model.numBlocks; i++) {
+    const n = model.blockLen[i];
+    eventIdx[0] = tb.gx[i]; eventIdx[1] = tb.gy[i]; eventIdx[2] = tb.gz[i];
+    runBlockSamples(model, n, eventIdx, state, lastG, sampleCursor, emit);
+    sampleCursor += n;
+  }
+  flush();
+}
+
+// The whole-file total from `plainRecursion`, collected into one array (the
+// per-sample recursion over the model's per-event samples, unlike
+// `bruteForceTotals` above, which never reads the module).
 function collectPlainRecursion(model) {
   const total = new Float64Array(model.numSamples);
-  PnsLanes._internal._plainRecursion(model, (chunk) => {
+  plainRecursion(model, (chunk) => {
     total.set(chunk.total, chunk.fromSample);
   });
   return total;
@@ -247,7 +341,7 @@ const LANE_META = {
   domain: [0, 110], ticks: [0, 100], tick_labels: ["0", "100"], empty: false, fill: 0.0,
 };
 
-// ---- 1. Independent brute force against `_plainRecursion` -----------------
+// ---- 1. Independent brute force against `plainRecursion` ------------------
 
 test("test_brute_force_matches_plain_recursion_on_a_hand_model", () => {
   // A model with varied block lengths, blocks with no gradient, and a
@@ -256,7 +350,7 @@ test("test_brute_force_matches_plain_recursion_on_a_hand_model", () => {
   // formulas (`bruteForceTotals`, which never calls `pns_lanes.js`). This
   // is not required to be bit-exact: the two are different code (a
   // whole-file array build against the module's block-by-block, per-event
-  // cache), so 1e-12 of the peak is the bound (rule 2 of the worker spec).
+  // cache), so 1e-12 of the peak is the bound (`assertWithinPeakTol`).
   const tables = buildPnsTables(80, 7);
   const model = decodeModel(tables);
   const brute = bruteForceTotals(tables, DT, HW);
@@ -320,9 +414,10 @@ test("test_exact_view_matches_plain_recursion_across_many_views", () => {
 // local time 9.5 * dt, interpolates to exactly 8). Block 1 (8 samples): gx
 // event starts at offset 0 already at 8 and holds it before ramping to 0,
 // so its sample 0 is also exactly 8: the two blocks' gradients agree at the
-// border, unlike a ramp that returns to 0 (the case the prototype's README
-// already checked). This exercises the block map's boundary term x[0] =
-// (g[0] - g_prev_last) / dt with a non-zero g_prev_last.
+// border, unlike a ramp that returns to 0 (the case that the README in the
+// tag `archive/pns-lanes-prototype` already checked). This exercises the
+// block map's boundary term x[0] = (g[0] - g_prev_last) / dt with a non-zero
+// g_prev_last.
 function buildBorderTables() {
   const grad_delay = Float64Array.from([0, 0]);
   const grad_n = Uint32Array.from([4, 3]);
@@ -349,7 +444,7 @@ test("test_gradient_not_zero_at_a_block_border", () => {
   // last sample of block 0 and 8 at the first sample of block 1 (a
   // continuous gradient), or the fixture does not test what it claims to.
   const brute = bruteForceTotals(tables, DT, HW);
-  // Check 1: the brute force against `_plainRecursion`.
+  // Check 1: the brute force against `plainRecursion`.
   const plain = collectPlainRecursion(model);
   assertWithinPeakTol(plain, brute.total, 1e-12, "border: plain recursion vs brute force");
 
@@ -393,8 +488,7 @@ test("test_exact_view_bins_match_brute_force_binning_of_the_samples", () => {
 
       // The reference: the same range's exact per-sample values, fetched in
       // "samples" kind by asking for enough bins that the switch cannot
-      // trigger, then binned by hand with the same formula as the module's
-      // interface doc.
+      // trigger, then binned by hand with the formula that `exactView` uses.
       const ref = PnsLanes.exactView(model, t0, t1, count);
       assert.equal(ref.kind, "samples");
       const span = t1 - t0;
@@ -537,9 +631,8 @@ test("test_levels_pyramid_matches_brute_force_min_max", () => {
 // ---- 7. lanesFor -------------------------------------------------------------
 
 // A model long enough (in file time) to need the pyramid (> EXACT_MAX_S),
-// with a stored level built from the model's own `_plainRecursion` (the
-// worker spec's "so that the numbers are realistic"), used by all three
-// `lanesFor` tests below.
+// with a stored level built from `plainRecursion` (so that the numbers are
+// realistic), used by all three `lanesFor` tests below.
 function buildPyramidModel(binSamples) {
   const tables = buildPnsTables(1100, 17, { durationOptionsDt: [200], noEventProb: 0.4 });
   const placeholder = decodeModel(tables);
@@ -706,8 +799,8 @@ test("test_on_raster_false_never_uses_the_exact_view", () => {
   // A short span, so `lanesFor` would use the exact view if it could: it
   // must not, so it must not throw, and it draws from the stored level.
   // `bins = 2` lets a stored level fit the display bin, so `gap` is false:
-  // `gap` says only that the stored level is too coarse (item 7), and the
-  // card script reads `model.onRaster` for a file without an exact view.
+  // `gap` says only that the stored level is too coarse (item 7), and
+  // `statusText` reads `result.onRaster` for a file without an exact view.
   const bins = 2;
   const spanS = 20 * DT; // still <= EXACT_MAX_S ("the view is short")
   const D = spanS / bins;
@@ -731,8 +824,8 @@ test("test_grad_scale_multiplies_every_gradient_sample", () => {
   // gradScale (decision 14: `grad_value / 1000 * gradScale` in T/m). This
   // is not required to be bit-exact: the two models take different code
   // paths to the same number (one scale multiply per sample against a
-  // pre-doubled input table), so 1e-12 of the peak is the bound (rule 2 of
-  // the worker spec, as in section 1 above).
+  // pre-doubled input table), so 1e-12 of the peak is the bound, as in
+  // section 1 above.
   const tables = buildPnsTables(60, 29, { durationOptionsDt: [15, 25], noEventProb: 0.3 });
   const doubledTables = { ...tables, grad_value: Float64Array.from(tables.grad_value, (v) => v * 2) };
   const scaledModel = decodeModel(tables, { gradScale: 2 });
@@ -780,6 +873,7 @@ test("test_empty_file_has_no_samples_and_no_exact_view_crash", () => {
     exact: true,
     binMs: null,
     gap: false,
+    onRaster: true,
   });
 });
 
@@ -826,10 +920,10 @@ test("test_lane_meta_has_the_fixed_lane_fields_and_the_peak_dependent_domain", (
   assert.equal(meta.fill, 0.0);
 
   // domain[0] is always 0; domain[1] is 1.1 * max(100, 100 * peak) (plan
-  // section 4.5, item 4, and the worker spec): a peak below the limit still
-  // gives the [0, 110] domain the old PNS card's chart used, and a peak
-  // above the limit widens the domain to show it. 1.1 * 100 is not exact in
-  // float64, so these compare within a tiny tolerance, not with deepEqual.
+  // section 4.5, item 4): a peak below the limit still gives the [0, 110]
+  // domain the old PNS card's chart used, and a peak above the limit widens
+  // the domain to show it. 1.1 * 100 is not exact in float64, so these
+  // compare within a tiny tolerance, not with deepEqual.
   const domainOf = peak => PnsLanes.laneMeta({ peak }).domain;
   const assertDomain = (peak, hi) => {
     const [lo, got] = domainOf(peak);
@@ -846,50 +940,53 @@ test("test_status_text_exact", () => {
   // "PNS: exact." whenever result.exact is true, whatever onRaster is (a
   // file that is not on the raster never reaches lanesFor's exact branch,
   // so this case is defensive, not one lanesFor itself produces).
-  assert.equal(PnsLanes.statusText({ exact: true, binMs: null, gap: false }, true), "PNS: exact.");
+  assert.equal(
+    PnsLanes.statusText({ exact: true, binMs: null, gap: false, onRaster: true }),
+    "PNS: exact."
+  );
 });
 
 test("test_status_text_bins_with_a_sensible_digit_count", () => {
   // The bin width is formatted to 3 significant figures (a sensible digit
   // count), not printed with pns_lanes.js's own float64 precision.
   assert.equal(
-    PnsLanes.statusText({ exact: false, binMs: 6.15, gap: false }, true),
+    PnsLanes.statusText({ exact: false, binMs: 6.15, gap: false, onRaster: true }),
     "PNS: minimum and maximum in bins of 6.15 ms."
   );
   assert.equal(
-    PnsLanes.statusText({ exact: false, binMs: 393.6, gap: false }, true),
+    PnsLanes.statusText({ exact: false, binMs: 393.6, gap: false, onRaster: true }),
     "PNS: minimum and maximum in bins of 394 ms."
   );
   assert.equal(
-    PnsLanes.statusText({ exact: false, binMs: 1574.4, gap: false }, true),
+    PnsLanes.statusText({ exact: false, binMs: 1574.4, gap: false, onRaster: true }),
     "PNS: minimum and maximum in bins of 1570 ms."
   );
 });
 
 test("test_status_text_gap_adds_the_zoom_in_sentence", () => {
   assert.equal(
-    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: true }, true),
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: true, onRaster: true }),
     `PNS: minimum and maximum in bins of 24.6 ms. Zoom in to ${PnsLanes.EXACT_MAX_S} s or less for the exact values.`
   );
   // No gap: no extra sentence.
   assert.equal(
-    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: false }, true),
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: false, onRaster: true }),
     "PNS: minimum and maximum in bins of 24.6 ms."
   );
 });
 
 test("test_status_text_off_raster_replaces_the_gap_sentence", () => {
   // onRaster false: the "not on the raster" sentence, never the "zoom in"
-  // sentence, even when gap is also true (plan section 4.5, item 2, and the
-  // worker spec's "instead"): zooming in would not reach an exact view for
-  // such a file, so telling the reader to do it would be wrong.
+  // sentence (the sentence of plan section 4.5, item 2), even when gap is
+  // also true: zooming in would not reach an exact view for such a file, so
+  // telling the reader to do it would be wrong.
   assert.equal(
-    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: true }, false),
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: true, onRaster: false }),
     "PNS: minimum and maximum in bins of 24.6 ms. The file is not on the gradient raster, " +
       "so there is no exact view."
   );
   assert.equal(
-    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: false }, false),
+    PnsLanes.statusText({ exact: false, binMs: 24.6, gap: false, onRaster: false }),
     "PNS: minimum and maximum in bins of 24.6 ms. The file is not on the gradient raster, " +
       "so there is no exact view."
   );

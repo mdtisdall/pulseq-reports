@@ -6,25 +6,27 @@
 // `decode` builds a model from the decoded diagram tables (as
 // `SeqLanes.decode` takes them) and the file entry's `pns` object (plan
 // section 4.4). `exactView` answers the exact PNS of a time range from that
-// model, using the block maps of the prototype's README ("Block maps": a
-// scan with a checkpoint every `GROUP_BLOCKS` blocks), not a per-sample
-// recursion over the whole file. `levels` builds the coarser pyramid levels
-// (plan section 4.5) that `lanesFor` reads for a zoomed-out view. `laneMeta`
-// and `statusText` are the two pure helpers the diagram card script
+// model, using the block maps of the prototype,
+// `prototypes/pns_lanes/pns_lanes.js` and its README in the tag
+// `archive/pns-lanes-prototype` (README section "Block maps": a scan with a
+// checkpoint every `GROUP_BLOCKS` blocks), not a per-sample recursion over
+// the whole file. `levels` builds the coarser pyramid levels (plan section
+// 4.5) that `lanesFor` reads for a zoomed-out view. `laneMeta` and
+// `statusText` are the two pure helpers the diagram card script
 // (assets/cards/diagram.js, phase 4) uses to draw the lane and its part of
 // the status line: `laneMeta` builds the lane object without "segments",
 // and `statusText` turns one `lanesFor` result into the sentence that says
 // which data drew the render.
 //
-// The model (unchanged from the prototype, prototypes/pns_lanes/pns_lanes.js
-// and its README): each block `i` holds `n_i = round(duration_i / dt)`
-// gradient-raster samples, at the local times `(j + 0.5) * dt` from the
-// block start. The gradient of one axis in a block is the event's points at
-// `grad_delay + grad_offset` (s, from the block start), with values
-// `grad_value / 1000 * gradScale` (T/m; `gradScale` is the file's
-// `pns.gradScale`, 1.0 for a proton sequence, plan section 4.4, decision
-// 14), linear between points, 0 before the first point and after the last,
-// 0 for a block with no event on the axis. This
+// The model (unchanged from the prototype, `prototypes/pns_lanes/pns_lanes.js`
+// and its README in the tag `archive/pns-lanes-prototype`): each block `i`
+// holds `n_i = round(duration_i / dt)` gradient-raster samples, at the local
+// times `(j + 0.5) * dt` from the block start. The gradient of one axis in a
+// block is the event's points at `grad_delay + grad_offset` (s, from the
+// block start), with values `grad_value / 1000 * gradScale` (T/m; `gradScale`
+// is the file's `pns.gradScale`, 1.0 for a proton sequence, plan section 4.4,
+// decision 14), linear between points, 0 before the first point and after
+// the last, 0 for a block with no event on the axis. This
 // agrees with pypulseq for a sequence that pypulseq accepts: pypulseq's own
 // `get_gradients` draws a line across the gap between two events (0 to the
 // first point, the last point to 0), and `add_block` makes a gradient
@@ -47,8 +49,9 @@ const PnsLanes = (() => {
   const EXACT_MAX_S = 10.0; // the longest exact view (plan section 4.2, decision 13)
   const ZERO_H = [0, 0, 0];
 
-  // ---- Per-event data (README "Per-event data (computed one time for each
-  // unique event)"): the samples g[j] (T/m) of one gradient event, for a
+  // ---- Per-event data (the README's section "Data layout of the model" in
+  // the tag `archive/pns-lanes-prototype`, the item for each unique gradient
+  // event): the samples g[j] (T/m) of one gradient event, for a
   // block of `n` samples starting where the event's own delay/offset times
   // are measured from (the block start). Linear interpolation between the
   // event's points (delay + offset[p], value[p] mT/m / 1000 * scale), 0
@@ -59,7 +62,7 @@ const PnsLanes = (() => {
   // non-decreasing, so one sequential merge (not a binary search per
   // sample) computes all n samples in O(n + point count). Reads only
   // grad_delay, grad_n, grad_offset_at, grad_at, grad_offset, grad_value
-  // (the tables this module needs, per the interface note).
+  // (the tables this module needs).
   function _eventSamples(tables, dt, eventIdx, n, scale) {
     const idx = eventIdx - 1;
     const delay = tables.grad_delay[idx];
@@ -83,7 +86,8 @@ const PnsLanes = (() => {
       const t1 = delay + offset[offAt + p + 1];
       const v0 = value[valAt + p] / 1000 * scale;
       const v1 = value[valAt + p + 1] / 1000 * scale;
-      g[j] = t1 === t0 ? v1 : v0 + (v1 - v0) / (t1 - t0) * (t - t0);
+      // The `while` above stops with t0 <= t < t1, so t1 > t0.
+      g[j] = v0 + (v1 - v0) / (t1 - t0) * (t - t0);
     }
     return g;
   }
@@ -141,7 +145,8 @@ const PnsLanes = (() => {
     let pair = cache.get(n);
     if (pair !== undefined) return pair;
     const cn = Math.pow(c, n);
-    const cn1 = n === 0 ? Math.pow(c, -1) : Math.pow(c, n - 1);
+    // n >= 1: `_applyBlockMap` returns first for n === 0.
+    const cn1 = Math.pow(c, n - 1);
     pair = [cn, cn1];
     cache.set(n, pair);
     return pair;
@@ -153,6 +158,14 @@ const PnsLanes = (() => {
   // on that axis (0 = no event). A block of n = 0 samples (a delay-raster
   // block with no gradient-raster samples) leaves everything unchanged: it
   // has no boundary sample and contributes no filter input.
+  //
+  // For one filter, the block map of a block of n samples takes the start
+  // state s to the state after the block (the README's section "Block maps"
+  // in the tag `archive/pns-lanes-prototype`):
+  //   s_n = c^n * s + c^(n - 1) * alpha * u0 + h[n - 1]
+  // with u0 the boundary input (x[0] = (g[0] - lastG) / dt, or its absolute
+  // value for the filter of |x|) and h[n - 1] the zero-state response of the
+  // event's own samples (`_zeroStateResponse`).
   function _applyBlockMap(model, n, eventIdx, state, lastG) {
     if (n === 0) return;
     const dt = model.dt;
@@ -179,98 +192,6 @@ const PnsLanes = (() => {
       }
       lastG[axis] = gLast;
     }
-  }
-
-  // The per-sample recursion (the plain method) for one block: advances
-  // `state` and `lastG` in place, sample by sample, and calls
-  // `emit(globalSampleIndex, total, px, py, pz)` for every sample of the
-  // block. Used only by `_plainRecursion` (the whole-file baseline that the
-  // tests compare `exactView` against), never by `exactView` itself:
-  // `exactView`'s own inner loop (below) is written out by hand instead, so
-  // that it reads no object property and calls no function for each sample.
-  function _runBlockSamples(model, n, eventIdx, state, lastG, sampleCursor, emit) {
-    if (n === 0) return;
-    const dt = model.dt;
-    const g = [null, null, null];
-    for (let axis = 0; axis < 3; axis++) {
-      const ev = eventIdx[axis];
-      g[axis] = ev === 0 ? null : _eventEntry(model, axis, ev, n).g;
-    }
-    const alpha = model.alpha, c = model.c, aCoef = model.aCoef, axisFactor = model.axisFactor;
-    for (let j = 0; j < n; j++) {
-      let px = 0, py = 0, pz = 0;
-      for (let axis = 0; axis < 3; axis++) {
-        const garr = g[axis];
-        const cur = garr === null ? 0 : garr[j];
-        const x = (cur - lastG[axis]) / dt;
-        lastG[axis] = cur;
-        const base = axis * 3;
-        const y0 = alpha[base] * x + c[base] * state[base];
-        const y1 = alpha[base + 1] * Math.abs(x) + c[base + 1] * state[base + 1];
-        const y2 = alpha[base + 2] * x + c[base + 2] * state[base + 2];
-        state[base] = y0; state[base + 1] = y1; state[base + 2] = y2;
-        const p = (aCoef[base] * Math.abs(y0) + aCoef[base + 1] * y1 + aCoef[base + 2] * Math.abs(y2))
-          * axisFactor[axis];
-        if (axis === 0) px = p; else if (axis === 1) py = p; else pz = p;
-      }
-      const total = Math.sqrt(px * px + py * py + pz * pz);
-      emit(sampleCursor + j, total, px, py, pz);
-    }
-  }
-
-  // The per-sample recursion over the whole file, from a zero initial state
-  // (the filter and the boundary sample before the first real sample are
-  // both zero, from the zero padding before the file). Renamed from the
-  // prototype's `wholeFileRecursion`: used only as the brute-force baseline
-  // that `exactView` (the block maps) is checked against (plan section 3.5,
-  // item 1), never by `exactView` itself. Calls
-  // `onChunk({fromSample, count, t, total, x, y, z})` once for each chunk of
-  // up to `chunkSize` samples, in play order.
-  function _plainRecursion(model, onChunk, chunkSize = 65536) {
-    const dt = model.dt;
-    const state = new Float64Array(9);
-    const lastG = new Float64Array(3);
-    const tb = model.tables;
-    const eventIdx = [0, 0, 0];
-
-    let chunkFrom = 0;
-    let chunkT = new Float64Array(chunkSize);
-    let chunkTotal = new Float64Array(chunkSize);
-    let chunkX = new Float64Array(chunkSize);
-    let chunkY = new Float64Array(chunkSize);
-    let chunkZ = new Float64Array(chunkSize);
-    let chunkLen = 0;
-
-    const flush = () => {
-      if (chunkLen === 0) return;
-      onChunk({
-        fromSample: chunkFrom,
-        count: chunkLen,
-        t: chunkT.subarray(0, chunkLen),
-        total: chunkTotal.subarray(0, chunkLen),
-        x: chunkX.subarray(0, chunkLen),
-        y: chunkY.subarray(0, chunkLen),
-        z: chunkZ.subarray(0, chunkLen),
-      });
-      chunkFrom += chunkLen;
-      chunkLen = 0;
-    };
-
-    const emit = (k, tot, px, py, pz) => {
-      if (chunkLen === chunkSize) flush();
-      chunkT[chunkLen] = (k + 0.5) * dt;
-      chunkTotal[chunkLen] = tot; chunkX[chunkLen] = px; chunkY[chunkLen] = py; chunkZ[chunkLen] = pz;
-      chunkLen++;
-    };
-
-    let sampleCursor = 0;
-    for (let i = 0; i < model.numBlocks; i++) {
-      const n = model.blockLen[i];
-      eventIdx[0] = tb.gx[i]; eventIdx[1] = tb.gy[i]; eventIdx[2] = tb.gz[i];
-      _runBlockSamples(model, n, eventIdx, state, lastG, sampleCursor, emit);
-      sampleCursor += n;
-    }
-    flush();
   }
 
   // ---- decode ----
@@ -332,7 +253,7 @@ const PnsLanes = (() => {
     // blockLen[i] = round(duration / dt), the number of gradient-raster
     // samples of block i. `onRaster` is false when any block's duration is
     // not within 1e-6 samples of a whole number: then `exactView` throws
-    // and `lanesFor` never chooses the exact view (item 2, gap = true).
+    // and `lanesFor` never chooses the exact view.
     const blockLen = new Uint32Array(numBlocks);
     const numGroups = Math.ceil(numBlocks / GROUP_BLOCKS) || 1;
     const groupFirstSample = new Float64Array(numGroups);
@@ -450,20 +371,21 @@ const PnsLanes = (() => {
     return [k0, k1];
   }
 
-  // The exact PNS of the samples k with t0 <= (k + 0.5) * dt <= t1
-  // (interface doc). Starts from the checkpoint of the group before the
-  // view, applies block maps (not per-sample recursion) up to the block
-  // that holds the first sample in range, then runs the per-sample
-  // recursion from there by hand (not `_runBlockSamples`, and not through a
-  // callback), emitting only the samples in range, and stops as soon as the
-  // range is covered.
+  // The exact PNS of the samples k with t0 <= (k + 0.5) * dt <= t1 (as the
+  // README's section "Interface of `pns_lanes.js`" in the tag
+  // `archive/pns-lanes-prototype` has it). Starts from the checkpoint of the
+  // group before the view, applies block maps (not per-sample recursion) up
+  // to the block that holds the first sample in range, then runs the
+  // per-sample recursion from there by hand (not through a callback),
+  // emitting only the samples in range, and stops as soon as the range is
+  // covered.
   //
   // All per-axis, per-filter constants are read out of the model's typed
   // arrays into local variables once, before either loop, and the running
   // filter states and last gradient samples are kept in local variables
   // (not array slots) through the per-sample loop: nothing in that loop
   // reads an object property or a Map, and nothing calls a function once
-  // for each sample (module doc, plan section 4.3, item 3).
+  // for each sample (module doc, plan section 4.3, item 1).
   function exactView(model, t0, t1, bins) {
     if (!model.onRaster) {
       throw new Error("PnsLanes.exactView: the file is not on the gradient raster");
@@ -472,7 +394,7 @@ const PnsLanes = (() => {
     const [k0, k1] = sampleRangeFor(dt, model.numSamples, t0, t1);
     const count = k1 - k0 + 1;
     const kind = count <= 2 * bins ? "samples" : "bins";
-    if (count <= 0 || model.numBlocks === 0) {
+    if (count <= 0) {
       return { kind: "samples", t: new Float64Array(0), total: new Float64Array(0) };
     }
 
@@ -618,17 +540,21 @@ const PnsLanes = (() => {
   }
 
   // The PNS lane for the view `viewMs` (ms) with `bins` plot columns
-  // (interface doc; plan section 4.5, item 1). `meta` is the lane object
+  // (plan section 4.5, item 1). `meta` is the lane object
   // without "segments" (id, title, unit, color, kind, domain, ticks,
   // tick_labels, ...), built by the card script (phase 4). Values in the
-  // lane are percent (100 * fraction); times are ms.
+  // lane are percent (100 * fraction); times are ms. Each result also holds
+  // `onRaster` (`model.onRaster`), which `statusText` reads.
   function lanesFor(model, meta, viewMs, bins) {
     const t0 = viewMs[0] / 1000, t1 = viewMs[1] / 1000;
     const span = t1 - t0;
 
     if (model.numSamples === 0) {
       // An empty file: no exact data and no stored level either.
-      return { lane: { ...meta, segments: [] }, exact: true, binMs: null, gap: false };
+      return {
+        lane: { ...meta, segments: [] }, exact: true, binMs: null, gap: false,
+        onRaster: model.onRaster,
+      };
     }
 
     if (span <= EXACT_MAX_S && model.onRaster) {
@@ -637,13 +563,19 @@ const PnsLanes = (() => {
         const segments = view.t.length === 0
           ? []
           : [Array.from(view.t, (tSec, idx) => [tSec * 1000, view.total[idx] * 100])];
-        return { lane: { ...meta, segments }, exact: true, binMs: null, gap: false };
+        return {
+          lane: { ...meta, segments }, exact: true, binMs: null, gap: false,
+          onRaster: model.onRaster,
+        };
       }
       const segments = _zigzag(view.edges, bins, k => {
         const hi = view.max[k];
         return hi === -Infinity ? null : [view.min[k], hi];
       });
-      return { lane: { ...meta, segments, minmax: true }, exact: true, binMs: null, gap: false };
+      return {
+        lane: { ...meta, segments, minmax: true }, exact: true, binMs: null, gap: false,
+        onRaster: model.onRaster,
+      };
     }
 
     // Item 2: the pyramid. The display bin is D = span / bins; take the
@@ -658,8 +590,8 @@ const PnsLanes = (() => {
     // `gap`: even the stored level (level 0) has bins longer than D / 2 (the
     // gap of plan section 4.2), so each stored bin is wider than half a
     // display bin. It says only that; a file that is not on the raster
-    // (`model.onRaster` false) has no exact view at any zoom, and the card
-    // script reads `model.onRaster` for that.
+    // (`model.onRaster` false) has no exact view at any zoom, and
+    // `result.onRaster` carries that to `statusText`.
     const gap = chosen === -1;
     const level = levelsArr[gap ? 0 : chosen];
 
@@ -688,6 +620,7 @@ const PnsLanes = (() => {
       exact: false,
       binMs: B_L * 1000,
       gap,
+      onRaster: model.onRaster,
     };
   }
 
@@ -730,9 +663,8 @@ const PnsLanes = (() => {
 
   // The PNS part of the diagram's status line (plan section 4.5, item 2),
   // for one render's `lanesFor` result (`result`, the return of `lanesFor`
-  // above) and the model's own `onRaster` (`model.onRaster`, passed
-  // separately because a caller that skips a hidden PNS group never calls
-  // `lanesFor` and so never has a `result` to read it from otherwise).
+  // above). It reads `result.exact`, and for a result that is not exact
+  // also `result.binMs`, `result.onRaster` and `result.gap`.
   // "Exact" or the bin width, then at most one more sentence: when the file
   // is not on the gradient raster, that there is no exact view at any zoom
   // (this replaces the "zoom in" sentence, which would be misleading: no
@@ -740,10 +672,10 @@ const PnsLanes = (() => {
   // `result.gap` is set (even the stored level is coarser than half a
   // display bin, plan section 4.2), that zooming in to `EXACT_MAX_S` seconds
   // or less reaches the exact values.
-  function statusText(result, onRaster) {
+  function statusText(result) {
     if (result.exact) return "PNS: exact.";
     let text = `PNS: minimum and maximum in bins of ${_fmtBinMs(result.binMs)} ms.`;
-    if (!onRaster) {
+    if (!result.onRaster) {
       text += " The file is not on the gradient raster, so there is no exact view.";
     } else if (result.gap) {
       text += ` Zoom in to ${EXACT_MAX_S} s or less for the exact values.`;
@@ -761,13 +693,8 @@ const PnsLanes = (() => {
     laneMeta,
     statusText,
     _internal: {
-      AXES,
-      applyBlockMap: _applyBlockMap,
-      runBlockSamples: _runBlockSamples,
       eventEntry: _eventEntry,
-      groupForSample: _groupForSample,
       sampleRangeFor,
-      _plainRecursion,
     },
   };
 })();

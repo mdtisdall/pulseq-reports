@@ -5593,20 +5593,23 @@ arrays, built by `buildPnsTables` (a seeded pseudo-random block table, as
 `test_seq_lanes.js`'s `buildRandomModel` is, reused by most tests) or by a fully
 explicit small table (`buildBorderTables`, `buildOffRasterTables`, and the two
 empty/no-gradient tables of the last two tests). The hardware numbers
-(`hwSet`/`HW`) are pypulseq's own `safe_example_hw()` values, copied from
-`prototypes/pns_lanes/README.md`'s table, not read from pypulseq.
+(`hwSet`/`HW`) are pypulseq's own `safe_example_hw()` values, copied from the
+table of the README in the tag `archive/pns-lanes-prototype`
+(`prototypes/pns_lanes/README.md`), not read from pypulseq.
 
 Two independent references stand in for a Python or pypulseq comparison:
 `bruteForceTotals` re-derives the whole model (the gradient of each axis, the
 three filters, the axis fractions and the total) directly from the tables, in a
 single pass over the whole file, never calling any function of `pns_lanes.js`.
-`collectPlainRecursion` calls the module's own `_internal._plainRecursion` (the
-whole-file, zero-initial-state recursion), which is not used by `exactView`
-itself (the block maps are). Comparing `exactView`'s output (the block maps) to
-`_plainRecursion`'s output over the same range is the worker spec's rule 2: the
-two are the same model, so they must agree to 1e-12 of the peak, not bit for bit
-(`assertWithinPeakTol`). A value that comes from the same call (for example the
-sample times `exactView` returns) is compared with no tolerance.
+`collectPlainRecursion` calls the test file's own `plainRecursion` (the
+whole-file, zero-initial-state recursion over the model's per-event samples,
+which it reads through `PnsLanes._internal.eventEntry`), which is not used by
+`exactView` itself (the block maps are). Comparing `exactView`'s output (the
+block maps) to `plainRecursion`'s output over the same range is item 1 of task
+3.4 in phase 3 of `docs/plans/diagram-lanes.md`: the two are the same model, so
+they must agree to 1e-12 of the peak, not bit for bit (`assertWithinPeakTol`).
+A value that comes from the same call (for example the sample times `exactView`
+returns) is compared with no tolerance.
 
 **Assumptions for the whole file:**
 
@@ -5626,10 +5629,9 @@ sample times `exactView` returns) is compared with no tolerance.
 
 #### `test_brute_force_matches_plain_recursion_on_a_hand_model`
 
-**Checks:** The model's own per-sample recursion (`_internal._plainRecursion`)
+**Checks:** The per-sample recursion of the test file (`plainRecursion`)
 agrees with an independent, from-scratch implementation of the SAFE model's
-formulas (`bruteForceTotals`), to 1e-12 of the peak. This is rule 1 of the tests
-the worker spec asks for.
+formulas (`bruteForceTotals`), to 1e-12 of the peak.
 
 **How:** Builds an 80-block pseudo-random model (`buildPnsTables(80, 7)`, which
 includes a 0-duration block and a no-gradient block by construction), decodes it,
@@ -5642,9 +5644,10 @@ from the model, and compares the two whole-file total arrays with
 #### `test_exact_view_matches_plain_recursion_across_many_views`
 
 **Checks:** `exactView` (the block maps, with the checkpoint skip) agrees with
-`_plainRecursion` (the plain per-sample recursion) to 1e-12 of the peak, for views
+`plainRecursion` (the plain per-sample recursion) to 1e-12 of the peak, for views
 that start inside many different blocks and checkpoint groups of a model larger
-than `3 * GROUP_BLOCKS`. This is rule 2 of the tests the worker spec asks for.
+than `3 * GROUP_BLOCKS`. This is item 1 of task 3.4 in phase 3 of
+`docs/plans/diagram-lanes.md`.
 
 **How:** Builds a 500-block pseudo-random model (more than `3 * 64` blocks, so
 `GROUP_BLOCKS` is confirmed to be 64 and the model crosses more than 3 checkpoint
@@ -5653,7 +5656,7 @@ durations, not calling the module), and for each of 12 starting blocks (block 0,
 1, the blocks around the first and second checkpoint boundaries, and others up to
 the last block) and 4 span lengths, calls `exactView` with a large enough `bins`
 that the "samples" kind is always chosen, and compares its `total` array against
-the matching slice of the whole-file `_plainRecursion` array (found by the
+the matching slice of the whole-file `plainRecursion` array (found by the
 module's own `sampleRangeFor`) with `assertWithinPeakTol`. The sample times
 themselves (`view.t`), which come from the exact formula `(k + 0.5) * dt` with no
 filter arithmetic, are checked with no tolerance.
@@ -5667,13 +5670,13 @@ is correct when the gradient does not return to 0 at a block border: the same
 1e-12-of-the-peak checks as the previous two tests, on a 2-block model built so
 that block 0's last sample and block 1's first sample are both exactly 8 (mT/m),
 a continuous, non-zero gradient across the junction (unlike the "ends at 0" case
-the prototype's own README already checked).
+that the README in the tag `archive/pns-lanes-prototype` already checked).
 
 **How:** `buildBorderTables` gives block 0 (10 samples) a gx event whose last two
 points both hold the value 8 through the block's end, and block 1 (8 samples) a
 gx event that starts at offset 0 already at 8 before ramping to 0. The test
 checks `bruteForceTotals` against `collectPlainRecursion` for the whole file, then
-checks `exactView` against the same `_plainRecursion` reference for 4 ranges:
+checks `exactView` against the same `plainRecursion` reference for 4 ranges:
 inside block 0, spanning most of the file, starting exactly at the border, and
 straddling the border.
 
@@ -5683,7 +5686,7 @@ straddling the border.
 
 **Checks:** `exactView`'s "bins" kind (the minimum and the maximum of the total in
 each of `bins` bins) equals a brute-force binning of the same range's "samples"
-kind values, by the exact formula of the interface doc
+kind values, with the formula that `exactView` uses
 (`floor((t - t0) / span * bins)`, clamped), for several bin counts; and the
 "samples"/"bins" switch happens exactly at more than `2 * bins` samples, not at
 `2 * bins` itself.
@@ -5696,8 +5699,8 @@ samples, by `sampleRangeFor`'s own rule). For `bins` in `{3, 7, 16}` and `count`
 gives kind "samples" (the switch has not happened) and that the two larger counts
 give kind "bins"; for those, it re-fetches the same range in "samples" kind (with
 `bins` large enough that the switch cannot trigger), bins those samples by hand
-with the interface formula, and compares the resulting minimum and maximum arrays
-to `exactView`'s own "bins" output, and the bin edges to the documented formula
+with the same formula, and compares the resulting minimum and maximum arrays
+to `exactView`'s own "bins" output, and the bin edges to the formula
 `edges[k] = t0 + span * k / bins`, all with exact equality (both come from the
 same underlying sample values, only reduced by `min`/`max`, which introduces no
 rounding).
@@ -5706,8 +5709,8 @@ rounding).
 
 #### `test_exact_view_bins_empty_bin_is_plus_minus_infinity`
 
-**Checks:** A bin with no sample in it gets `min = +Infinity`, `max = -Infinity`
-(interface doc), not 0 or `NaN`.
+**Checks:** A bin with no sample in it gets `min = +Infinity`, `max = -Infinity`,
+not 0 or `NaN`.
 
 **How:** Builds a 40-block, 200-sample model, then asks `exactView` for a view
 `[0, 5 * numSamples * dt]` (5 times the file's own duration) with 20 bins: the
@@ -5720,13 +5723,15 @@ sample. The test checks that kind is "bins" and that at least one bin has
 
 #### `test_exact_view_sample_range_edge_cases`
 
-**Checks:** The sample range `[t0, t1]` behaves correctly at its edges (plan
-interface doc): a view that starts before the file and ends after it returns
-every sample; a view with `t0 = t1` exactly on one sample's centre time returns
-that one sample; a view strictly between two samples' centre times returns none.
+**Checks:** The sample range `[t0, t1]` behaves correctly at its edges (the
+samples k with `t0 <= (k + 0.5) * dt <= t1`, as the README's section "Interface
+of `pns_lanes.js`" in the tag `archive/pns-lanes-prototype` has it): a view that
+starts before the file and ends after it returns every sample; a view with
+`t0 = t1` exactly on one sample's centre time returns that one sample; a view
+strictly between two samples' centre times returns none.
 
 **How:** Builds a 30-block model with two block-duration options, computes the
-whole-file `_plainRecursion` reference, and checks three `exactView` calls: `(-5,
+whole-file `plainRecursion` reference, and checks three `exactView` calls: `(-5,
 numSamples * dt + 5)` gives all `numSamples` samples, with the first and last
 `t` values matching `(k + 0.5) * dt` exactly and the totals matching the
 reference within 1e-12 of the peak; `(t, t)` at sample 12's centre time gives
@@ -5761,14 +5766,14 @@ one segment of `[t_ms, percent]` points equal to the exact per-sample recursion
 `gap: false`; a short but sample-rich view gives the same zigzag shape as
 `exactView`'s own "bins" kind, with `minmax: true`.
 
-**How:** `buildPyramidModel(8)` builds a model whose stored level comes from its
-own `_plainRecursion` (the worker spec's "so that the numbers are realistic"):
+**How:** `buildPyramidModel(8)` builds a model whose stored level comes from the
+test file's `plainRecursion` (so that the numbers are realistic):
 it decodes a 1100-block model once with a placeholder level to get the exact
 per-sample totals, bins those totals into a real stored level of `binSamples = 8`
 by hand, and decodes the same tables again with that level. For a 100-sample view
 (`[0, 1] ms`), it checks `lanesFor`'s single segment against the
 `sampleRangeFor`-selected slice of the exact totals (`assertWithinPeakTol`, since
-`lanesFor`'s exact branch is `exactView`, not `_plainRecursion`) and each point's
+`lanesFor`'s exact branch is `exactView`, not `plainRecursion`) and each point's
 time against `(k + 0.5) * dt * 1000`. For a 500-sample view with 10 bins (forcing
 the "bins" kind), it calls `exactView` directly for the same range and bins, and
 checks that `lanesFor`'s zigzag segments (read back into a `{edge_ms: [min,
@@ -5783,8 +5788,9 @@ at each non-empty bin's edge, and that an empty bin is absent from the map.
 **Checks:** `lanesFor`'s item 2 (the pyramid, for a view longer than
 `EXACT_MAX_S`): the level chosen is the largest with `binSamples * dt <= (span /
 bins) / 2`; each display bin equals the minimum/maximum of the chosen level's
-bins that overlap it (the `floor`/`ceil` index range of the interface doc);
-`binMs` is that level's bin width in ms; `gap` is `false` when a level fits.
+bins that overlap it (the `floor`/`ceil` index range of `lanesFor`'s pyramid
+branch); `binMs` is that level's bin width in ms; `gap` is `false` when a level
+fits.
 
 **How:** Uses the same `buildPyramidModel(8)` model as the previous test, with a
 view `[0, 20]` s (longer than `EXACT_MAX_S`) and 100 bins. It finds the expected
@@ -5821,7 +5827,7 @@ the threshold). Checks `exact: false`, `gap: true`, and `binMs === B0 * 1000`.
 1e-6 samples of a whole number; `exactView` then throws rather than returning a
 wrong answer; `lanesFor` never calls it (no throw), and draws a short view from the
 stored level. `gap` stays `false` when a level fits: it says only that the stored
-level is too coarse, and the card script reads `model.onRaster` for a file without
+level is too coarse, and `statusText` reads `result.onRaster` for a file without
 an exact view.
 
 **How:** `buildOffRasterTables` gives one block a duration of `1.5 * dt` among
@@ -5852,12 +5858,12 @@ with an explicit `gradScale: 1.0`.
 doubled, with no `gradScale` key, and compares the two whole-file totals
 (`collectPlainRecursion`) with `assertWithinPeakTol` at `1e-12` (the two take
 different code paths to the same number: one scale multiply per sample
-against a pre-doubled input table, so this is rule 2 of the worker spec, not
-bit-exactness). It then decodes the original tables twice more, once with no
-`gradScale` key and once with `gradScale: 1.0`, and checks the two totals
-arrays with `assert.deepEqual` (exact equality: multiplying a T/m value by
-`1.0` rounds to itself in IEEE 754 arithmetic, so this is the same code path
-both times).
+against a pre-doubled input table, so the comparison uses the 1e-12 tolerance
+of `assertWithinPeakTol`, not bit-exactness). It then decodes the original
+tables twice more, once with no `gradScale` key and once with `gradScale: 1.0`,
+and checks the two totals arrays with `assert.deepEqual` (exact equality:
+multiplying a T/m value by `1.0` rounds to itself in IEEE 754 arithmetic, so
+this is the same code path both times).
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -5866,13 +5872,13 @@ both times).
 **Checks:** A file with 0 blocks decodes to `numBlocks = 0`, `numSamples = 0`,
 `onRaster = true` (no block ever contradicts it); `exactView` returns an empty
 "samples" result rather than throwing or indexing out of bounds; `lanesFor`
-returns `{lane: {...meta, segments: []}, exact: true, binMs: null, gap: false}`
-(the interface doc's "an empty file" case).
+returns `{lane: {...meta, segments: []}, exact: true, binMs: null, gap: false,
+onRaster: true}` (the "an empty file" case of `lanesFor`).
 
 **How:** Decodes a model from tables where every array (`duration_index`,
 `gx`/`gy`/`gz`, all the `grad_*` tables) has length 0, then checks `exactView(0,
 1, 10)` gives empty `t`/`total` arrays and `lanesFor` gives exactly the
-documented empty-file result (`assert.deepEqual` against the literal expected
+empty-file result above (`assert.deepEqual` against the literal expected
 object).
 
 **Assumptions:** None beyond the file's assumptions.
@@ -5912,8 +5918,8 @@ and 165 (a tolerance, since `1.1 * 100` is not exact in float64).
 **Checks:** `PnsLanes.statusText` gives "PNS: exact." whenever `result.exact` is
 true.
 
-**How:** Calls `PnsLanes.statusText({exact: true, binMs: null, gap: false}, true)`
-and checks the result.
+**How:** Calls `PnsLanes.statusText({exact: true, binMs: null, gap: false,
+onRaster: true})` and checks the result.
 
 **Assumptions:**
 
@@ -5927,9 +5933,10 @@ and checks the result.
 **Checks:** For the minimum/maximum branch, `statusText` formats the bin width to
 3 significant figures, not with the module's own float64 precision.
 
-**How:** Calls `PnsLanes.statusText` with `binMs` of 6.15, 393.6 and 1574.4 (`gap:
-false`, `onRaster: true`) and checks the result is "PNS: minimum and maximum in
-bins of 6.15 ms.", "...394 ms." and "...1570 ms." respectively.
+**How:** Calls `PnsLanes.statusText` with `binMs` of 6.15, 393.6 and 1574.4 in
+the result object (`gap: false`, `onRaster: true`) and checks the result is
+"PNS: minimum and maximum in bins of 6.15 ms.", "...394 ms." and "...1570 ms."
+respectively.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -5938,25 +5945,25 @@ bins of 6.15 ms.", "...394 ms." and "...1570 ms." respectively.
 **Checks:** `gap: true` adds a sentence naming `PnsLanes.EXACT_MAX_S` as the span
 to zoom in to for exact values; `gap: false` adds nothing.
 
-**How:** Calls `PnsLanes.statusText({exact: false, binMs: 24.6, gap: true}, true)`
-and checks the result is the bins sentence followed by "Zoom in to
-`${PnsLanes.EXACT_MAX_S}` s or less for the exact values.". It then calls the same
-with `gap: false` and checks the result is only the bins sentence.
+**How:** Calls `PnsLanes.statusText({exact: false, binMs: 24.6, gap: true,
+onRaster: true})` and checks the result is the bins sentence followed by "Zoom
+in to `${PnsLanes.EXACT_MAX_S}` s or less for the exact values.". It then calls
+the same with `gap: false` and checks the result is only the bins sentence.
 
 **Assumptions:** None beyond the file's assumptions.
 
 #### `test_status_text_off_raster_replaces_the_gap_sentence`
 
-**Checks:** `onRaster: false` gives the "not on the gradient raster" sentence
-instead of the "zoom in" sentence, even when `gap` is also true (plan section
-4.5, item 2): zooming in would not reach an exact view for such a file, so
+**Checks:** `onRaster: false` in the result gives the "not on the gradient raster"
+sentence instead of the "zoom in" sentence (plan section 4.5, item 2), even when
+`gap` is also true: zooming in would not reach an exact view for such a file, so
 telling the reader to do it would be wrong.
 
-**How:** Calls `PnsLanes.statusText({exact: false, binMs: 24.6, gap: true},
-false)` and `PnsLanes.statusText({exact: false, binMs: 24.6, gap: false}, false)`
-and checks both give the bins sentence followed by "The file is not on the
-gradient raster, so there is no exact view." with no "zoom in" sentence in either
-case.
+**How:** Calls `PnsLanes.statusText({exact: false, binMs: 24.6, gap: true,
+onRaster: false})` and `PnsLanes.statusText({exact: false, binMs: 24.6, gap:
+false, onRaster: false})` and checks both give the bins sentence followed by
+"The file is not on the gradient raster, so there is no exact view." with no
+"zoom in" sentence in either case.
 
 **Assumptions:** None beyond the file's assumptions.
 

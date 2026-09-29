@@ -145,8 +145,9 @@ class GradientSampler:
         point time where two points have the same time (a step), the later point's
         value is used. A block with no event on `axis` gives zeros. This is the rule of
         `PnsLanes` (`_eventSamples` in assets/pns_lanes.js). It differs from `sample`
-        only for a gradient that is not continuous at a block junction, which pypulseq's
-        `add_block` does not accept.
+        at a step at a block junction (`add_block` accepts a step up to
+        `max_slew * grad_raster_time`), and by the float drift of the block start sums
+        (`tests/test_sampling.py`).
 
         The samples of each unique (event, n) are computed one time and kept, and a call
         gathers them with numpy for all the blocks of the range, not with a Python loop
@@ -203,7 +204,7 @@ class GradientSampler:
             if samples is not None:
                 return samples
             num_points = int(self._n[event_k])
-            if num_points == 0 or count_n == 0:
+            if num_points == 0:
                 samples = np.zeros(count_n, dtype=np.float64)
             else:
                 at = int(self._at[event_k])
@@ -223,8 +224,9 @@ class GradientSampler:
                 # The last point's own value, only at exactly its time.
                 at_last = last & ~before & (t == t0)
                 samples[at_last] = points_v[p[at_last]]
-                # Between two points: linear, or the later point's value at a step
-                # (two points with the same time).
+                # Between two points: linear.
+                # t0 <= t < t1 here: `searchsorted(side="right") - 1` gives the last point at or
+                # before t, so t1 > t0. At a step (two points at one time), p is the later point.
                 mid = ~before & ~last
                 if np.any(mid):
                     p_mid = p[mid]
@@ -233,10 +235,7 @@ class GradientSampler:
                     v0_mid = points_v[p_mid]
                     v1_mid = points_v[p_mid + 1]
                     t_mid = t[mid]
-                    step = t1_mid == t0_mid
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        interp = v0_mid + (v1_mid - v0_mid) / (t1_mid - t0_mid) * (t_mid - t0_mid)
-                    samples[mid] = np.where(step, v1_mid, interp)
+                    samples[mid] = v0_mid + (v1_mid - v0_mid) / (t1_mid - t0_mid) * (t_mid - t0_mid)
             cache[cache_key] = samples
             return samples
 
@@ -248,9 +247,9 @@ class GradientSampler:
         for pair_index in range(unique_pairs.shape[0]):
             event_k = int(unique_pairs[pair_index, 0])
             count_n = int(unique_pairs[pair_index, 1])
-            samples = event_samples(event_k, count_n)
             if count_n == 0:
                 continue
+            samples = event_samples(event_k, count_n)
             block_starts = starts_valid[inverse == pair_index]
             idx = (block_starts[:, None] + np.arange(count_n, dtype=np.int64)[None, :]).ravel()
             out[idx] = np.tile(samples, block_starts.size)

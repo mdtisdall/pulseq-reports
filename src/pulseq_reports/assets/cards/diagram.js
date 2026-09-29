@@ -1,7 +1,7 @@
 // Sequence diagram card: one lane chart with a button for each time window that
 // cards/diagram.py gives, and lane-group toggle buttons (RF, ADC, Gradients, and PNS
 // when at least one file has PNS data, docs/plans/diagram-lanes.md section 4.5, item
-// 3). Unlike the old card, there are no lane sets and no point budget: cards/diagram.py
+// 3). There are no lane sets and no point budget: cards/diagram.py
 // sends the compressed block and event tables of each file that at least one window
 // uses (diagram_data.diagram_tables), and this script decodes them (base64 -> gzip ->
 // typed arrays -> SeqLanes.decode) into a model for each file, once, on first use. A
@@ -56,24 +56,22 @@ PulseqReport.registerCard("diagram", async (section, data) => {
 
   // `pnsResult` is the return of `PnsLanes.lanesFor` when the PNS lane was drawn this
   // render, else null (the PNS group is hidden, or the current file has no PNS data):
-  // then the status line is the SeqLanes sentence alone, as it was before this lane
-  // existed. `onRaster` is `current.pns.model.onRaster`, read by the caller so this
-  // function itself never reads `current`. `gError` is `current.g.error` when the
-  // Gradients group is visible and `buildGLane` (below) caught a `GLanes.decode`
+  // then the status line is the SeqLanes sentence alone. `gError` is `current.g.error`
+  // when the Gradients group is visible and `buildGLane` (below) caught a `GLanes.decode`
   // failure for the current file, else null: then the sentence "The |G| lane is not
   // drawn: <message>" (decision 13 of docs/plans/review-bugs.md) is added, so the
   // card explains why the chart has one fewer lane instead of leaving it unsaid.
-  function showStatus(exact, bins, pnsResult, onRaster, gError) {
+  function showStatus(exact, bins, pnsResult, gError) {
     let text = exact
       ? "Exact waveform."
       : `Minimum and maximum in each of ${bins} time bins. Zoom in to see the exact waveform.`;
     if (gError) text += ` The |G| lane is not drawn: ${gError.message || String(gError)}`;
-    if (pnsResult) text += ` ${PnsLanes.statusText(pnsResult, onRaster)}`;
+    if (pnsResult) text += ` ${PnsLanes.statusText(pnsResult)}`;
     statusEl.textContent = text;
   }
 
   // The decoded model of file `fileIndex`, from the cache when it is already there:
-  // `{seq, pns, g, view}`, `seq` the SeqLanes model (as before), `pns` either null
+  // `{seq, pns, g, view}`, `seq` the SeqLanes model, `pns` either null
   // (the file has no "pns" key) or `{model, laneMeta}`, the PnsLanes model and its
   // lane object without segments (PnsLanes.laneMeta(file.pns.summary), built once
   // here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta,
@@ -169,21 +167,6 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   ];
   if (hasPns) groups.push({ id: "pns", label: "PNS", laneIds: ["pns"], visible: true });
 
-  // Only its length (the number of lanes) matters here: lane_chart.js reads it for
-  // the SVG height before the first render, which then replaces it with the
-  // provider's own lanes. But `laneChart` also reads each lane's own `id` for this
-  // very first count, through `groups`/`visibleLanes` (chart_math.js), before that
-  // first render ever runs -- so the |G| placeholder needs a real `id`, "gmag", not
-  // an empty object or null. `current.seq.lanesMeta`, plus that placeholder (always
-  // drawn on the first render: the Gradients group is visible by default, and
-  // `lanesFor` below builds `current.g` the moment that render asks for it) and the
-  // PNS lane meta when the first file has one, already has the right count, so
-  // building it needs no GLanes.decode, SeqLanes.lanesFor or PnsLanes.lanesFor call.
-  const initialLanes = current.seq.lanesMeta.concat(
-    [{ id: "gmag" }],
-    current.pns ? [current.pns.laneMeta] : []
-  );
-
   // Publishes `view` (plan section 4.1) for the chart's current time window.
   // `laneChart`'s own `setView`/`setWindow` do not call `onViewChange` (lane_chart.js),
   // so every place below that calls them also calls this explicitly; `onViewChange`
@@ -266,7 +249,8 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     svg: document.getElementById(`${section.id}-diagram`),
     chart: document.getElementById(`${section.id}-chart`),
     tip: document.getElementById(`${section.id}-tip`),
-    lanes: initialLanes,
+    // `lanesFor` and `groups` are given, so `laneChart` never draws `lanes` (lane_chart.js).
+    lanes: [],
     groups,
     groupControls,
     lanesFor: (view, bins, visibleGroupIds) => {
@@ -287,9 +271,7 @@ PulseqReport.registerCard("diagram", async (section, data) => {
         pnsResult = PnsLanes.lanesFor(current.pns.model, current.pns.laneMeta, view, bins);
         lanes = lanes.concat([pnsResult.lane]);
       }
-      showStatus(
-        r.exact, bins, pnsResult, current.pns ? current.pns.model.onRaster : null, gError
-      );
+      showStatus(r.exact, bins, pnsResult, gError);
       return lanes;
     },
     xDomain: windows[0].view_ms,
@@ -347,17 +329,8 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     press(i);
     current = model;
     currentFileIndex = w.file;
-    // As for the first render, only the number of lanes is read before the render
-    // replaces them with the provider's lanes (a `{id: "gmag"}` placeholder for the
-    // |G| lane, as `initialLanes` above has, for the same reason). A file without
-    // PNS data draws no PNS lane even with the PNS group on (`current.pns` is
-    // null, so `lanesFor` above never appends one), whatever file was shown before
-    // it.
     chart.setWindow({
-      lanes: current.seq.lanesMeta.concat(
-        [{ id: "gmag" }],
-        current.pns ? [current.pns.laneMeta] : []
-      ),
+      lanes: [],
       xDomain: w.view_ms,
       extent: [0, current.seq.durationS * 1000],
     });
