@@ -407,10 +407,13 @@ def _range_result(
         if block_peak > vector_peak_hz:
             vector_peak_hz, vector_peak_time = block_peak, block_time
 
-    # The junction steps (decision 6 of section 2.5): for each axis, the step at the incoming
-    # junction of every processed block (0 before the very first block of the file, or where
-    # either side has no event on the axis), restricted to the blocks that are part of this
-    # range so that a window's slew uses only the junctions inside it.
+    # The junction steps (decision 6 of section 2.5): for each axis, the step at the
+    # incoming junction of each processed block that starts at or after the range
+    # start (0 before the very first block of the file, or where either side has no
+    # event on the axis). The junction of a block that the range start cuts is before
+    # the range, so it is not used. A junction at the range end belongs to the block
+    # after it, which is not processed.
+    junction_in_range = processed & (start_s >= lo)
     axes: dict[str, AxisResult] = {}
     has_event_any = False
     for axis in _AXES:
@@ -426,8 +429,8 @@ def _range_result(
         steps = np.abs(prev_last - first_vals) / grad_raster
 
         junction_max, junction_play = 0.0, None
-        if np.any(processed):
-            masked = np.where(processed, steps, -np.inf)
+        if np.any(junction_in_range):
+            masked = np.where(junction_in_range, steps, -np.inf)
             j = int(np.argmax(masked))
             candidate = float(masked[j])
             # Only a strictly positive step is a real junction, matching the segment
@@ -450,8 +453,9 @@ def _range_result(
 
         # A credited junction step means a real, non-zero step was found even when no
         # segment of this axis lies inside the range (for example a window that starts
-        # right after a gradient event that ends outside it): that is real gradient
-        # information about the range, so it counts as "has an event" too.
+        # at the junction after a gradient event that ends at a value that is not 0):
+        # that is real gradient information about the range, so it counts as "has an
+        # event" too.
         has_event = st["has_event"] or final_slew_play is not None
         has_event_any = has_event_any or has_event
         range_length = hi - lo

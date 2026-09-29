@@ -380,6 +380,35 @@ def test_first_block_not_starting_at_zero_is_a_junction_step_before_the_first_bl
     assert result.axes["x"].slew_block == block_id
 
 
+def test_window_inside_a_block_with_no_gradient_ignores_the_junction_before_it():
+    """A window entirely inside a block with no gradient, after a gradient event that
+    ends at a non-zero value (within the tolerance `add_block` accepts) in the block
+    before: the junction between the two blocks is before the window start, so it is
+    not used, and the window has no gradient event and 0 slew. A window that starts
+    exactly at that junction still uses it."""
+    step = 0.9 * _MAX_STEP
+    gx = pp.make_extended_trapezoid(
+        channel="x", times=[0.0, 100e-6, 200e-6], amplitudes=[0.0, step, step], system=SYSTEM
+    )
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(gx)
+    seq.add_block(pp.make_delay(1e-3))
+    _block_a_id, block_b_id = seq.block_events
+
+    inside_result = gradient_limits(seq, window=(0.5e-3, 1.0e-3))
+    assert inside_result.reason == "no gradient events in the window"
+    assert inside_result.axes["x"].max_slew_t_per_m_per_s == 0.0
+    assert inside_result.axes["x"].slew_block is None
+
+    junction_result = gradient_limits(seq, window=(0.2e-3, 1.0e-3))
+    expected_slew_t_per_m_per_s = step / _RASTER / GAMMA
+    assert junction_result.reason is None
+    assert junction_result.axes["x"].max_slew_t_per_m_per_s == pytest.approx(
+        expected_slew_t_per_m_per_s
+    )
+    assert junction_result.axes["x"].slew_block == block_b_id
+
+
 # ---- Comparisons with the oracle (task 4.4) ----
 #
 # `tests/oracles/grad_limits.py` is the implementation from before phase 4 of

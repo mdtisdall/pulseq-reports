@@ -2722,7 +2722,8 @@ the largest slew of an arbitrary gradient and of an extended trapezoid (computed
 event's own corner points, the same way as the peak amplitude tests above), the credited block
 for a value that several blocks and axes share, a window that keeps only part of a ramp's
 slew, the vector peak of two blocks with different triples of active gradients, the three
-junction-step cases of section 4.6 item 6, and comparisons with the oracle
+junction-step cases of section 4.6 item 6, a window that starts inside a block after a
+junction step, and comparisons with the oracle
 (`tests/oracles/grad_limits.py`, the implementation from before phase 4).
 
 #### `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`
@@ -2942,6 +2943,26 @@ for "the block before" (there is none), and is credited to the first block.
 largest step `add_block` accepts. It computes the expected slew by hand as
 that starting value divided by `grad_raster_time`. It checks that the x axis
 slew matches and is credited to the first (only) block.
+
+**Assumptions:** None.
+
+#### `test_window_inside_a_block_with_no_gradient_ignores_the_junction_before_it`
+
+**Checks:** A window entirely inside a block with no gradient, right after a gradient
+event that ends at a non-zero value (within the tolerance `add_block` accepts) in the
+block before: the window does not use the junction between the two blocks, because
+that block starts before the window (`docs/plans/review-bugs.md`, B1, decision 14), so
+the window has no gradient event and 0 slew. A window that starts exactly at that
+junction still uses it.
+
+**How:** The test builds an x extended trapezoid ending at 90% of the largest step
+`add_block` accepts, followed by a delay block with no gradient. It calls
+`gradient_limits` with a window from partway into the delay block to its end, and
+checks that `reason` is "no gradient events in the window", the x slew is 0.0, and
+`slew_block` is None. It then calls `gradient_limits` with a window that starts
+exactly at the junction (the end of the trapezoid block) and checks that the x slew
+equals the ending value divided by `grad_raster_time` and is credited to the delay
+block.
 
 **Assumptions:** None.
 
