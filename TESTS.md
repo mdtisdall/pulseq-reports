@@ -509,14 +509,15 @@ script's marker is not.
 #### `test_script_order`
 
 **Checks:** The page's scripts appear in this order: `chart_math.js`,
-`lane_chart.js`, `map_chart.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, each
-card's library script, the extra scripts in the given order, and `page.js`.
+`lane_chart.js`, `map_chart.js`, `rf_profiles.js`, `seq_lanes.js`, `pns_lanes.js`,
+`g_lanes.js`, each card's library script, the extra scripts in the given order, and
+`page.js`.
 
 **How:** The test builds one card with a library script and two extra
 scripts, calls `render_page`, and checks that the string indices of a
 `chart_math.js` marker, a `lane_chart.js` (`PulseqReport`) marker, a
-`map_chart.js` (`PulseqReport.mapChart = mapChart;`) marker, a `seq_lanes.js`
-(`SeqLanes`) marker, a `pns_lanes.js` (`PnsLanes`) marker, a `g_lanes.js`
+`map_chart.js` (`PulseqReport.mapChart = mapChart;`) marker, an `rf_profiles.js`
+(`RfProfiles`) marker, a `seq_lanes.js` (`SeqLanes`) marker, a `pns_lanes.js` (`PnsLanes`) marker, a `g_lanes.js`
 (`GLanes`) marker, the card script's marker, each extra script's marker, and a
 `page.js` marker are in increasing order.
 
@@ -531,9 +532,9 @@ with the others into one element.
 
 **How:** The test builds one card with no script and one extra script,
 calls `render_page`, and counts the occurrences of `<script>\n`. With
-`chart_math.js`, `lane_chart.js`, `map_chart.js`, `seq_lanes.js`, `pns_lanes.js`,
-`g_lanes.js`, the extra script and `page.js`, and no card script, the count must
-be 8.
+`chart_math.js`, `lane_chart.js`, `map_chart.js`, `rf_profiles.js`, `seq_lanes.js`,
+`pns_lanes.js`, `g_lanes.js`, the extra script and `page.js`, and no card script, the
+count must be 9.
 
 **Assumptions:** None.
 
@@ -7255,11 +7256,489 @@ B1 = 500 / 11.262e6 × 1e6 µT. Relative 1e-9 (only rounding).
 
 ### 2.32 RF profiles in JavaScript (`test_rf_profiles.js`)
 
-Phase 3 of `docs/plans/rf-profiles.md` adds the entries.
+`rf_profiles.js` is the JavaScript copy of the Python reference of RF pulse profiles
+(`rf_profiles.py`, `rf_sim.py` and `profile_metrics.py`; `docs/plans/rf-profiles.md`,
+sections 4.2, 4.3 and 4.6; task 3.3): `spinDomain` and its sliced form
+`spinDomainRange`, `magnetization`, `crushedEcho`, `precess`, the profile metrics,
+`linspace`, `unwrap`, `fft` and the RF spectrum (`spectrumMagnitudes`,
+`spectrumFwhmHz`), `fileData`, `blockPulse` (the RF as played, the interval gradients,
+the gradient kind, the pulse key and the echo pathway), `period`, `viewSpec`,
+`simulation` and `simulate`, `quantity`, `echoPhase`, `widths` and `combinedProfile`.
+The golden test (section 2.33) holds its values to the Python reference; these tests
+check each rule on small hand-made cases, without Python.
+
+The tests load `rf_profiles.js` directly with Node's `require`, and use `node:test` and
+`node:assert/strict`, with no browser or DOM. Each test builds its sequence with the
+helper `newSeq`: RF rows (the columns of `cards.rf_profile.rf_table`, made by
+`rfTables`), gradient events in mT/m (as the diagram tables keep them, read back with
+`gradHzPerValue` 42576), ADC events and blocks. `build` returns a fake sequence view
+(`fakeView`: the methods of `SeqLanes.sequenceView` over those arrays) and the file
+data of `RfProfiles.fileData`. Equal events share one dense index, as pypulseq's
+libraries share one id. The pulses follow `tests/test_rf_profiles.py`: a 1 ms
+Hann-windowed sinc (time-bandwidth product 4, 200 samples at 5 µs, from 100 µs) on a
+trapezoid whose flat top holds the whole RF, rephasers, crushers of four cycles across
+W = 5 mm, and a readout trapezoid with its ADC; `gre`, `spinEcho` and `turning` build
+the common sequences. The whole file runs in about 0.2 s.
+
+**Assumptions for the whole file:**
+
+- The functions take only plain values (numbers, typed arrays, the fake view, the file
+  data) and return only plain values. Nothing in a test depends on the page or a
+  browser.
+- "Exact" means bit-for-bit equal (`Object.is` for each value, or `deepEqual`): the test
+  makes the same points and calls the same simulation or the same float operations,
+  so no float difference is possible.
+- The fake view has the methods and the units of `SeqLanes.sequenceView` (section 2.19
+  tests the real one); the fake RF table has the columns of `rf_table` (section 2.34
+  tests the real one).
+- Numbers written in a test from numpy (`linspace`, `unwrap`, the spectrum FWHM) come
+  from numpy 2.5.3, with the numpy command in a comment next to them.
+
+#### `test_spin_domain_hard_pulse_flip_angle_and_precess_sign`
+
+**Checks:** A 70° hard pulse without a gradient gives |Mxy| = sin(70°) and Mz =
+cos(70°) at r = 0 and 0 Hz. `precess` has the sign of free precession in `spinDomain`,
+as `test_precess_sign_matches_free_precession_in_spin_domain` in `test_rf_sim.py`.
+
+**How:** A pulse of 200 samples at 1 µs with the phase 0.4 rad; |Mxy| and Mz within
+1e-12 (the float rounding of 200 rotations). Then the same pulse under a z gradient of
+1e5 Hz/m at 13 points from -3 mm to 3 mm, and the same pulse followed by 500 samples of
+zero RF: `precess` of the first Mxy with the moment of those 500 samples equals the
+second Mxy within 1e-9 (the Python test's tolerance, the rounding of 700 rotations),
+and with the opposite moment it differs by more than 1e-3.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_linspace_gives_the_numpy_values`
+
+**Checks:** `linspace` gives the values of `numpy.linspace` exactly, including the last
+value, which numpy sets to the end itself.
+
+**How:** Three ranges, compared with the numpy values written in the test. For 0.1 to
+1.7 with 6 points, 5 × step + 0.1 is 1.6999999999999997, and the last value must be 1.7.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_fft_matches_a_direct_dft_and_the_spectrum_fwhm_matches_numpy`
+
+**Checks:** `fft` equals a direct DFT for lengths with each kind of factor (4, 2, 3, 5,
+the small prime 7, and the primes 97 and 131, which use Bluestein's method), within
+1e-12 of the largest magnitude. `spectrumMagnitudes` (64 DFTs of length n of the
+pre-twiddled signal) equals the magnitudes of a direct DFT of the signal zero padded to
+64 n, the same tolerance. `spectrumFwhmHz` of a block pulse equals numpy's FWHM
+exactly.
+
+**How:** Seeded pseudo-random complex signals of lengths 1, 2, 3, 5, 7, 12, 30, 97, 128,
+131 and 3000, and of 7, 12 and 97 samples for the padded spectrum. The direct DFT
+reduces each index product modulo N before its twiddle, so its own error is about one
+rounding of `Math.cos`; both results are exact up to float rounding (about 1e-15 here).
+Then a block pulse of 100 samples of 250 Hz at 1 µs, as played by `blockPulse` with
+1000 Hz and 0.4 rad, and the same pulse without offsets: 12031.25 Hz and 11875.0 Hz, the
+values of `rf_profiles._spectrum_fwhm_hz` (the numpy command is in the test). The FWHM
+is exact because it is the difference of two frequencies k / (N dt) of the same bins.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_unwrap_matches_numpy`
+
+**Checks:** `unwrap` gives the values of `numpy.unwrap` exactly, including a step of
+exactly π and of exactly -π, which numpy keeps.
+
+**How:** Eleven phases whose steps are 3, -6, π, 0.858, -π, 4.64, -5, 2.7, 6.8 and -14
+rad; the test first checks that two steps are exactly ±π, then compares with the numpy
+values written in the test.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_interval_values_of_a_trapezoid_equal_the_hand_means`
+
+**Checks:** The gradient of each hold interval is the mean of the trapezoid over it:
+on the ramp, across the corner, on the flat top, on the fall, across the end and after
+the end, as `test_interval_values_of_a_trapezoid_equal_the_hand_means` of
+`test_rf_profiles.py`. The kind is "one" on z and not constant.
+
+**How:** A 900 µs RF of 300 samples at 3 µs from 60 µs (so the corners on the 10 µs
+raster fall inside hold intervals), on a trapezoid of 2e5 Hz/m with 100 µs ramps and a
+500 µs flat top. The intervals 0, 13, 180 and 213 are compared with the hand means
+within a relative 1e-12 (the rounding of the interval ends); interval 80 (flat top)
+exactly, and all intervals after the end and all x and y values are 0.
+
+**Assumptions:** The amplitude the module reads is the table value in mT/m times 42576;
+the test uses that value for the hand means.
+
+#### `test_gradient_kinds_none_one_oblique_and_changing`
+
+**Checks:** The gradient kinds of `gradientKind`: "none" without a gradient (no select
+coordinate, direction, G or slice centre, not constant); "one" on z for a trapezoid on
+z (direction (0, 0, 1), each interval the flat-top amplitude, G the mean, constant);
+"one" with the select kind "select" for the same trapezoid times 0.6 on x and 0.8 on y
+(direction (0.6, 0.8, 0), G = |mean|, constant); "changing" for a gradient that turns,
+and for a bipolar gradient on one axis (a mean of zero has no direction).
+
+**How:** Three pulses in one sequence and the turning gradients of `turning`
+(arbitrary gradients on x and y, as `_turning_gradients` of `test_rf_profiles.py`).
+Each flat-top interval value exactly; G within a relative 1e-12 (the sum of the 200
+interval values rounds); the oblique direction within 1e-12 (the scaled table values
+round).
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_views_for_each_kind`
+
+**Checks:** `viewSpec`: "profile" of kind "one" with W (c ± 2W, 401 points, c = f / G);
+without W (c ± 2 × the spectrum FWHM / |G|, and the note NO_SLICE_THICKNESS); of kind
+"none" (df from f - 2B to f + 2B); of kind "changing" (the reason); "z_df" (201 points
+on each axis, the df step |G| times the z step, centred on 0 Hz) and its reason for
+kind "none"; "2d" with `plane` and `extentM`, with the FOV definition (the two axes
+with the largest RMS gradient, x and y), with neither (NO_FOV), and its reasons for the
+kinds "one" and "none".
+
+**How:** Pulses with a frequency offset of 800 Hz (sinc) and -200 Hz (hard), a file
+without W, and the turning gradients with and without an FOV. The axes are compared
+exactly with the same operations as the reference; c against f / G within a relative
+1e-12 (G is a mean). A spec of the FOV view is simulated to check its shape (9 × 9).
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_echo_pathway_of_a_gre_rephases_the_select_and_readout_moments`
+
+**Checks:** The echo pathway of a GRE: the rephaser in the next block cancels the
+dephasing of the pulse and the prephaser the readout moment; the pathway ends at the
+ADC of the same TR with the sign +1.
+
+**How:** `gre(2)`, the excitation of the second TR (block 4): the ADC block is 6, the z
+moment is -half (the moment from the RF centre to the RF end) and the x moment 0,
+within 1e-9 of the moment each cancels (the rephasing tolerance of the plan); the y
+moment is exactly 0.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_echo_pathway_of_a_spin_echo_has_sign_minus_one`
+
+**Checks:** A spin echo with crushers around the refocusing pulse on y: the sign is -1,
+the z moment is +half (the conjugation turns the dephasing), and the crusher and
+readout moments cancel. A refocusing pulse has no pathway and no reason.
+
+**How:** `spinEcho("gy")`: the ADC block is 5; the moments within 1e-9 of the moment
+each cancels.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_echo_pathway_without_an_adc_before_the_next_excitation`
+
+**Checks:** No pathway, with the reason NO_ADC, for an excitation followed by another
+excitation before any ADC (a dummy TR), for one at the end of the file, and for a walk
+longer than `maxBlocks`. The last excitation before the ADC has its pathway.
+
+**How:** `gre(1, 1)` (one dummy TR, then one TR), block 0 and block 4 (and block 4 with
+`maxBlocks` 1); a file with only an excitation and its rephaser.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_echo_pathway_stops_at_a_saturation_pulse`
+
+**Checks:** A saturation pulse between an excitation and its ADC: no pathway, with the
+reason OTHER_RF_BEFORE_ADC.
+
+**How:** An excitation, its rephaser, a hard saturation pulse, then the readout.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_period_of_a_gre_spin_echo_and_tse_like_train`
+
+**Checks:** `period` for a GRE (the period of a block of the second TR is that TR, with
+one distinct excitation, and RF spoiling gives one pulse key; the last TR ends at the
+end of the file), a spin echo (the excitation and the refocusing pulse in one period),
+and a TSE-like train (refocusing pulses never start a period: one period for each
+train, with one distinct refocusing pulse counted three times).
+
+**How:** `gre(3)`, whose TRs each have their own RF row with a new phase and the same
+`key`; `spinEcho("gy")`; two trains of an excitation and three [refocusing, crusher,
+readout] groups. The first block, the last block, the first ADC block, `truncated` and
+the pulses (use, first block, last block, count) are compared exactly, from several
+blocks of each period.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_period_with_fat_saturation_dummies_and_blocks_before_the_first_rf`
+
+**Checks:** A fat saturation before each excitation is the period start, and the
+excitation after it is not; dummy TRs without an ADC join the period of the first ADC
+(one distinct excitation with the count of all its blocks); a block before the first
+RF block gives the first period; each block of a period gives the same period.
+
+**How:** Two TRs of [saturation, spoiler, excitation, rephaser, readout] (period of
+block 7: blocks 5 to 9); `gre(2, 3)` (period of block 2: blocks 0 to 15, first ADC 14,
+count 4); a delay block and a gradient block before two TRs (the period of blocks 0 and
+1 is blocks 2 to 4); `gre(3, 1)` (the period of each block of the period of block 6,
+with `deepEqual`).
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_period_truncated_after_max_blocks`
+
+**Checks:** A walk longer than `maxBlocks` sets `truncated`, and the period starts and
+ends at the limits of the walks; with the default limit, the whole period.
+
+**How:** An excitation, 30 gradient blocks, then the readout: the period of block 15
+with `maxBlocks` 10 is blocks 5 to 25, truncated, with no pulses and no ADC; with the
+default, blocks 0 to 31 with the ADC block 31.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_combined_profile_of_one_direction_is_the_product_of_the_profiles`
+
+**Checks:** The combined profile of a spin echo with the refocusing pulse on z (1.5 W
+wide): one direction; its line is the excitation |Mxy| times the refocusing |β|² of
+their "profile" views at the same points, exactly; less signal is kept than the
+excitation alone makes; the numbers have the keys of the reference, in its order.
+
+**How:** `combinedProfile` of the period of block 0 (done only after `step`), against
+`simulate` of the two "profile" views and `quantity`. Exact: the same grid (both views
+use c ± 2W) and the same simulations.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_combined_profile_of_two_logical_directions_is_the_outer_product`
+
+**Checks:** The combined profile of an excitation on z and a refocusing pulse on y,
+view "2d": no line, the numbers `centre_signal` and `fraction_inside`, and one map on
+the axes y and z (in the order x, y, z) whose values are the outer product of the
+refocusing |β|² on its y axis and the excitation |Mxy| on its z axis, exactly.
+
+**How:** `combinedProfile` with `n` 21, then `simulate` of each pulse on the map axis of
+its direction and `quantity`; the outer product is made in the test. Exact: the same
+points and simulations, times the factor 1.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_step_with_small_budgets_gives_the_same_arrays`
+
+**Checks:** Sliced work does not change a value: `step(0)` until done gives exactly the
+arrays of one `step(Infinity)`, for a 1D profile, a z × Δf shear, a 2D grid and a
+combined profile with a map. The fraction that `step` returns grows to 1, and each case
+takes several slices. `result()` throws before the work is done.
+
+**How:** The excitation of `spinEcho("gy")`: its "profile" view (401 points), its
+"z_df" view with 41 points (81 points of work), and a 17 × 13 grid on z and x; the
+combined profile of the period with view "2d" and `n` 21. Each value is compared with
+`Object.is`.
+
+**Assumptions:** `step(0)` computes one chunk of points (about 4096 point-samples), so a
+200-sample pulse takes 20 points for each call and each case needs several calls.
+
+#### `test_z_df_shear_equals_the_full_grid`
+
+**Checks:** With a constant gradient, the "z_df" view is one 1D simulation of the
+distinct values z + Δf / G; it equals `spinDomain` at each (z, Δf) grid point, for both
+signs of G.
+
+**How:** An excitation with 300 Hz on a trapezoid of each sign; the "z_df" view with 25
+points on each axis, against `spinDomain` called at the 625 grid points (z on the z
+axis, Δf as `df`), within 1e-12 (the float rounding of z + Δf / G against G z + Δf).
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_spec_and_argument_errors`
+
+**Checks:** Each rule of the specs throws with the message of `rf_profiles._check_spec`
+(an unknown kind, a kind twice in the axes, a kind in the axes and in `at`, "select"
+with z, "select" for a pulse on a logical axis, a number of points that is not an
+integer (TypeError), one point, lo not below hi, an `at` value that is not finite, more
+than `MAX_POINTS` points), and the other argument checks: an unknown view, a bad
+`plane`, `extentM` <= 0, `n` < 2, an unknown quantity, an unknown combined view, a block
+that is not a play index and `maxBlocks` < 1 (RangeError, for `blockPulse` and
+`period`), a file without RF for `period`, and `result()` before the work is done.
+
+**How:** Each call inside `assert.throws`, with the error type and a pattern of the
+Python message.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_file_data_checks_the_rf_table`
+
+**Checks:** `fileData` returns a frozen object with the entry's values (null for no W),
+and refuses a file without use labels, a missing column, and a column of another
+length.
+
+**How:** The RF table of `spinEcho("gy")` with a hand-made entry; a copy without the
+`center` column; a copy whose `dt` column has one value.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_widths_keys_follow_the_reference`
+
+**Checks:** The keys of `widths`, in the reference's order, are missing when the Python
+leaves them out: an excitation with W and a pathway has all seven, also with a moment
+of the caller; a refocusing pulse has no phase numbers; a Δf profile has only the two
+widths. The echo phase is 0 at the grid point of the slice centre and NaN below 10 % of
+the maximum |Mxy|, and a moment that is not 3 values throws.
+
+**How:** The pulses of `spinEcho("gy")` and their "profile" views, and a Δf axis for the
+excitation. The centre phase within 1e-15 (the angle of z exp(-i angle(z)) rounds, as
+the Python test).
+
+**Assumptions:** None beyond the file's own.
 
 ### 2.33 RF profiles against Python (`test_rf_profiles_golden.py`)
 
-Phase 3 of `docs/plans/rf-profiles.md` adds the entries.
+`test_rf_profiles_golden.py` is the golden test of task 3.4 of
+`docs/plans/rf-profiles.md`: it checks that `RfProfiles`
+(`assets/rf_profiles.js`), run through Node on real diagram tables and RF
+profile card file data, gives the same values as the Python reference
+(`rf_profiles.py`) for the period, every RF block, the first block of every
+distinct pulse and period (each view: `profile`, `z_df` and `2d`, with its
+widths and echo phase for `profile`), and the combined profile of the first
+echo. `tests/js/golden_rf_profiles.js` is the Node half: given a JSON file
+with one sequence's encoded diagram tables, its lane metadata, its RF
+profile card file entry (`cards.rf_profile.rf_profile_data`, with the RF
+table) and a list of `period`, `pulse`, `view` or `combined` queries, it
+decodes the tables, builds `SeqLanes.sequenceView` and `RfProfiles.fileData`,
+answers each query with `RfProfiles`, and writes the results as JSON. It is
+not named `test_*.js`, so `node --test` does not try to run it on its own;
+`test_rf_profiles_golden.py` runs it with `subprocess.run`.
+
+The comparison uses a different tolerance for each kind of value, matching
+section 3.5, item 2 of the plan and the reason each value can differ at all:
+
+- **Exact** (`==`): the period fields, a period's pulses in order (`use`,
+  `first_block`, `last_block`, `count`), a block pulse's `use`,
+  `gradient_kind`, `select_kind`, `constant_gradient`, `dt_s`,
+  `freq_offset_hz`, `nominal_m`, `fov_m`, `notes`, `echo_reason`, the echo
+  `sign` and `adc_block`, every reason text, the kinds and `n` of each spec
+  axis, and a combined profile's `reason`, blocks and `directions`. `dt_s`
+  and `freq_offset_hz` are exact because both languages read them straight
+  from the RF table's `dt` and `freq_hz` columns, which `rf_profiles.py`
+  itself computes with the same formula in the same order as
+  `cards.rf_profile.rf_table`, so the two Python computations already agree
+  bit for bit before either reaches JavaScript.
+- **The pulse key partition**: a Python key is a tuple and a JavaScript key
+  is a string, so the test never compares them by value. Instead, every
+  block it asks about builds a bijection between the two representations
+  and asserts that the bijection is never many-to-one on either side --
+  "the partition of the RF blocks by key must be the same".
+- **Float rounding of the same arithmetic** (relative 1e-12 of the largest
+  value of the array, or of the scalar itself): the signal (`sigRe`,
+  `sigIm` against `signal_hz`), the interval gradients (JavaScript
+  multiplies the diagram table's mT/m by 42576 Hz/m per mT/m where Python
+  divides pypulseq's Hz/m by `seq_utils.GAMMA` and multiplies by 1e3),
+  `direction`, `select_gradient_hz_per_m`, `slice_centre_m`, `flip_deg`,
+  `peak_b1_ut`, `energy_ut2_ms`, a spec's `lo`/`hi` away from the
+  spectrum-FWHM cases below, the grids, the combined `factor`, the line's
+  `u`, and the maps' axes.
+- **The spectrum FWHM**: the first axis of a "profile" or "z_df" spec of
+  kind "none", and of kind "one" without a nominal thickness, comes from the
+  FWHM of the zero-padded RF spectrum, which two independent FFTs compute
+  (numpy's in Python, a mixed-radix FFT in JavaScript). The FWHM is the
+  distance between two discrete frequency bins, so it is equal unless a
+  magnitude next to the edge of "at or above half the maximum" is within a
+  relative 1e-9 of that half, where float rounding alone could pick another
+  bin. The test asserts that each such pulse is outside that margin (with
+  numpy's FFT of the pulse's own signal; a pulse inside it fails with a
+  message to use another test pulse), and then holds `lo` and `hi` to the
+  relative 1e-12 rule: a bin of difference would move them by about 1e-3.
+- **`a` and `b`** (absolute 1e-12, the plan's own rule): both are bounded
+  (`|a|^2 + |b|^2 = 1`), so an absolute tolerance is the natural one;
+  `mxy_abs`, `mz` and `beta_sq` are plain algebra on `a` and `b`, so they get
+  the same absolute 1e-12.
+- **The echo moment** (absolute 1e-9 /m): moments add terms of order 1e2 /m,
+  so rounding is many orders below 1e-9; 1e-9 /m is a phase of about
+  6e-11 rad over 1 cm.
+- **The echo phase** (absolute 1e-9 rad where both are finite): the NaN
+  masks (`|Mxy| < 10%` of its maximum) must be equal except where `|Mxy|` is
+  within an absolute 1e-9 of that threshold.
+- **Widths**: `fwhm` and `edge_width` (and the combined `fwhm_m`,
+  `edge_width_m`) are equal within a relative 1e-12 of the axis (or line)
+  range, or -- only where a profile value is within an absolute 1e-9 of that
+  width's own threshold (half the maximum for `fwhm`; 10% or 90% for
+  `edge_width`) -- exactly one grid step apart, because these numbers are
+  read straight off the sample grid with no interpolation, so a threshold
+  crossing that float rounding alone could move to the neighboring grid
+  point in one implementation and not the other is expected there and
+  nowhere else. `passband_ripple`, `stopband_level`, `signal_kept`,
+  `fraction_inside` and `centre_signal` get the relative-1e-12 rule; the
+  phase numbers (`rephasing_error_rad`, `nonlinear_residual_rad`,
+  `centre_phase_rad`) get the absolute 1e-9 rad rule.
+- **Maps and lines of the combined profile** (absolute 1e-12): a combined
+  value is a product of `mxy_abs`/`beta_sq` values, the same reasoning as
+  `a` and `b`.
+
+#### `test_rf_profiles_js_matches_python_reference`
+
+**Checks:** For each of 16 sequences (one test each) -- the phase 2 test sequences and the two
+vb-pulseq-like spin echoes named in the task (a column spin echo:
+excitation on z, refocusing on y; and excitation and a 1.5&times; wider
+refocusing pulse, both on z), a TSE-like train, a non-selective refocusing
+pulse, a fat saturation before the excitation, an inversion between the
+excitation and the ADC, a PRESS-like sequence and an oblique direction, a
+turning gradient with a `FOV` definition, a block pulse and a sinc without
+`SliceThickness`, an MPRAGE-like block, a sequence of another nucleus, a
+sequence with `freq_ppm` on a system with `B0` set, and the example GRE of
+`examples/gre_report.py` -- `RfProfiles` gives the same period (for every
+block, plus a few with `maxBlocks: 1` for `truncated`), the same pulse (for
+every block with RF), the same view spec/profile/quantities/widths/echo
+phase (for the first block of every distinct pulse of every period, all
+three views, with one `echoMomentPerM` override), and the same combined
+profile (`profile` and `2d`, for the first block of every distinct period)
+as `rf_profiles.py`, within the tolerances above. 1055 queries in total; the
+16 tests run in about 13 s.
+
+**How:** Parametrized over the 16 sequences. For its sequence, the test builds a `period` query for every
+block, a few `period` queries with `maxBlocks: 1`, a `pulse` query for
+every RF block, a `view` query (all three views) for the first block of
+every distinct pulse of every period, and a `combined` query (both views)
+for the first block of every distinct period, then writes the sequence's
+encoded diagram tables, lane metadata and RF profile card file entry
+alongside the queries to a JSON file and runs
+`tests/js/golden_rf_profiles.js` with Node on it. It then recomputes each
+query's answer with `rf_profiles.py` (`period`, `block_pulse`,
+`view_spec`, `simulate`, `quantity`, `widths`, `echo_phase`,
+`combined_profile`) and compares field by field with the rule above that
+applies to it. Most view and combined queries use a small grid (101 points
+for `profile`, 31 for `z_df` and `2d`, 21 for a combined profile) to keep
+the whole file inside its time budget; three sequences whose pulses are
+short and never need a full spatial map (the RF-spoiled GRE, the column
+spin echo, and the MPRAGE-like block) use the library's default sizes (401,
+201, 128) instead, for a few queries at full size.
+
+**Assumptions:**
+
+- `node` must be on `PATH` (both devShells have it); if it is not, the test
+  fails with a message naming the missing dependency, rather than skipping.
+- `rf_sim.spin_domain`, `profile_metrics` and the rest of `rf_profiles.py`
+  are correct: sections 2.29, 2.30 and 2.31 test them against an
+  independent oracle and closed forms. This file only checks that
+  `RfProfiles` agrees with them, not that either is physically correct.
+- A block's echo pathway, its widths and its echo phase are read from the
+  `BlockPulse`/`Profile` this file itself builds with `rf_profiles.py`, not
+  from a second, independent computation, so a bug shared between
+  `rf_profiles.py` and this file's expectations would not be caught here;
+  task 2.5's own tests (section 2.31) are the independent check on the
+  Python side, and phase 2b's external references (section 2.35) check the
+  physics.
+
+Measured largest differences (2026-09-28; the inputs are fixed, so a rerun
+gives the same numbers):
+
+| Comparison | Largest measured difference | Tolerance |
+|---|---|---|
+| `a`, `b` | 1.08e-14 (abs) | 1e-12 abs |
+| combined line/map values | 7.88e-15 (abs) | 1e-12 abs |
+| `signal_hz` | 2.14e-16 (rel) | 1e-12 rel |
+| `grad_hz_per_m` | 2.91e-16 (rel) | 1e-12 rel |
+| `direction`, `select_gradient_hz_per_m`, `slice_centre_m` | 0 (exact this run) | 1e-12 rel |
+| `flip_deg`, `peak_b1_ut`, `energy_ut2_ms` | 1.89e-15, 0, 2.60e-15 (rel) | 1e-12 rel |
+| quantities (`mxy_abs`, `mz`, `beta_sq`) | 2.12e-14 (abs) | 1e-12 abs |
+| echo moment | 1.14e-13 /m (abs) | 1e-9 /m abs |
+| echo phase | 1.80e-14 rad (abs) | 1e-9 rad abs |
+| `fwhm`, `edge_width` (and combined) | 0 (exact this run; the one-grid-step branch was never used) | 1e-12 rel of range, or one grid step near a threshold |
+| `passband_ripple`, `stopband_level` | 3.90e-14, 8.18e-15 (rel) | 1e-12 rel |
+| `rephasing_error_rad`, `nonlinear_residual_rad`, `centre_phase_rad` | 2.66e-15, 2.66e-15, 8.88e-16 rad (abs) | 1e-9 rad abs |
+| combined `factor`, `signal_kept`, `fraction_inside`, `centre_signal` | 0, 8.80e-16, 8.69e-16, 8.88e-16 (rel) | 1e-12 rel |
+| spectrum-FWHM spec axes | 0 (no pulse inside the 1e-9 margin) | the margin asserted, then 1e-12 rel |
+
+Every measured difference is at least two orders of magnitude inside its
+tolerance; no comparison came close to its limit.
 
 ### 2.34 RF profile card (`test_rf_profile_card.py`)
 
