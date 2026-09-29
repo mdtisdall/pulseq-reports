@@ -273,25 +273,32 @@ chart, a JavaScript file that draws it.
 ### The Python side
 
 ```python
+from pulseq_reports.markup import fmt, html_table, zoom_controls
 from pulseq_reports.page import Card
-from pulseq_reports.waveforms import file_lanes
+from pulseq_reports.waveforms import duration_s, file_lanes
 
 
 def peak_grad_card(named, card_id="peak-grad"):
     lanes = {lane["id"]: lane for lane in file_lanes(named.seq)}
     gx = lanes["gx"]
+    peak = max((abs(y) for segment in gx["segments"] for _, y in segment), default=0.0)
     body = (
-        f'<div class="chart" id="{card_id}-chart">'
+        html_table(["Lane", "Peak (mT/m)"], [["Gx", fmt(peak)]])
+        + '<p class="peak-note">The peak of the lane points.</p>'
+        + zoom_controls(f"{card_id}-diagram")
+        + f'<div class="chart" id="{card_id}-chart">'
         f'<svg id="{card_id}-diagram" tabindex="0" role="img" '
         'aria-label="Gx over time"></svg>'
         f'<div class="tip" id="{card_id}-tip" hidden></div></div>'
     )
-    return Card(id=card_id, title="Peak Gx", body_html=body, data={"lane": gx}, script="peak-grad")
+    data = {"lane": gx, "x_domain": [0.0, duration_s(named.seq) * 1e3]}  # ms
+    return Card(id=card_id, title="Peak Gx", body_html=body, data=data, script="peak-grad")
 ```
 
-`Card.id` (and `Card.script`, when given) must match `[a-z][a-z0-9-]*`, and
-must be unique among the cards on one page; `render_page` raises
-`ValueError` otherwise. `data` is anything JSON-ready; when it is not
+`Card.id` and `Card.script` (when given) must match `[a-z][a-z0-9-]*`, and
+`Card.id` must be unique among the cards on one page; `render_page` raises
+`ValueError` otherwise. Several cards can have the same `script`: the page
+includes the script one time. `data` is anything JSON-ready; when it is not
 `None`, the page carries it in a `<script type="application/json">` element
 and passes it to the card's JavaScript `init` function. `collapsed=True`
 puts the title and body in a closed `<details>` element, as the library's
@@ -302,11 +309,56 @@ example `{card_id}-chart`. A card script finds its own elements this way,
 so two cards built from the same function, with different `card_id` values,
 can be on one page without clashing.
 
+### Helpers for the card HTML
+
+`pulseq_reports.markup` has the helpers that the library's own cards use, so
+that a project card looks the same:
+
+| Name | Gives |
+|---|---|
+| `html_table(headers, rows)` | An HTML table in a horizontal scroll container. Each header and each cell (after `str`) is HTML-escaped. |
+| `fmt(v)` | A number with 3 significant digits, with the minus sign U+2212, as in the library's tables. |
+| `zoom_controls(svg_id)` | The zoom buttons (×10, ×2, ×0.5, ×0.1, Reset) of the `laneChart` chart whose `<svg>` has the id `svg_id`. Put them directly before the chart's `<div class="chart">`. |
+| `Lane(...)` | One line lane, with the fields of the lane JSON format below, as keyword arguments. |
+| `lanes_json(lanes)` | Each lane as a JSON-ready dict for a card's `data`: a `Lane` in field order, a dict (for example a gate lane) unchanged. |
+
+The other names of `markup`, which start with `_`, are for the library's
+own cards only.
+
+### CSS
+
+Pass the CSS of project cards as `extra_css` to `render_page` or
+`write_page`, a keyword-only list of CSS texts:
+
+```python
+write_page(
+    "report.html",
+    title="my_scan.seq review",
+    subtitle="A custom card",
+    cards=[peak_grad_card(named)],
+    extra_css=[".peak-note { color: var(--ink-2); }"],
+)
+```
+
+The page has one `<style>` element: the library's `report.css`, then each
+`extra_css` text in the order given. So a rule of `extra_css` wins over a
+library rule of the same specificity. A text that contains `</style` raises
+`ValueError`. Use the color tokens of `report.css` (`var(--ink)`,
+`var(--ink-2)`, `var(--muted)`, `var(--grid)`, `var(--axis)`, `var(--rf)`,
+`var(--gx)` and the others), so that a card follows the light and the dark
+theme. Start each selector with a class that only your card uses, not with
+a card id: the caller of a card builder can give a different `card_id`. The
+library's own `report.css` has no id selector for the same reason.
+
 ### The JavaScript side
 
 Pass the script as one of `extra_scripts` to `render_page` or `write_page`.
 It must call `PulseqReport.registerCard` with the same name as the card's
-`script` field:
+`script` field. Do not use the name of a library card script: `diagram`,
+`spectrum` or `rf-profile` (the files in `src/pulseq_reports/assets/cards/`).
+For such a name, `render_page` includes the library's script, and the
+project script's own `registerCard` call then throws "already registered",
+which only the browser console shows.
 
 ```javascript
 PulseqReport.registerCard("peak-grad", (section, data) => {
@@ -315,9 +367,9 @@ PulseqReport.registerCard("peak-grad", (section, data) => {
     chart: document.getElementById(`${section.id}-chart`),
     tip: document.getElementById(`${section.id}-tip`),
     lanes: [data.lane],
-    xDomain: data.lane.domain,
-    xLabel: "Gx (mT/m)",
-    cursorText: v => `${v.toFixed(2)} mT/m`,
+    xDomain: data.x_domain,
+    xLabel: "Time (ms)",
+    cursorText: v => `${v.toFixed(3)} ms`,
   });
 });
 ```
@@ -329,6 +381,7 @@ write_page(
     subtitle="A custom card",
     cards=[peak_grad_card(named)],
     extra_scripts=[open("peak_grad.js").read()],
+    extra_css=[".peak-note { color: var(--ink-2); }"],
 )
 ```
 
@@ -340,10 +393,9 @@ buttons or other controls to `section`, not to the whole document, so a
 second copy of the same card does not answer to the first one's controls.
 
 Script order on the page: `chart_math.js`, `lane_chart.js`, `map_chart.js`,
-`rf_profiles.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, the library's own card
-scripts (each included once, by
-name, from `assets/cards/`), then `extra_scripts` in the order given, then `page.js`.
-`page.js` runs last and
+`rf_profiles.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, the library's
+own card scripts (each included once, by name, from `assets/cards/`), then
+`extra_scripts` in the order given, then `page.js`. `page.js` runs last and
 calls each card's registered `init` function. `PulseqReport` (from
 `lane_chart.js`) is loaded before any `extra_scripts`, so a custom card
 script can call `PulseqReport.registerCard` and `PulseqReport.laneChart` at
@@ -359,7 +411,7 @@ hover tooltip, and returns `{setView, setLanes, setWindow}`.
 | Option | Meaning |
 |---|---|
 | `svg`, `chart`, `tip` | Existing DOM elements: the chart's `<svg>` (needs a unique `id`), its wrapping element, and the tooltip element. |
-| `lanes` | The lanes to draw, in the JSON format below. |
+| `lanes` | The lanes to draw, in the JSON format below. With `lanesFor`, the chart does not draw `lanes`. Without `groups`, `lanes` then only sets the SVG height, so give as many lanes as `lanesFor` returns. With `groups`, each render sets the height, and `lanes` can be `[]`. |
 | `lanesFor(view, bins, visibleGroupIds)` | Called at the start of each render, with the current view, `bins` (the plot width in points) and the Set of currently visible group ids; its return is drawn instead of `lanes` for that render. Without `groups`, ignore the third argument, and the result must always have the same number of lanes. Without `lanesFor`, `lanes` is drawn as given to `laneChart`, `setLanes` or `setWindow`. |
 | `xDomain` | The initial view, `[lo, hi]`. |
 | `extent` | The widest view a zoom or pan can reach. Defaults to `xDomain`. |
@@ -377,9 +429,16 @@ The returned `setView(view)` changes the view without calling
 the same. `setWindow({lanes, xDomain, extent})` replaces the lanes (any
 number), the initial view and the widest view together, and resets to the
 new `xDomain`; the diagram card's window buttons use it, including to
-switch to another file's model. `PulseqReport.el` and `PulseqReport.text`
-are small helpers for building SVG elements directly, for a card that does
-not use `laneChart`.
+switch to another file's model. With `lanesFor`, `setLanes` has no effect,
+because each render calls `lanesFor` again, and the `lanes` of `setWindow`
+only set the SVG height, as the `lanes` option does.
+
+`PulseqReport.el` and `PulseqReport.text` build SVG elements directly, for a
+card that does not use `laneChart`. `el(name, attrs, parent)` makes the SVG
+element `name` with the attributes of the object `attrs`, appends it to
+`parent`, and returns it. `text(attrs, content, parent)` makes an SVG
+`<text>` element with the text `content` in the same way, and returns
+nothing.
 
 ### `PulseqReport.mapChart` options
 
@@ -451,17 +510,31 @@ SVG absolutely over one another.
 ### Lane JSON format
 
 Each entry of `lanes` (and of a `Card`'s own `data`, when it holds lanes) is
-one of:
+one of the two kinds below. `markup.Lane` makes a line lane, and
+`markup.lanes_json` makes the JSON of a list of lanes.
 
-- a **line** lane (the default `kind`): `id`, `title`, `unit`, `color` (a
-  `--<color>` CSS custom property name), `segments` (a list of line
-  segments, each a list of `[x, y]` points), `domain` (`[lo, hi]` for the y
-  axis), `ticks` and `tick_labels` (the y-axis tick values and their text),
-  `empty` (true to show "no events" instead of a line), and `fill` (a
-  baseline y value to fill to, or `null` for no fill).
+- a **line** lane (the default `kind`):
+  - `id`, `title` and `unit`.
+  - `color`: the name of a color token of `report.css` without the leading
+    `--`, for example `"gx"` for `var(--gx)`. With `"--gx"`, the lane has no
+    color, and there is no error.
+  - `segments`: a list of line segments. Each segment is a list of `[x, y]`
+    points in increasing `x`: the chart finds a point by binary search.
+  - `domain` (`[lo, hi]` for the y axis), `ticks` and `tick_labels` (the
+    y-axis tick values and their text).
+  - `empty`: true to add a "no events" label to the lane. The chart still
+    draws the segments.
+  - `fill`: the value that the tooltip shows where no segment covers the
+    cursor, for example `0` between two gradient events. `null` shows "—".
+  - `minmax` (optional): true when each segment holds pairs of points, (bin
+    start, minimum) and (bin centre, maximum), one pair for each bin. The
+    tooltip then shows "minimum – maximum" for the bin at the cursor.
+    `markup.Lane` has no `minmax` field, so give such a lane as a dict.
 - a **gate** lane: the same `id`, `title`, `unit`, `color`, `domain`,
   `ticks`, `tick_labels`, `empty`, plus `kind: "gate"` and `windows` (a list
-  of `[start, end]` ranges that are "on") in place of `segments`.
+  of `[start, end]` ranges that are "on") in place of `segments`. The chart
+  draws each window from y = 0 to y = 1, and the tooltip shows "on" or
+  "off".
 
 ### Messages between cards
 

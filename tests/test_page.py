@@ -159,6 +159,49 @@ def test_extra_script_with_close_tag_raises(closer):
         page.render_page("Title", "Subtitle", cards, extra_scripts=[f"bad {closer} here"])
 
 
+def test_extra_css_follows_the_library_css():
+    cards = [page.Card(id="a", title="A", body_html="<p>a</p>")]
+    extra_css = ["/* EXTRA_CSS_ONE */", "/* EXTRA_CSS_TWO */"]
+    result = page.render_page("Title", "Subtitle", cards, extra_css=extra_css)
+    assert result.count("<style>") == 1
+    style = result[result.index("<style>") : result.index("</style>")]
+    css_path = resources.files("pulseq_reports").joinpath("assets", "report.css")
+    library_css = css_path.read_text(encoding="utf-8")
+    indices = [
+        style.index(library_css),
+        style.index("EXTRA_CSS_ONE"),
+        style.index("EXTRA_CSS_TWO"),
+    ]
+    assert indices == sorted(indices)
+    assert indices[0] + len(library_css) < indices[1]
+
+
+@pytest.mark.parametrize("closer", ["</style>", "</STYLE>", "</StYlE "])
+def test_extra_css_with_close_tag_raises(closer):
+    cards = [page.Card(id="a", title="A", body_html="<p>a</p>")]
+    with pytest.raises(ValueError):
+        page.render_page("Title", "Subtitle", cards, extra_css=[f"p {{}} {closer} here"])
+
+
+@pytest.mark.parametrize("argument", ["extra_scripts", "extra_css"])
+def test_str_in_place_of_a_list_raises(argument):
+    """A `str` is a sequence of one-character texts, so without the check each character
+    would become its own script element or CSS text."""
+    cards = [page.Card(id="a", title="A", body_html="<p>a</p>")]
+    with pytest.raises(TypeError, match=argument):
+        page.render_page("Title", "Subtitle", cards, **{argument: "p { color: red; }"})
+
+
+def test_library_css_selects_no_element_id():
+    """The caller gives each card its id (`card_id`), so a `#id` selector in the library's
+    CSS either styles nothing or styles one project's own card."""
+    css_path = resources.files("pulseq_reports").joinpath("assets", "report.css")
+    css = re.sub(r"/\*.*?\*/", "", css_path.read_text(encoding="utf-8"), flags=re.DOTALL)
+    selectors = re.findall(r"([^{}]*)\{", css)
+    assert selectors
+    assert [s.strip() for s in selectors if "#" in s] == []
+
+
 def test_substitute_replaces_every_placeholder():
     result = page._substitute("__A__-__B__", {"__A__": "1", "__B__": "2"})
     assert result == "1-2"
@@ -182,10 +225,14 @@ def test_render_page_with_placeholder_shaped_card_body_does_not_raise():
 
 def test_write_page_matches_render_page(tmp_path):
     cards = [page.Card(id="a", title="A", body_html="<p>a</p>")]
-    expected = page.render_page("Title", "Subtitle", cards)
+    extra_scripts = ["// EXTRA_SCRIPT_MARKER"]
+    extra_css = ["/* EXTRA_CSS_MARKER */"]
+    expected = page.render_page("Title", "Subtitle", cards, extra_scripts, extra_css=extra_css)
     out_path = tmp_path / "report.html"
-    page.write_page(out_path, "Title", "Subtitle", cards)
+    page.write_page(out_path, "Title", "Subtitle", cards, extra_scripts, extra_css=extra_css)
     assert out_path.read_text(encoding="utf-8") == expected
+    assert "EXTRA_SCRIPT_MARKER" in expected
+    assert "EXTRA_CSS_MARKER" in expected
 
 
 def test_card_asset_bad_name_raises():

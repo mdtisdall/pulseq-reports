@@ -349,34 +349,63 @@ passes, showing the report if it does not.
 
 ### 2.2 HTML and lane markup (`test_markup.py`)
 
-`test_markup.py` tests the HTML helpers in `markup.py`: the zoom button
-group placed above each line chart, and the HTML table with escaped cell
-values.
+`test_markup.py` tests the public helpers of `markup.py`, which project
+cards use too (`docs/usage.md`, section 4): the zoom button group placed
+above each line chart, the HTML table with escaped cell values, the number
+format of the library's tables, and the JSON of a list of lanes.
 
 #### `test_zoom_controls_markup`
 
-**Checks:** `_zoom_controls` returns the zoom button group for a chart's SVG
+**Checks:** `zoom_controls` returns the zoom button group for a chart's SVG
 id, with the id HTML-escaped.
 
-**How:** The test calls `_zoom_controls("diagram")` and compares the result
+**How:** The test calls `zoom_controls("diagram")` and compares the result
 with the expected markup: a controls group labeled "Zoom", with
 `data-zoom-for="diagram"`, and five buttons in this order: ×10, ×2, ×0.5,
-×0.1 and Reset. It calls `_zoom_controls('a"b')` and checks that the result
+×0.1 and Reset. It calls `zoom_controls('a"b')` and checks that the result
 is the same markup with the id HTML-escaped in `data-zoom-for`.
 
 **Assumptions:** None.
 
 #### `test_table_escapes_html`
 
-**Checks:** `_table` escapes HTML special characters in both the header and
+**Checks:** `html_table` escapes HTML special characters in both the header and
 the cell values.
 
-**How:** The test calls `_table` with one header and one row, each holding
+**How:** The test calls `html_table` with one header and one row, each holding
 `<`, `&`, `"` and `'` characters. It checks that the raw `<h1>` and
 `<script>` tags are not in the result, and that the HTML-escaped header text
 and the HTML-escaped cell text are in the result.
 
 **Assumptions:** None.
+
+#### `test_fmt_gives_three_significant_digits_and_a_minus_sign`
+
+**Checks:** `fmt` shows a number with 3 significant digits, and a negative
+number with the minus sign U+2212, not a hyphen.
+
+**How:** The test compares `fmt` of 12.3456, 0.000123456 and 123456.0 with
+"12.3", "0.000123" and "1.23e+05". It checks that `fmt(-2.5)` is "−2.5"
+with U+2212, and that it has no hyphen.
+
+**Assumptions:** The expected texts are Python's `.3g` format of each
+value.
+
+#### `test_lanes_json_converts_lanes_in_field_order_and_keeps_dicts`
+
+**Checks:** `lanes_json` gives a `Lane` as a dict with its keys in field
+order and its defaults filled in, and gives a dict lane (a gate lane)
+unchanged.
+
+**How:** The test makes one `Lane` with only the required fields and one
+gate lane dict, and calls `lanes_json` on both. It checks that the first
+result's keys are `id`, `title`, `unit`, `color`, `kind`, `segments`,
+`domain`, `ticks`, `tick_labels`, `empty` and `fill`, in that order; that
+`kind` is "line", `empty` is false and `fill` is None; that `segments` is
+the given list; and that the second result is the same dict object.
+
+**Assumptions:** The key order is the JSON key order on the page
+(`docs/usage.md`, "Lane JSON format").
 
 ### 2.3 The report page (`test_page.py`)
 
@@ -385,7 +414,8 @@ from a list of `Card` objects, in order: each card's title is escaped, its
 JSON data (if any) is placed in a `<script type="application/json">`
 element, and its script (if any) is included once, even when more than one
 card uses it. The tests also cover card and script id validation, the
-`__NAME__` placeholder substitution, `card_asset`, and `write_page`.
+project CSS (`extra_css`), the library CSS, the `__NAME__` placeholder
+substitution, `card_asset`, and `write_page`.
 
 #### `test_cards_appear_in_order_with_escaped_titles`
 
@@ -551,6 +581,58 @@ raises `ValueError` for an extra script that contains that text.
 
 **Assumptions:** None.
 
+#### `test_extra_css_follows_the_library_css`
+
+**Checks:** `render_page` puts each `extra_css` text in the page's one
+`<style>` element, after the whole library CSS (`report.css`), in the given
+order, so a project rule wins over a library rule of the same specificity.
+
+**How:** The test renders a page with two `extra_css` texts, each a CSS
+comment with a marker. It checks that the page has one `<style>` element,
+and that in it the text of `report.css` comes first, whole, and then the
+first marker and then the second.
+
+**Assumptions:** None.
+
+#### `test_extra_css_with_close_tag_raises`
+
+**Checks:** `render_page` raises `ValueError` when an `extra_css` text
+contains a `</style` tag, in any letter case, because the tag would end the
+page's `<style>` element.
+
+**How:** The test runs once for each of three forms of the closing tag —
+`</style>`, `</STYLE>` and `</StYlE ` — and checks that `render_page`
+raises `ValueError` for an `extra_css` text that contains that text.
+
+**Assumptions:** None.
+
+#### `test_str_in_place_of_a_list_raises`
+
+**Checks:** `render_page` raises `TypeError` when `extra_scripts` or
+`extra_css` is one `str` in place of a list of texts. A `str` is a sequence
+of one-character texts, so without the check each character becomes its own
+`<script>` element or CSS text, with no error.
+
+**How:** The test runs once for `extra_scripts` and once for `extra_css`. It
+gives that argument the `str` `"p { color: red; }"` and checks that
+`render_page` raises `TypeError` with the argument's name in the message.
+
+**Assumptions:** None.
+
+#### `test_library_css_selects_no_element_id`
+
+**Checks:** The library's `report.css` has no `#id` selector. The caller of
+a card builder gives the card its id (`card_id`), so an id selector in the
+library CSS styles no library card, or styles one project's own card. A
+project card's CSS goes in `extra_css`.
+
+**How:** The test removes the CSS comments from `report.css`, takes the
+text before each `{` (the selectors and the `@media` conditions), and
+checks that no such text contains `#`.
+
+**Assumptions:** Color values such as `#f9f9f7` are only in declarations,
+after a `{`, so they are not in the text that the test checks.
+
 #### `test_substitute_replaces_every_placeholder`
 
 **Checks:** `_substitute` replaces each `__NAME__` placeholder in a template
@@ -597,11 +679,14 @@ result.
 
 #### `test_write_page_matches_render_page`
 
-**Checks:** `write_page` writes the same HTML that `render_page` returns.
+**Checks:** `write_page` writes the same HTML that `render_page` returns,
+and passes on `extra_scripts` and `extra_css`.
 
-**How:** The test builds one card, calls `render_page` directly, then calls
+**How:** The test builds one card, one extra script and one `extra_css`
+text, each with a marker. It calls `render_page` directly, then calls
 `write_page` to a temporary path with the same arguments, and checks that
-the file's contents equal the `render_page` result.
+the file's contents equal the `render_page` result, and that the result has
+both markers.
 
 **Assumptions:** None.
 
@@ -1425,7 +1510,7 @@ vb-pulseq's two-column definitions table for the same sequence (parity),
 and the card's `id`, `title`, `data` and `script` fields are correct.
 
 **How:** The test builds a synthetic GRE sequence (it has definitions,
-including "TR"), computes the same table directly with `markup._table` from
+including "TR"), computes the same table directly with `markup.html_table` from
 `seq.definitions.items()`, and compares it to `definitions_card`'s
 `body_html`. It also checks `id == "definitions"`, `title == "Definitions"`,
 and `data` and `script` are both None.
@@ -1440,7 +1525,7 @@ only for the multi-file case).
 
 **How:** The test clears `seq.definitions` on a synthetic spin echo
 sequence and checks that the body equals
-`markup._table(["Definition", "Value"], [])`.
+`markup.html_table(["Definition", "Value"], [])`.
 
 **Assumptions:** pypulseq's `Sequence.definitions` is a plain dict that a
 test can clear directly.
@@ -2917,7 +3002,7 @@ limit, the max slew, its percent, and the RMS), one row group for each file
 when there is more than one, and the extra RMS column when a window is given.
 Every expected numeric cell is computed by hand from the trapezoid the test
 builds, using the same formulas as `test_grad_limits.py`, and compared through
-`markup._table`, so a test also fixes the exact table that `_table` would
+`markup.html_table`, so a test also fixes the exact table that `html_table` would
 render from those rows.
 
 Since phase 4 of `docs/plans/cards-at-scale.md`, a window's "RMS over whole file" column comes
@@ -2936,7 +3021,7 @@ has a gradient.
 peak, slew and RMS from the trapezoid's parameters (as in
 `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`) and their
 percents of `SYSTEM.max_grad` and `SYSTEM.max_slew`, and builds the expected
-table HTML with `markup._table` from the hand-computed rows. It calls
+table HTML with `markup.html_table` from the hand-computed rows. It calls
 `gradient_limits_card` and checks that the card's `id`, `title`, `data` and
 `script`, and that its body starts with the expected table HTML.
 
@@ -2950,7 +3035,7 @@ file name with an HTML special character is escaped.
 
 **How:** The test builds two files, each with a single x trapezoid of a
 different amplitude, computes the hand-computed rows for each as in the
-single-file test, and builds the expected table HTML with `markup._table`,
+single-file test, and builds the expected table HTML with `markup.html_table`,
 with the first file's name (which contains `&`) on the first row of its group
 and the second file's name on the first row of its group. It checks that the
 card's body starts with the expected table HTML, and that the escaped form of
@@ -2968,7 +3053,7 @@ window.
 the rising ramp. It computes the expected peak, slew and window RMS from the
 ramp alone (RMS from `amplitude^2 * rise_time / 3` divided by the window
 length), and the expected whole-file RMS as in the single-file test. It builds
-the expected table HTML with `markup._table` from these hand-computed rows,
+the expected table HTML with `markup.html_table` from these hand-computed rows,
 with both RMS columns, and checks that the card's body starts with it.
 
 **Assumptions:** None.
@@ -3333,7 +3418,7 @@ once.
 `test_report_has_zoom_controls_on_each_line_chart`, checking only the
 diagram card because phases 4 and 5 are not merged into this branch. The
 test builds a diagram card and renders it. It checks that
-`markup._zoom_controls("diagram-diagram")` appears exactly once, that the
+`markup.zoom_controls("diagram-diagram")` appears exactly once, that the
 text right after it (skipping one newline) starts with
 `<div class="chart"` and has `id="diagram-diagram"` within its first 400
 characters, and that the zoom and pan help sentence ("Click the chart to
@@ -3424,14 +3509,14 @@ compares the two arrays' dtype (`float32`) and values (`numpy.array_equal`) agai
 
 **Checks:** The lane-group toggle buttons (RF/ADC/Gradients/PNS, `docs/plans/
 diagram-lanes.md` section 4.5 item 3) go above the chart, after the time-window
-buttons and before `_zoom_controls`, so the existing "zoom controls directly
+buttons and before `zoom_controls`, so the existing "zoom controls directly
 before the chart" test still holds.
 
 **How:** The test builds a diagram card for the synthetic spin echo sequence and
 checks that the group-controls container (`<div class="controls" role="group"
 aria-label="Lanes" id="diagram-groups"></div>`) appears exactly once in the
 body, and that its position is after the time-window buttons' container and
-before `markup._zoom_controls("diagram-diagram")`.
+before `markup.zoom_controls("diagram-diagram")`.
 
 **Assumptions:** None.
 
@@ -3525,9 +3610,9 @@ collapsed "Blocks (table view)" card from `waveforms.block_rows`: the first
 `max_rows` blocks of each file when there are no windows (vb-pulseq's own
 note and table for one file, parity), or one table for each window when
 `windows` is given. Every expected table in this file is built with
-`markup._table`, the same helper the card itself uses, from the rows that
+`markup.html_table`, the same helper the card itself uses, from the rows that
 `block_rows` gives directly, so a test also fixes the exact table that
-`_table` would render from those rows.
+`html_table` would render from those rows.
 
 #### `test_one_file_note_and_table_when_rows_are_cut`
 
@@ -3538,7 +3623,7 @@ fields are correct.
 **How:** The test builds a synthetic gradient echo sequence with more
 blocks than a small `max_rows`, calls `blocks_card`, and separately calls
 `block_rows` with the same `max_rows` to get the expected rows and total. It
-builds the expected note text and the expected table with `markup._table`,
+builds the expected note text and the expected table with `markup.html_table`,
 and checks that `body_html` equals the note, a newline, and the table,
 exactly. It also checks `id`, `title`, `collapsed`, `data` and `script`.
 
@@ -3551,7 +3636,7 @@ of M blocks." note.
 
 **How:** The test builds a small sequence, calls `blocks_card` with the
 default `max_rows`, and checks that `body_html` equals a newline followed by
-the expected table (built with `markup._table`), and that the text "muted"
+the expected table (built with `markup.html_table`), and that the text "muted"
 (the note's CSS class) is absent.
 
 **Assumptions:** None.
@@ -3579,7 +3664,7 @@ overlap it.
 for each TR, calls `blocks_card` with them, and checks that `body_html` has
 exactly as many `<h3>` elements as windows, that each window's label
 appears in its own heading, and that the expected table for that window's
-own range (from `block_rows` and `markup._table`) appears in the body.
+own range (from `block_rows` and `markup.html_table`) appears in the body.
 
 **Assumptions:** None.
 

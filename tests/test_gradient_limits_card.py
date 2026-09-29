@@ -5,7 +5,7 @@ from synthetic import SYSTEM
 
 from pulseq_reports import grad_limits, page
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
-from pulseq_reports.markup import _fmt, _table
+from pulseq_reports.markup import fmt, html_table
 from pulseq_reports.seq_utils import GAMMA, NamedSequence
 
 
@@ -46,26 +46,26 @@ def test_single_file_table_has_axis_rows_and_percents():
     max_slew_t = SYSTEM.max_slew / GAMMA
     peak_pct = values["peak_mt"] / max_grad_mt * 100
     slew_pct = values["slew_t"] / max_slew_t * 100
-    zero_row = ["", _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0)]
+    zero_row = ["", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)]
 
     card = gradient_limits_card([NamedSequence("a.seq", seq)])
 
-    expected_table = _table(
+    expected_table = html_table(
         ["Axis", "Peak (mT/m)", "% of limit", "Max slew (T/m/s)", "% of limit", "RMS (mT/m)"],
         [
             [
                 "Gx",
-                _fmt(values["peak_mt"]),
-                _fmt(peak_pct),
-                _fmt(values["slew_t"]),
-                _fmt(slew_pct),
-                _fmt(values["rms_mt"]),
+                fmt(values["peak_mt"]),
+                fmt(peak_pct),
+                fmt(values["slew_t"]),
+                fmt(slew_pct),
+                fmt(values["rms_mt"]),
             ],
             ["Gy", *zero_row[1:]],
             ["Gz", *zero_row[1:]],
             # There is no gradient on y or z, so the |G| peak and RMS equal Gx's. There is
             # no vector slew, so those cells are the "no value" mark.
-            ["|G|", _fmt(values["peak_mt"]), _fmt(peak_pct), "—", "—", _fmt(values["rms_mt"])],
+            ["|G|", fmt(values["peak_mt"]), fmt(peak_pct), "—", "—", fmt(values["rms_mt"])],
         ],
     )
 
@@ -89,7 +89,7 @@ def test_two_files_have_one_row_group_each_with_file_names():
 
     card = gradient_limits_card([NamedSequence("a & b.seq", seq_a), NamedSequence("c.seq", seq_b)])
 
-    expected_table = _table(
+    expected_table = html_table(
         [
             "File",
             "Axis",
@@ -103,48 +103,48 @@ def test_two_files_have_one_row_group_each_with_file_names():
             [
                 "a & b.seq",
                 "Gx",
-                _fmt(values_a["peak_mt"]),
-                _fmt(values_a["peak_mt"] / max_grad_mt * 100),
-                _fmt(values_a["slew_t"]),
-                _fmt(values_a["slew_t"] / max_slew_t * 100),
-                _fmt(values_a["rms_mt"]),
+                fmt(values_a["peak_mt"]),
+                fmt(values_a["peak_mt"] / max_grad_mt * 100),
+                fmt(values_a["slew_t"]),
+                fmt(values_a["slew_t"] / max_slew_t * 100),
+                fmt(values_a["rms_mt"]),
             ],
-            ["", "Gy", _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0)],
-            ["", "Gz", _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0)],
+            ["", "Gy", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
+            ["", "Gz", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
             [
                 "",
                 "|G|",
-                _fmt(values_a["peak_mt"]),
-                _fmt(values_a["peak_mt"] / max_grad_mt * 100),
+                fmt(values_a["peak_mt"]),
+                fmt(values_a["peak_mt"] / max_grad_mt * 100),
                 "—",
                 "—",
-                _fmt(values_a["rms_mt"]),
+                fmt(values_a["rms_mt"]),
             ],
             [
                 "c.seq",
                 "Gx",
-                _fmt(values_b["peak_mt"]),
-                _fmt(values_b["peak_mt"] / max_grad_mt * 100),
-                _fmt(values_b["slew_t"]),
-                _fmt(values_b["slew_t"] / max_slew_t * 100),
-                _fmt(values_b["rms_mt"]),
+                fmt(values_b["peak_mt"]),
+                fmt(values_b["peak_mt"] / max_grad_mt * 100),
+                fmt(values_b["slew_t"]),
+                fmt(values_b["slew_t"] / max_slew_t * 100),
+                fmt(values_b["rms_mt"]),
             ],
-            ["", "Gy", _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0)],
-            ["", "Gz", _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0)],
+            ["", "Gy", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
+            ["", "Gz", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
             [
                 "",
                 "|G|",
-                _fmt(values_b["peak_mt"]),
-                _fmt(values_b["peak_mt"] / max_grad_mt * 100),
+                fmt(values_b["peak_mt"]),
+                fmt(values_b["peak_mt"] / max_grad_mt * 100),
                 "—",
                 "—",
-                _fmt(values_b["rms_mt"]),
+                fmt(values_b["rms_mt"]),
             ],
         ],
     )
 
     assert card.body_html.startswith(expected_table)
-    # _table HTML-escapes every cell, including the file name.
+    # markup.html_table HTML-escapes every cell, including the file name.
     assert "a &amp; b.seq" in card.body_html
 
 
@@ -166,7 +166,7 @@ def test_window_gives_rms_over_window_and_over_whole_file():
 
     card = gradient_limits_card([NamedSequence("a.seq", seq)], window=window)
 
-    expected_table = _table(
+    expected_table = html_table(
         [
             "Axis",
             "Peak (mT/m)",
@@ -179,23 +179,23 @@ def test_window_gives_rms_over_window_and_over_whole_file():
         [
             [
                 "Gx",
-                _fmt(window_peak_mt),
-                _fmt(window_peak_mt / max_grad_mt * 100),
-                _fmt(window_slew_t),
-                _fmt(window_slew_t / max_slew_t * 100),
-                _fmt(window_rms_mt),
-                _fmt(whole["rms_mt"]),
+                fmt(window_peak_mt),
+                fmt(window_peak_mt / max_grad_mt * 100),
+                fmt(window_slew_t),
+                fmt(window_slew_t / max_slew_t * 100),
+                fmt(window_rms_mt),
+                fmt(whole["rms_mt"]),
             ],
-            ["Gy", _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0)],
-            ["Gz", _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0), _fmt(0.0)],
+            ["Gy", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
+            ["Gz", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
             [
                 "|G|",
-                _fmt(window_peak_mt),
-                _fmt(window_peak_mt / max_grad_mt * 100),
+                fmt(window_peak_mt),
+                fmt(window_peak_mt / max_grad_mt * 100),
                 "—",
                 "—",
-                _fmt(window_rms_mt),
-                _fmt(whole["rms_mt"]),
+                fmt(window_rms_mt),
+                fmt(whole["rms_mt"]),
             ],
         ],
     )

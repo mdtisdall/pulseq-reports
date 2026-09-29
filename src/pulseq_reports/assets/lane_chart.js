@@ -40,9 +40,10 @@ const PulseqReport = (() => {
   // `lanesFor(view, bins, visibleGroupIds)`, when given, is called at the start of each
   // render, with the current view, `bins = PLOT_W` and the third argument described below,
   // and its result is drawn instead of `lanes`; without `groups`, it must always return the
-  // same number of lanes. `lanes` is then only the initial lanes, shown by the first render
-  // before a view change. Without `lanesFor`, `lanes` is drawn as given to `laneChart` or to
-  // `setLanes`/`setWindow`, as before.
+  // same number of lanes. `lanes` is then never drawn: without `groups`, it only sets the SVG
+  // height (so it must have as many lanes as a `lanesFor` result); with `groups`, each render
+  // sets the height. `setLanes` then has no effect. Without `lanesFor`, `lanes` is drawn as
+  // given to `laneChart` or to `setLanes`/`setWindow`.
   // `groups`, when given, is a list of lane groups: {id, label, laneIds: [...], visible}.
   // Each lane (of `lanes`, and of a `lanesFor` result) has an `id`; a lane whose id is in no
   // group's `laneIds` is always drawn. `visibleGroupIds`, the third argument `lanesFor` gets,

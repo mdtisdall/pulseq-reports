@@ -7,7 +7,7 @@ from synthetic import empty_sequence, gre_sequence, spin_echo_sequence
 from pulseq_reports import page
 from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.diagram_data import decode_tables, diagram_tables, lane_meta
-from pulseq_reports.markup import _zoom_controls
+from pulseq_reports.markup import zoom_controls
 from pulseq_reports.pns import EXAMPLE_HARDWARE, pns_levels_for
 from pulseq_reports.seq_utils import GAMMA, NamedSequence
 from pulseq_reports.waveforms import TimeWindow, duration_s, first_adc_window, full_window
@@ -192,7 +192,7 @@ def test_diagram_card_has_zoom_controls_before_its_chart_and_the_help_sentence_o
     card = diagram_card([named], [full_window([named])], card_id="diagram")
     result = page.render_page("t", "s", [card])
 
-    controls = _zoom_controls("diagram-diagram")
+    controls = zoom_controls("diagram-diagram")
     assert result.count(controls) == 1
     after = result[result.index(controls) + len(controls) :].removeprefix("\n")
     assert after.startswith('<div class="chart"')
@@ -313,7 +313,7 @@ _GROUP_CONTROLS = '<div class="controls" role="group" aria-label="Lanes" id="dia
 
 def test_group_controls_container_is_between_the_window_buttons_and_the_zoom_controls():
     """The RF/ADC/Gradients/PNS toggle buttons go above the chart, after the window
-    buttons (worker spec); `_zoom_controls` must still sit directly before
+    buttons (worker spec); `zoom_controls` must still sit directly before
     `<div class="chart"` (the existing zoom-controls test), so the group-controls
     container goes before it, not after."""
     named = _named(spin_echo_sequence())
@@ -321,12 +321,12 @@ def test_group_controls_container_is_between_the_window_buttons_and_the_zoom_con
     body = card.body_html
 
     window_buttons = '<div class="controls" role="group" aria-label="Time window">'
-    zoom_controls = _zoom_controls("diagram-diagram")
+    zoom_group = zoom_controls("diagram-diagram")
 
     assert body.count(_GROUP_CONTROLS) == 1
     window_pos = body.index(window_buttons)
     group_pos = body.index(_GROUP_CONTROLS)
-    zoom_pos = body.index(zoom_controls)
+    zoom_pos = body.index(zoom_group)
     assert window_pos < group_pos < zoom_pos
 
 

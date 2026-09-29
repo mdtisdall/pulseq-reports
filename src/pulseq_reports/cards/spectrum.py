@@ -19,11 +19,11 @@ from pulseq_reports.grad_spectrum import (
 from pulseq_reports.markup import (
     _AXIS_COLOR,
     Lane,
-    _fmt,
-    _lanes_json,
     _sig,
-    _table,
-    _zoom_controls,
+    fmt,
+    html_table,
+    lanes_json,
+    zoom_controls,
 )
 from pulseq_reports.page import Card
 from pulseq_reports.seq_utils import NamedSequence
@@ -50,12 +50,12 @@ def _spectrum_data(s: GradientSpectrum) -> dict:
 
     peak = float(s.rss.max())
     if peak > 0:
-        domain, ticks, labels = [0.0, 1.1 * peak], [0.0, peak], ["0", _fmt(peak)]
+        domain, ticks, labels = [0.0, 1.1 * peak], [0.0, peak], ["0", fmt(peak)]
     else:
         domain, ticks, labels = [0.0, 1.0], [0.0], ["0"]
     series = [(f"g{a}", f"G{a}", _AXIS_COLOR[a], s.axes[a]) for a in "xyz"]
     series.append(("rss", "RSS", "ink-2", s.rss))
-    out["lanes"] = _lanes_json(
+    out["lanes"] = lanes_json(
         [
             Lane(
                 id=lane_id,
@@ -101,7 +101,7 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
     if spectrum["reason"] is not None:
         return f'<p class="muted">No gradient spectrum: {html.escape(spectrum["reason"])}.</p>'
 
-    table = _table(
+    table = html_table(
         [
             f"{scanner_label} forbidden band (Hz)",
             f"Largest RSS in band ({_SPECTRUM_UNIT})",
@@ -111,7 +111,7 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
         [
             [
                 f"{b['low_hz']:g}–{b['high_hz']:g}",
-                _fmt(b["peak"]),
+                fmt(b["peak"]),
                 f"{b['peak_frequency_hz']:.0f}",
                 f"{b['relative']:.3f}",
             ]
@@ -151,12 +151,12 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
         f"{band_text}. These are published values, not read from a scanner; "
         "check them against the gradient .asc file of the scanner you use. On the dB scale, "
         "each value is 20 log10 of its ratio to the largest RSS value, and values below "
-        f"{_fmt(_SPECTRUM_DB_FLOOR)} dB are drawn at {_fmt(_SPECTRUM_DB_FLOOR)} dB. "
+        f"{fmt(_SPECTRUM_DB_FLOOR)} dB are drawn at {fmt(_SPECTRUM_DB_FLOOR)} dB. "
         "Click the chart to mark the centre for the zoom buttons. "
         "Drag across the chart to zoom to that range. Hold Shift and drag, or scroll "
         "sideways, to pan.</p>"
     )
-    return table + controls + _zoom_controls(diagram_id) + chart + note
+    return table + controls + zoom_controls(diagram_id) + chart + note
 
 
 def spectrum_card(

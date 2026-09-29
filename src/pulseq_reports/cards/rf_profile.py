@@ -21,7 +21,7 @@ import pypulseq as pp
 
 from pulseq_reports import diagram_data
 from pulseq_reports.extensions import refuse_rotations
-from pulseq_reports.markup import _fmt
+from pulseq_reports.markup import fmt
 from pulseq_reports.page import _ID_RE, Card
 from pulseq_reports.rf_profiles import (
     _PHASE_ITEMS,
@@ -272,8 +272,8 @@ def _unlabeled_note(entry: dict) -> str:
 
 
 def _pulse_table(rows: list[list]) -> str:
-    """The pulse list table of one file: the markup of `markup._table`, written locally
-    because the last cell holds a "Show" button, and `_table` escapes every cell."""
+    """The pulse list table of one file: the markup of `markup.html_table`, written locally
+    because the last cell holds a "Show" button, and `html_table` escapes every cell."""
     head = "".join(f"<th>{html.escape(h)}</th>" for h in _PULSE_TABLE_HEADERS)
     body = "".join(
         "<tr>"
@@ -313,9 +313,9 @@ def _body_html(card_id: str, files: list[dict]) -> str:
                 _GRADIENT_KIND_LABEL[p["gradient_kind"]],
                 p["first_block"],
                 p["num_blocks"],
-                _fmt(p["flip_deg"]),
-                _fmt(p["peak_b1_ut"]),
-                _fmt(p["energy_ut2_ms"]),
+                fmt(p["flip_deg"]),
+                fmt(p["peak_b1_ut"]),
+                fmt(p["energy_ut2_ms"]),
                 f'<button type="button" data-file="{i}" data-block="{p["first_block"]}">Show</button>',
             ]
             for p in pulses
