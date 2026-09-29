@@ -27,7 +27,7 @@ No analysis function keeps the cross-file B1+rms.
 
 | Kind | Findings and changes in this plan |
 |---|---|
-| One sequence per card and per page (the user) | Every card builder takes one `pp.Sequence`, and a page shows one sequence. `NamedSequence` and `TimeWindow.file_index` go. The diagram and the RF profile card lose their file lists and their file switching; `laneChart`'s `setWindow` goes. The messages between cards lose their `file` fields and their addresses: a card never names another card (decision 22). `grad_spectrum.combine` and the RF exposure "All files" table go. |
+| One sequence per card and per page (the user) | Every card builder takes one `pp.Sequence`, and a page shows one sequence. `NamedSequence` and `TimeWindow.file_index` go. The diagram and the RF profile card lose their file lists and their file switching; `laneChart`'s `setWindow` goes. The messages between cards lose their `file` fields and their addresses: a card never names another card (decision 21). `grad_spectrum.combine` and the RF exposure "All files" table go. |
 | API (review, section 2) | A1, A3, A4, A6, A7, A8. A2 is decided by the line above: `pns_card` keeps one sequence, as every card does now. A5 is fixed by a button of the PNS card (decision 19), not by a helper. |
 | Deferred to this plan by `docs/plans/review-cleanup.md` (section 1) | D3 (the PNS card's unused data: the card gets a script, and its data becomes what the script reads), S7 (the `pns` / `pns_levels` import loop). S2 has no subject after phase 1: the "All files" code goes. |
 | Changes since `v0.2.0rc1` that a caller sees | D18 (decision 17 of `docs/plans/review-cleanup.md`), and the other changes of section 2.4. `CHANGELOG.md` records them. |
@@ -146,7 +146,10 @@ Do not open these decisions again.
       publisher on a page;
     - a *request* topic (`goto`) has at most one card that acts on it.
     Each card declares the topics that it publishes and subscribes to, and
-    `render_page` checks the two rules (section 4.4, item 7).
+    `render_page` checks the two rules (section 4.4, item 7). The check sees
+    only message conflicts (for example two diagrams); two cards without
+    topics on one page (for example two timing cards of two files) pass it,
+    and decision 2 is the caller's rule there.
 22. **A button that sends a request is shown only when a card acts on the
     request** (the user). The page decides at run time: the button is hidden
     until the bus has a subscriber for its topic, and hidden again when the
@@ -381,7 +384,7 @@ Wave 6:  Phase 7 (results)
 | 1 | `refactor/one-sequence-per-card` | `cards/*.py`, `waveforms.py`, `seq_utils.py`, `rf_exposure.py` (`_concat_trains`, `_PulseTrain.add`), `grad_spectrum.py` (`combine`), `assets/cards/diagram.js`, `assets/cards/rf-profile.js`, `assets/rf_profiles.js` (`fileData`), `assets/lane_chart.js` (`setWindow`), `examples/gre_report.py`, `scripts/cards_scale.py`, `scripts/diagram_scale.py`, `TODO.md` (the reserved format number), the tests of these files, `tests/oracles/grad_spectrum.py` (the copy of `combine`), and their `TESTS.md` sections |
 | 2 | `refactor/pns-api` | `pns.py`, `pns_levels.py`, `asc.py` (new), `cards/pns.py`, `cards/diagram.py`, `assets/cards/pns.js` (new), `assets/cards/diagram.js` (the `goto` range form), `examples/gre_report.py`, `scripts/cards_scale.py`, `tests/test_pns.py`, `tests/test_pns_levels.py`, `tests/test_pns_card.py`, `tests/test_diagram_card.py`, `tests/test_extensions.py`, `tests/test_pns_lanes_golden.py`, and their `TESTS.md` sections |
 | 3 | `refactor/card-api` | `grad_limits.py`, `rf_exposure.py`, `grad_spectrum.py`, `waveforms.py`, `diagram_data.py`, `page.py`, `cards/gradient_limits.py`, `cards/rf_exposure.py`, `cards/spectrum.py`, `cards/timing.py`, `cards/blocks.py`, `cards/rf_profile.py`, `scripts/diagram_scale.py`, the tests of these modules except the phase 2 files, and their `TESTS.md` sections. The oracles (`tests/oracles/*.py`) do not change: a test gives each oracle its own option names and reads its own field names. |
-| 4 | `feature/card-interface` | `registry.py` (new: `Option`, `CardSpec`, `ReportContext`, discovery, `build_cards`), `options.py` (new: the shared `Option` objects), `page.py` (`Card.scripts`, `css`, `checks`; `Check`), `cards/*.py` (a `SPEC`, the assets and the checks of each card; `check_norms`), `pyproject.toml` (the entry points), `examples/gre_report.py` (`build_cards`), `TODO.md` (the note of section 4.4, item 8), `tests/test_registry.py` (new), `tests/plugin_card.py` (new, a test plugin), the tests of `page.py` and of the cards with checks, and their `TESTS.md` sections |
+| 4 | `feature/card-interface` | `registry.py` (new: `Option`, `CardSpec`, `ReportContext`, discovery, `build_cards`), `options.py` (new: the shared `Option` objects), `page.py` (`Card.scripts`, `css`, `checks`, `publishes`, `subscribes`; `Check`; `TOPIC_KINDS` and the topic check), `cards/*.py` (a `SPEC`, the assets, the checks and the topics of each card; `check_norms`), `pyproject.toml` (the entry points), `examples/gre_report.py` (`build_cards`), `TODO.md` (the note of section 4.4, item 8), `tests/test_registry.py` (new), `tests/plugin_card.py` (new, a test plugin), the tests of `page.py` and of the cards with checks, and their `TESTS.md` sections |
 | 5 | `feature/command-line` | `cli.py` (new), `pyproject.toml` (`[project.scripts]`), `tests/test_cli.py` (new), `TESTS.md` (its new section) |
 | 6 | `docs/api-exports-docs` | `__init__.py`, `cards/__init__.py`, `docs/usage.md`, `README.md`, `examples/gre_report.py` (imports), `CHANGELOG.md` (new), `tests/test_exports.py` (new), `TESTS.md` (its new section) |
 | 7 | `chore/public-api-results` | `docs/examples/gre.html`, the status of the review, this plan (status and section 8) |
@@ -429,7 +432,7 @@ Rules:
    | 1 | The scripts `diagram.js`, `rf-profile.js`, `rf_profiles.js` and `lane_chart.js`; the JSON data of the diagram and the RF profile card (the formats of section 4.1, item 6); the RF profile card's heading "Distinct pulses" (was "Distinct pulses of each file"), its buttons without `data-file`, and its data without `diagram_card_id`. | The `data` of `*/card/diagram` and `*/card/rf_profile` (the new formats). The file name in the note of `*/card/limits` for a file with no gradient. No `many/` entries. | None, except the file name in the RF profile card's status line, and the `file` and `target` fields of the messages (compared without them). |
    | 2 | The diagram has no "Peak-PNS TR" window (its button and its `windows` entry); the PNS card has a button, the script `pns.js` and its new data (section 4.2, item 5). | `*/card/pns`: the new `data`. | The PNS card's button: the diagram shows the peak's TR, with the anchor at the peak time, as the "Peak-PNS TR" window of the baseline showed it; the RF profile card follows the anchor. |
    | 3 | Only the note of the gradient limits card (the values of the limits). | `*/card/limits*`: the note. `*/card/limits_win`: the form of a windowed card (section 4.3, item 2). The renamed `RfExposure` fields. | Not run. |
-   | 4 | None: `examples/gre_report.py` uses `build_cards`, and the page must equal the baseline's page byte for byte. | The new `Card` fields (`scripts`, `css`, `checks`) in each card entry; `body_html` and `data` equal. | Not run. |
+   | 4 | None: `examples/gre_report.py` uses `build_cards`, and the page must equal the baseline's page byte for byte. | The new `Card` fields (`scripts`, `css`, `checks`, `publishes`, `subscribes`) in each card entry; `body_html` and `data` equal. | Not run. |
    | 5 | None | Not run. The command line's page for a `.seq` file equals the page that `build_cards` gives for the same file read by `Sequence.read` (section 4.5). | The pages of task 5.2. |
    | 6 | None | None | Not run. |
    | 7 | The sum of phases 1 to 3, against the committed `docs/examples/gre.html` (the page of `600fd12`) | Not run | The nine cards draw. |
@@ -975,7 +978,8 @@ Branch: `refactor/card-api`. Wave 2, at the same time as phase 2. Section
 
 **Task 3.1.** Tier SM. Item 1 (A3) for `waveforms.py`, `diagram_data.py`,
 `page.py`, `scripts/diagram_scale.py` and their tests; item 6 (A8) for
-`cards/timing.py`, `cards/rf_profile.py` and `waveforms.py`.
+`cards/timing.py`, `cards/rf_profile.py` and `waveforms.py`, with their tests
+and `tests/test_rf_profiles_golden.py` (it calls `rf_profile_data`).
 
 **Task 3.2.** Tier SM. `grad_limits.py` and `cards/gradient_limits.py`: items
 1, 2 and 4, with the new test.
