@@ -2236,6 +2236,19 @@ the same sequence and resonances.
 
 **Assumptions:** None.
 
+#### `test_scanner_label_is_escaped_in_the_note`
+
+**Checks:** The card escapes `scanner_label` in its note, as it already does
+in the table header and the `aria-label`. A label with `<`, `>` or `&` does
+not appear unescaped anywhere in the card's HTML (review finding B5).
+
+**How:** The test builds the card with `scanner_label="Coil <A&B>"` and the
+setup of `test_custom_scanner_label_and_resonances_appear`. It checks that
+`body_html` does not contain "Coil <A&B>", and that it contains the note's
+phrase "the acoustic resonances of the Coil &lt;A&amp;B&gt; gradient coil".
+
+**Assumptions:** None.
+
 #### `test_two_file_card_uses_combined_spectrum`
 
 **Checks:** For two named sequences, the card's data equals

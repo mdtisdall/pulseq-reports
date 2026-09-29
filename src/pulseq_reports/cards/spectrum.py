@@ -147,7 +147,7 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
         "each window, and the maximum over windows. The gradients are padded with half a window "
         "of zeros at each end. RSS is the root-sum-of-squares of the three axes in each window. "
         "A band's largest value can be at its edge, from the tail of lower-frequency content. The red "
-        f"bands are the acoustic resonances of the {scanner_label} gradient coil: "
+        f"bands are the acoustic resonances of the {html.escape(scanner_label)} gradient coil: "
         f"{band_text}. These are published values, not read from a scanner; "
         "check them against the gradient .asc file of the scanner you use. On the dB scale, "
         "each value is 20 log10 of its ratio to the largest RSS value, and values below "
