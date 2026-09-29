@@ -3103,6 +3103,19 @@ names the file and the reason.
 
 **Assumptions:** None.
 
+#### `test_note_says_max_slew_includes_block_junction_steps`
+
+**Checks:** The card's note says that Max slew is the largest slope inside one
+gradient event, or the step at a block junction divided by the gradient raster
+time, as the slew column computes it since phase 4 of
+`docs/plans/cards-at-scale.md` (review finding B6).
+
+**How:** The test builds one trapezoid file, calls `gradient_limits_card`, and
+checks that the body contains "or the step at a block junction divided by the
+gradient raster time".
+
+**Assumptions:** None.
+
 #### `test_card_with_a_window_makes_one_pass_over_the_per_event_values`
 
 **Checks:** With a window, `gradient_limits_card` calls the per-event

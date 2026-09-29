@@ -17,10 +17,9 @@ with numpy, instead of reading every block with `get_block` (`docs/plans/cards-a
 section 4.6). It reads individual blocks only for the few blocks that a window edge cuts.
 
 The peak slew rate is the largest of two kinds of value (decision 6 of section 2.5 of the
-plan): the slope of each straight segment of each gradient event (as before), and the step at
-each block junction divided by `grad_raster_time` (new: `Sequence.add_block` checks this step,
-but the card did not report it before this module's phase 4 rewrite). The step uses 0 for a
-block with no event on the axis, and 0 before the first block.
+plan): the slope of each straight segment of each gradient event, and the step at each block
+junction divided by `grad_raster_time` (`Sequence.add_block` checks this step). The step uses
+0 for a block with no event on the axis, and 0 before the first block.
 """
 
 import math
