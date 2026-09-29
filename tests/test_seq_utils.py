@@ -20,44 +20,6 @@ def test_gamma_and_time_tolerance():
     assert seq_utils.TIME_TOLERANCE == 1e-9
 
 
-def _three_block_sequence():
-    """Block pulse, an x trapezoid, and a delay block, in that order."""
-    seq = pp.Sequence(SYSTEM)
-    rf = pp.make_block_pulse(
-        flip_angle=math.pi / 2, duration=1e-3, delay=SYSTEM.rf_dead_time, system=SYSTEM
-    )
-    gx = pp.make_trapezoid(channel="x", area=1000, system=SYSTEM)
-    delay = pp.make_delay(2e-3)
-    seq.add_block(rf)
-    seq.add_block(gx)
-    seq.add_block(delay)
-    return seq
-
-
-def test_iter_blocks_start_times_and_events():
-    seq = _three_block_sequence()
-    blocks = list(seq_utils.iter_blocks(seq))
-    ids = list(seq.block_events)
-    assert [b.block_id for b in blocks] == [int(i) for i in ids]
-
-    t = 0.0
-    for b, block_id in zip(blocks, ids):
-        assert b.duration_s == seq.block_durations[block_id]
-        assert b.start_s == t
-        t += seq.block_durations[block_id]
-
-    assert blocks[0].block.rf is not None
-    assert blocks[1].block.gx is not None
-
-    last = blocks[-1]
-    assert last.start_s + last.duration_s == t
-
-
-def test_iter_blocks_empty_sequence():
-    seq = pp.Sequence(SYSTEM)
-    assert list(seq_utils.iter_blocks(seq)) == []
-
-
 def test_hold_samples_keeps_uniform_shapes_unchanged():
     rf = pp.make_sinc_pulse(
         flip_angle=math.pi / 2,
@@ -109,10 +71,6 @@ def test_gradient_offsets_arbitrary():
     n = 10
     waveform = np.linspace(100.0, 500.0, n)
     g = pp.make_arbitrary_grad(channel="x", waveform=waveform, system=SYSTEM)
-    # pypulseq gives this shape both `first` and `shape_dur`, so the offsets gain a
-    # point at each end.
-    assert hasattr(g, "first")
-    assert hasattr(g, "shape_dur")
 
     delay, offsets, amp = seq_utils.gradient_offsets(g)
     assert delay == g.delay

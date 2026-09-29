@@ -13,14 +13,14 @@ points, so it costs O(N) and O(unique events), not O(the file's points).
 
 import base64
 import gzip
-import math
 
 import numpy as np
 import pypulseq as pp
 
+from .markup import lanes_json
 from .seq_index import _index_dtype, adc_events, grad_events, rf_events, sequence_index
 from .seq_utils import GAMMA, gradient_offsets
-from .waveforms import _AXES, _rf_offsets, _value_domain
+from .waveforms import _AXES, _lanes, _rf_offsets
 
 CHECKPOINT_BLOCKS = 1024
 
@@ -70,9 +70,9 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
     n = index.num_blocks
 
     # The unique block durations, in the order of their first appearance in play
-    # order, matched by float equality (as the per-block dict of the former loop
-    # matched them): np.unique's sorted unique values, reordered by each value's
-    # first position, with the same reordering applied to the per-block index.
+    # order, matched by float equality: np.unique's sorted unique values, reordered by
+    # each value's first position, with the same reordering applied to the per-block
+    # index.
     unique_durations, first_pos, inverse = np.unique(
         index.duration_s, return_index=True, return_inverse=True
     )
@@ -129,11 +129,13 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
         "duration_index": duration_index,
         "durations": durations,
         "checkpoints": checkpoints,
-        "rf": index.rf.astype(_index_dtype(index.rf_first.size)),
+        # Copies, not views: the index is kept for the sequence (sequence_index). It
+        # has the smallest dtype for `rf` and `adc` already.
+        "rf": index.rf.copy(),
         "gx": index.gx.astype(_index_dtype(int(index.gx.max()) if n else 0)),
         "gy": index.gy.astype(_index_dtype(int(index.gy.max()) if n else 0)),
         "gz": index.gz.astype(_index_dtype(int(index.gz.max()) if n else 0)),
-        "adc": index.adc.astype(_index_dtype(index.adc_first.size)),
+        "adc": index.adc.copy(),
         "rf_delay": np.asarray(rf_delay, dtype=np.float64),
         "rf_mag_n": np.asarray(rf_mag_n, dtype=np.uint32),
         "rf_mag_offset_at": np.asarray(rf_mag_offset_at, dtype=np.uint32),
@@ -192,11 +194,12 @@ def decode_tables(encoded: dict[str, dict]) -> dict[str, np.ndarray]:
 
 
 def _rounded_peak(values: np.ndarray, digits: int = 4) -> float:
-    """The largest absolute value of `values`, each rounded as `markup._points` rounds a
-    lane value (`round(float(v), digits)`)."""
+    """The largest absolute value of `values`, rounded as `markup._points` rounds a lane
+    value (`round(float(v), digits)`). Python's `round` is monotonic and odd, so this
+    equals the largest absolute value of the rounded values."""
     if values.size == 0:
         return 0.0
-    return max(abs(round(float(v), digits)) for v in values)
+    return round(float(np.max(np.abs(values))), digits)
 
 
 def _grad_event_peaks(tables: dict[str, np.ndarray]) -> np.ndarray:
@@ -219,9 +222,11 @@ def lane_meta(seq: pp.Sequence, tables: dict[str, np.ndarray] | None = None) -> 
     lane titles, colors, domains, ticks and tick labels, in `file_lanes` order.
 
     Does not call `file_lanes`: that builds every point of the file, which costs too
-    much memory at 10^7 blocks. Each lane's peak comes from the per-event values of
-    `diagram_tables`, rounded as `markup._points` rounds them, because `_value_lane`
-    takes its peak from the rounded points. `empty` comes from the event counts.
+    much memory at 10^7 blocks. It builds the lanes with `waveforms._lanes`, as
+    `file_lanes` does, from empty segments and windows. Each lane's peak comes from the
+    per-event values of `diagram_tables`, rounded as `markup._points` rounds them,
+    because `file_lanes` takes its peak from the rounded points. `empty` comes from the
+    event counts.
 
     Pass `tables` (the result of `diagram_tables(seq)`) when the caller already has
     them, so that a caller that wants both the tables and the lanes of one file builds
@@ -230,70 +235,22 @@ def lane_meta(seq: pp.Sequence, tables: dict[str, np.ndarray] | None = None) -> 
     if tables is None:
         tables = diagram_tables(seq)
     has_rf = tables["rf_delay"].size > 0
-    has_adc = tables["adc_delay"].size > 0
-
-    rf_mag_peak = _rounded_peak(tables["rf_mag"])
-    rf_mag_domain, rf_mag_ticks, rf_mag_labels = _value_domain(rf_mag_peak, symmetric=False)
-
-    lanes = [
-        {
-            "id": "rf_mag",
-            "title": "RF |B1|",
-            "unit": "µT",
-            "color": "rf",
-            "kind": "line",
-            "domain": rf_mag_domain,
-            "ticks": rf_mag_ticks,
-            "tick_labels": rf_mag_labels,
-            "empty": not has_rf,
-            "fill": 0.0,
-        },
-        {
-            "id": "rf_phase",
-            "title": "RF phase",
-            "unit": "rad",
-            "color": "rf",
-            "kind": "line",
-            "domain": [-1.1 * math.pi, 1.1 * math.pi],
-            "ticks": [-math.pi, 0.0, math.pi],
-            "tick_labels": ["−π", "0", "π"],
-            "empty": not has_rf,
-            "fill": None,
-        },
-        {
-            "id": "adc",
-            "title": "ADC",
-            "unit": "",
-            "color": "adc",
-            "kind": "gate",
-            "domain": [0.0, 1.25],
-            "ticks": [0.0, 1.0],
-            "tick_labels": ["off", "on"],
-            "empty": not has_adc,
-        },
-    ]
+    has_events = {
+        "rf_mag": has_rf,
+        "rf_phase": has_rf,
+        "adc": tables["adc_delay"].size > 0,
+    }
+    peaks = {"rf_mag": _rounded_peak(tables["rf_mag"])}
 
     event_peaks = _grad_event_peaks(tables)
     for axis in _AXES:
         used = np.unique(tables[axis])
         used = used[used > 0]
-        if used.size:
-            peak = float(np.max(event_peaks[used.astype(np.int64) - 1]))
-        else:
-            peak = 0.0
-        domain, ticks, labels = _value_domain(peak, symmetric=True)
-        lanes.append(
-            {
-                "id": axis,
-                "title": f"G{axis[1]}",
-                "unit": "mT/m",
-                "color": axis,
-                "kind": "line",
-                "domain": domain,
-                "ticks": ticks,
-                "tick_labels": labels,
-                "empty": used.size == 0,
-                "fill": 0.0,
-            }
-        )
-    return lanes
+        has_events[axis] = used.size > 0
+        peaks[axis] = float(np.max(event_peaks[used.astype(np.int64) - 1])) if used.size else 0.0
+
+    segments = {lane_id: [] for lane_id in ("rf_mag", "rf_phase", *_AXES)}
+    return [
+        {key: value for key, value in lane.items() if key not in ("segments", "windows")}
+        for lane in lanes_json(_lanes(segments, [], peaks, has_events))
+    ]

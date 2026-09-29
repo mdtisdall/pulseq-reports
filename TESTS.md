@@ -174,9 +174,9 @@ failing.
 ### 2.1 Shared sequence helpers (`test_seq_utils.py`)
 
 `test_seq_utils.py` tests the shared helpers in `seq_utils.py` that the
-report cards use to read a pypulseq sequence: the block iterator, the RF
-resampling helper, and the gradient corner/sample helper. It also checks
-that the synthetic sequences in `tests/synthetic.py` are legal Pulseq.
+report cards use to read a pypulseq sequence: the RF resampling helper and
+the gradient corner/sample helper. It also checks that the synthetic
+sequences in `tests/synthetic.py` are legal Pulseq.
 
 #### `test_gamma_and_time_tolerance`
 
@@ -184,34 +184,6 @@ that the synthetic sequences in `tests/synthetic.py` are legal Pulseq.
 1 ns.
 
 **How:** The test compares the two shared constants with these values.
-
-**Assumptions:** None.
-
-#### `test_iter_blocks_start_times_and_events`
-
-**Checks:** The block iteration gives every block in play order, with its ID,
-its duration, a start time that is the sum of the durations before it, and its
-events.
-
-**How:** The test makes a sequence with three blocks: a block pulse, an x
-trapezoid, and a delay. It iterates over the blocks and checks that the IDs
-are in the sequence's block order. For each block it checks that the duration
-is the sequence's block duration, and that the start time is exactly the sum
-of the earlier durations, added one at a time. It checks that the first block
-has the RF and the second has the x gradient, and that the last start time
-plus the last duration is the end of the sequence.
-
-**Assumptions:**
-
-- The start times are compared for exact equality, not with a tolerance. This
-  is correct because the test adds the durations in the same order.
-
-#### `test_iter_blocks_empty_sequence`
-
-**Checks:** The block iteration of an empty sequence gives no blocks.
-
-**How:** The test iterates over a new sequence with no blocks and checks that
-the result is empty.
 
 **Assumptions:** None.
 
@@ -268,9 +240,8 @@ amplitudes of an arbitrary gradient, with one added point at each end, at
 offset 0.0 and at the shape duration, for the shape's `first` and `last`
 values.
 
-**How:** The test makes an x arbitrary gradient from a 10-point waveform,
-checks that pypulseq gave it both a `first` and a `shape_dur` attribute (the
-branch this test means to exercise), and calls `gradient_offsets`. It checks
+**How:** The test makes an x arbitrary gradient from a 10-point waveform and
+calls `gradient_offsets`. It checks
 that the first and last returned amplitudes are the gradient's `first` and
 `last` values, and that the first and last returned offsets are 0.0 and the
 shape duration. It checks that the interior offsets and amplitudes are the
@@ -3241,13 +3212,13 @@ block whole, and the zero pad point at each end of a joined line lane is at
 the included block's own start or end, not at the range's requested edge.
 
 **How:** The test builds a synthetic spin echo sequence and, from
-`seq_utils.iter_blocks`, takes the RF refocusing block and the Gy crusher
-block right after it. It calls `file_lanes` with a range that starts inside
-the RF block and ends inside the crusher block. It checks that the RF
-magnitude lane's first point is at the RF block's own start (earlier than
-the range's requested start) with value 0, and that the Gy lane's last point
-is at the crusher block's own end (later than the range's requested end)
-with value 0.
+`iter_blocks` of `tests/oracles/blocks.py`, takes the RF refocusing block
+and the Gy crusher block right after it. It calls `file_lanes` with a range
+that starts inside the RF block and ends inside the crusher block. It checks
+that the RF magnitude lane's first point is at the RF block's own start
+(earlier than the range's requested start) with value 0, and that the Gy
+lane's last point is at the crusher block's own end (later than the range's
+requested end) with value 0.
 
 **Assumptions:** None.
 

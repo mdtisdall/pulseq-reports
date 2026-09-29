@@ -1,36 +1,13 @@
 """Shared helpers for reading a pypulseq sequence, used by the report cards."""
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import NamedTuple
 
 import numpy as np
 import pypulseq as pp
 
 GAMMA = 42.576e6  # Hz/T
 TIME_TOLERANCE = 1e-9  # s
-
-
-class BlockTiming(NamedTuple):
-    block_id: int
-    start_s: float  # sum of the durations of the blocks before this one
-    duration_s: float
-    block: SimpleNamespace  # from Sequence.get_block
-
-
-def iter_blocks(seq: pp.Sequence) -> Iterator[BlockTiming]:
-    """Each block of `seq` in play order, with its start time and duration (s).
-
-    The start times are added in play order from 0.0, one block duration at a time,
-    so they are equal to `t += seq.block_durations[block_id]` in a loop. The end of
-    the sequence is `start_s + duration_s` of the last block.
-    """
-    start = 0.0
-    for block_id in seq.block_events:
-        duration = seq.block_durations[block_id]
-        yield BlockTiming(int(block_id), start, duration, seq.get_block(block_id))
-        start += duration
 
 
 def hold_samples(rf: SimpleNamespace, raster: float) -> tuple[np.ndarray, float]:
@@ -60,11 +37,8 @@ def gradient_offsets(g) -> tuple[float, np.ndarray, np.ndarray]:
         offsets = np.cumsum([0.0, g.rise_time, g.flat_time, g.fall_time])
         amp = np.array([0.0, g.amplitude, g.amplitude, 0.0])
     else:
-        offsets = np.asarray(g.tt, dtype=float)
-        amp = np.asarray(g.waveform, dtype=float)
-        if hasattr(g, "first") and hasattr(g, "shape_dur"):
-            offsets = np.concatenate([[0.0], offsets, [g.shape_dur]])
-            amp = np.concatenate([[g.first], amp, [g.last]])
+        offsets = np.concatenate([[0.0], np.asarray(g.tt, dtype=float), [g.shape_dur]])
+        amp = np.concatenate([[g.first], np.asarray(g.waveform, dtype=float), [g.last]])
     return g.delay, offsets, amp
 
 
