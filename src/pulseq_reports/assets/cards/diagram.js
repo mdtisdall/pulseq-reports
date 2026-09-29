@@ -13,13 +13,17 @@
 // has few enough points, or the minimum and the maximum of each lane in each of the
 // plot's time bins otherwise); when the Gradients group is visible, appends the |G|
 // lane (GLanes.lanesFor, docs/plans/diagram-lanes.md phase 5) after gz, building the
-// file's GLanes model the first time a render needs it (a hidden Gradients group costs
-// no |G| computation, the same rule the PNS lane already follows); and, when the PNS
-// group is visible and the current file has PNS data, appends the PNS lane from
-// PnsLanes.lanesFor after that. A hidden PNS group costs no PNS computation: `lanesFor`
-// never calls PnsLanes.lanesFor for it. The status line under the chart
-// (`{card_id}-mode`) says which data drew the waveform lanes, then, when the PNS lane
-// is drawn, PnsLanes.statusText's sentence for it.
+// file's GLanes model the first time a render needs it, through `buildGLane` (a hidden
+// Gradients group costs no |G| computation, the same rule the PNS lane already
+// follows). `buildGLane` runs `GLanes.decode` in a try/catch: a failure (for example a
+// file with very many gradient events, or no memory) removes only the |G| lane instead
+// of stopping the whole card from drawing, and is not retried on a later render of the
+// same file. And, when the PNS group is visible and the current file has PNS data,
+// appends the PNS lane from PnsLanes.lanesFor after that. A hidden PNS group costs no
+// PNS computation: `lanesFor` never calls PnsLanes.lanesFor for it. The status line
+// under the chart (`{card_id}-mode`) says which data drew the waveform lanes, then,
+// when the |G| lane failed to build, why it is not drawn, then, when the PNS lane is
+// drawn, PnsLanes.statusText's sentence for it.
 //
 // A file's tables can be large (up to 10^7 blocks), so decoding runs only for the
 // file of the first window at start, and for another file the first time a button
@@ -54,11 +58,16 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // render, else null (the PNS group is hidden, or the current file has no PNS data):
   // then the status line is the SeqLanes sentence alone, as it was before this lane
   // existed. `onRaster` is `current.pns.model.onRaster`, read by the caller so this
-  // function itself never reads `current`.
-  function showStatus(exact, bins, pnsResult, onRaster) {
+  // function itself never reads `current`. `gError` is `current.g.error` when the
+  // Gradients group is visible and `buildGLane` (below) caught a `GLanes.decode`
+  // failure for the current file, else null: then the sentence "The |G| lane is not
+  // drawn: <message>" (decision 13 of docs/plans/review-bugs.md) is added, so the
+  // card explains why the chart has one fewer lane instead of leaving it unsaid.
+  function showStatus(exact, bins, pnsResult, onRaster, gError) {
     let text = exact
       ? "Exact waveform."
       : `Minimum and maximum in each of ${bins} time bins. Zoom in to see the exact waveform.`;
+    if (gError) text += ` The |G| lane is not drawn: ${gError.message || String(gError)}`;
     if (pnsResult) text += ` ${PnsLanes.statusText(pnsResult, onRaster)}`;
     statusEl.textContent = text;
   }
@@ -67,12 +76,16 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // `{seq, pns, g, view}`, `seq` the SeqLanes model (as before), `pns` either null
   // (the file has no "pns" key) or `{model, laneMeta}`, the PnsLanes model and its
   // lane object without segments (PnsLanes.laneMeta(file.pns.summary), built once
-  // here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta}`
-  // pair, built lazily by `lanesFor` (below) the first time a render needs it: `g`
-  // starts null here, unlike `pns`, because GLanes.decode needs no data beyond the
-  // diagram tables already decoded below, so there is nothing to fetch in parallel
-  // with them, and building it costs a pass over the file's blocks that a render
-  // with the Gradients group hidden should not pay for. Decodes every one of the
+  // here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta,
+  // error}` (`buildGLane`, defined near the chart below), built lazily by `lanesFor`
+  // the first time a render needs it: `g` starts null here, unlike `pns`, because
+  // GLanes.decode needs no data beyond the diagram tables already decoded below, so
+  // there is nothing to fetch in parallel with them, and building it costs a pass
+  // over the file's blocks that a render with the Gradients group hidden should not
+  // pay for. Once built, `g` stays in the cache even when `GLanes.decode` failed
+  // (`model` and `laneMeta` null, `error` the caught exception), so a later render of
+  // the same file does not try again: the |G| lane is left out, and the status line
+  // says why. Decodes every one of the
   // file's diagram tables, and, when the file has PNS data, its two stored-level
   // tables, all in parallel; the diagram tables are reused for both SeqLanes.decode
   // and PnsLanes.decode (a PNS model reads grad_*/duration_* out of the same tables,
@@ -227,6 +240,28 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     });
   }
 
+  // The |G| lane's `{model, laneMeta, error}` for one file (plan section 4.3 of
+  // docs/plans/review-bugs.md, B3). `GLanes.decode` can throw (for example a file with
+  // very many gradient events, or no memory); this is the one place that calls it, so
+  // catching it here covers every path that can reach a `GLanes` failure: the first
+  // file's initial render inside `laneChart` below, a later file shown through a
+  // window button (`showWindow`), and a window shown through the `goto` message
+  // (`gotoBlock`, which calls `showWindow` too) -- all three run through `lanesFor`
+  // below. On success, `error` is null. On failure, `model` and `laneMeta` are null (so
+  // the caller below appends no |G| lane) and `error` is the caught exception (so the
+  // status line can say why); logged once here with `console.error`, not on every
+  // render, because the caller keeps the returned object in `current.g` and never
+  // calls this again for the same file.
+  function buildGLane(seqModel) {
+    try {
+      const model = GLanes.decode(seqModel);
+      return { model, laneMeta: GLanes.laneMeta(model), error: null };
+    } catch (error) {
+      console.error(`diagram card "${section.id}": the |G| lane is not drawn:`, error);
+      return { model: null, laneMeta: null, error };
+    }
+  }
+
   const chart = PulseqReport.laneChart({
     svg: document.getElementById(`${section.id}-diagram`),
     chart: document.getElementById(`${section.id}-chart`),
@@ -237,19 +272,24 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     lanesFor: (view, bins, visibleGroupIds) => {
       const r = SeqLanes.lanesFor(current.seq, view, bins);
       let lanes = r.lanes;
+      let gError = null;
       if (visibleGroupIds.has("gradients")) {
-        if (!current.g) {
-          const gModel = GLanes.decode(current.seq);
-          current.g = { model: gModel, laneMeta: GLanes.laneMeta(gModel) };
+        if (!current.g) current.g = buildGLane(current.seq);
+        gError = current.g.error;
+        if (current.g.model) {
+          lanes = lanes.concat(
+            [GLanes.lanesFor(current.g.model, current.g.laneMeta, view, bins)]
+          );
         }
-        lanes = lanes.concat([GLanes.lanesFor(current.g.model, current.g.laneMeta, view, bins)]);
       }
       let pnsResult = null;
       if (current.pns && visibleGroupIds.has("pns")) {
         pnsResult = PnsLanes.lanesFor(current.pns.model, current.pns.laneMeta, view, bins);
         lanes = lanes.concat([pnsResult.lane]);
       }
-      showStatus(r.exact, bins, pnsResult, current.pns ? current.pns.model.onRaster : null);
+      showStatus(
+        r.exact, bins, pnsResult, current.pns ? current.pns.model.onRaster : null, gError
+      );
       return lanes;
     },
     xDomain: windows[0].view_ms,

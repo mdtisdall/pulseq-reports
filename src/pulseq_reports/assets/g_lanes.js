@@ -241,19 +241,30 @@ const GLanes = (() => {
   // includes any stretch of the block where every axis reads 0).
   //
   // Computed once for each distinct (triple, duration) and memoized in
-  // `evCache.triple`, keyed by one integer, `((kx * M + ky) * M + kz) * D + durIdx`
-  // with `M = numGradEvents + 1` and `D` the number of distinct block durations
-  // (`decode` checks that this stays an exact integer below 2^53, the same defensive
-  // bound pns_lanes.js's own per-event cache key keeps): a numeric cache key, not the
-  // prototype's string key, per the worker spec. Keyed by duration as well as triple
-  // (not by triple alone, as the prototype's own `slew_g.js` is) because the padding
-  // this function adds depends on the block's own duration, which the same triple can
-  // play at more than one length (for example a spoiler gradient shared by blocks
-  // with different trailing delays); a file's own durations are pooled to a small
-  // number of distinct values (`diagram_data.diagram_tables`), so this does not
-  // multiply the number of distinct cache entries by the number of blocks.
-  function _tripleGeometry(tb, kx, ky, kz, dur, evCache, key) {
-    let g = evCache.triple.get(key);
+  // `evCache.triple`, a `Map` of `Map`s: the outer key `kx * M + ky`
+  // (`M = numGradEvents + 1`) selects an inner `Map`, and the inner key
+  // `kz * D + durIdx` (`D` the number of distinct block durations) selects the entry
+  // in it. Two levels, not the one flat key `((kx * M + ky) * M + kz) * D + durIdx`
+  // the prototype's own `slew_g.js` style would give, because that single key stops
+  // being an exact integer past 2^53 at about 1.2 * 10^5 gradient events; the two
+  // keys above need only `M * M` and `M * D` to stay exact integers (`decode`'s
+  // check), which raises the limit to about 9.5 * 10^7 events. The caller
+  // (`_tripleKeyOf`) computes both keys once and passes them in as
+  // `outerKey`/`innerKey`, so a block makes no extra object on the hot path. Keyed by
+  // duration as well as triple (not by triple alone, as the prototype's own
+  // `slew_g.js` is) because the padding this function adds depends on the block's own
+  // duration, which the same triple can play at more than one length (for example a
+  // spoiler gradient shared by blocks with different trailing delays); a file's own
+  // durations are pooled to a small number of distinct values
+  // (`diagram_data.diagram_tables`), so this does not multiply the number of distinct
+  // cache entries by the number of blocks.
+  function _tripleGeometry(tb, kx, ky, kz, dur, evCache, outerKey, innerKey) {
+    let inner = evCache.triple.get(outerKey);
+    if (inner === undefined) {
+      inner = new Map();
+      evCache.triple.set(outerKey, inner);
+    }
+    let g = inner.get(innerKey);
     if (g !== undefined) return g;
 
     const times = _tripleTimes(tb, kx, ky, kz, dur, evCache.geom);
@@ -291,18 +302,18 @@ const GLanes = (() => {
       blockMax = 0;
     }
     g = { times, pieceA, pieceB, pieceC, blockMin, blockMax };
-    evCache.triple.set(key, g);
+    inner.set(innerKey, g);
     return g;
   }
 
-  // The dense triple id of block `i`, its duration, and its numeric cache key
-  // (`M`, `D` from `decode`): `((kx * M + ky) * M + kz) * D + durIdx`.
+  // The dense triple id of block `i`, its duration, and its two-level numeric cache
+  // key (`M`, `D` from `decode`): the outer key `kx * M + ky` and the inner key
+  // `kz * D + durIdx` (the comment of `_tripleGeometry` above).
   function _tripleKeyOf(tb, i, M, D) {
     const kx = tb.gx[i], ky = tb.gy[i], kz = tb.gz[i];
     const durIdx = tb.duration_index[i];
     const dur = tb.durations[durIdx];
-    const key = ((kx * M + ky) * M + kz) * D + durIdx;
-    return { kx, ky, kz, dur, key };
+    return { kx, ky, kz, dur, outerKey: kx * M + ky, innerKey: kz * D + durIdx };
   }
 
   // The minimum/maximum |G| range of block `i`: the whole-block extrema of its
@@ -313,7 +324,7 @@ const GLanes = (() => {
   // contributes nothing to.
   function _blockGRange(tb, i, evCache, M, D) {
     const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.key);
+    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
     return [g.blockMin, g.blockMax];
   }
 
@@ -331,7 +342,7 @@ const GLanes = (() => {
     if (overlapHi <= overlapLo) return null;
 
     const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.key);
+    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
     const n = g.times.length;
     // Defensive, not reached in practice: `n < 2` only when `dur === 0` (the times
     // are `{0, dur}`, collapsed), and a 0-duration block's `[bStart, bStart]` can
@@ -420,16 +431,17 @@ const GLanes = (() => {
   // pass over the blocks). Returns a model for `minMax`/`lanesFor`/`laneMeta`.
   //
   // `D`, the number of distinct block durations (`tb.durations.length`, at least 1 so
-  // an empty file's unused key space is still well-formed), is part of every
-  // per-(triple, duration) cache key (`_tripleKeyOf`). Throws when the largest such
-  // key would not stay an exact integer below 2^53, the same defensive check
-  // pns_lanes.js's `decode` makes for its own per-event cache key.
+  // an empty file's unused key space is still well-formed), is part of the two-level
+  // cache key `_tripleKeyOf` computes (the comment of `_tripleGeometry`). Throws when
+  // either of the two keys' own bound, `M * M - 1` (the outer key) or `M * D - 1`
+  // (the inner key), would not stay an exact integer below 2^53, the same defensive
+  // check pns_lanes.js's `decode` makes for its own per-event cache key.
   function decode(seqModel) {
     const tb = seqModel.tables;
     const numGradEvents = tb.grad_n.length;
     const M = numGradEvents + 1;
     const D = Math.max(1, tb.durations.length);
-    if ((M * M * M - 1) * D + (D - 1) > Number.MAX_SAFE_INTEGER) {
+    if (M * M - 1 > Number.MAX_SAFE_INTEGER || M * D - 1 > Number.MAX_SAFE_INTEGER) {
       throw new Error(
         "GLanes.decode: the per-(triple, duration) cache key of this file would exceed 2^53");
     }

@@ -6022,9 +6022,13 @@ The tests load `seq_lanes.js` and `g_lanes.js` directly, with Node's `require`,
 the same way `test_pns_lanes.js` loads `pns_lanes.js`. Every model is hand-made:
 `buildGModel` (a seeded pseudo-random block table, reused by most tests, in the
 style of `test_seq_lanes.js`'s `buildRandomModel` and `test_pns_lanes.js`'s
-`buildPnsTables`) or a fully explicit small table (`buildBorderTables`,
-`buildTailPaddingTables`, `buildHeadPaddingTables`, and the empty/no-gradient
-tables of the last two tests). Unlike `test_pns_lanes.js`, `GLanes.decode` takes a
+`buildPnsTables`), `buildManyEventsTables` (a seeded pseudo-random block table with
+many thousands of distinct gradient events, for the cache-key test below), or a
+fully explicit small table (`buildBorderTables`, `buildTailPaddingTables`,
+`buildHeadPaddingTables`, and the empty/no-gradient tables of
+`test_empty_file_has_zero_peak_and_no_lane_segments` and
+`test_file_without_gradients_is_all_zero_not_empty`).
+Unlike `test_pns_lanes.js`, `GLanes.decode` takes a
 full `SeqLanes.decode` model (not the raw tables directly), so `buildGModel`
 builds every table `SeqLanes.decode` requires (empty RF and ADC tables:
 `g_lanes.js` reads none of them). `buildGModel`'s events keep a nonzero delay, and
@@ -6240,6 +6244,26 @@ every bin is exactly `[0, 0]`, and checks `GLanes.lanesFor` gives one segment
 whose every point's value is 0.
 
 **Assumptions:** None.
+
+#### `test_decode_accepts_more_gradient_events_than_one_numeric_key_allows`
+
+**Checks:** `GLanes.decode` does not throw for a file with far more gradient events
+than the single flat numeric cache key `((kx * M + ky) * M + kz) * D + durIdx`
+(`M = numGradEvents + 1`) can hold as an exact integer below 2^53 (about 1.2 * 10^5
+events), once that key is split into the two-level `outerKey`/`innerKey` form
+(`kx * M + ky` on the outer `Map`, `kz * D + durIdx` on the inner `Map`), which
+stays exact up to about 9.5 * 10^7 events; and `GLanes.minMax` still matches the
+brute force within 1e-12 of the peak there.
+
+**How:** The test builds a 300-block table with 150,000 distinct gradient events
+(`buildManyEventsTables`, most blocks reference event indexes within 50 of the top
+end on each axis), calls `GLanes.decode` (must not throw), and compares
+`GLanes.minMax` against `bruteMinMax` with `assertMinMaxMatches` for the whole file
+at two different bin counts and a range that crosses many checkpoint groups. Before
+the fix, `GLanes.decode` throws "the per-(triple, duration) cache key of this file
+would exceed 2^53" (checked).
+
+**Assumptions:** None beyond the file's own.
 
 ### 2.28 Messages between cards (`test_messages.js`)
 
