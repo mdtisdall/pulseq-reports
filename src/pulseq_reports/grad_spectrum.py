@@ -95,30 +95,34 @@ def gradient_spectrum(
     dt = seq.system.grad_raster_time
     nwin = round(WINDOW_S / dt)
     pad = nwin // 2
+    # Python's `sum` is compensated (Python 3.12), so this total can differ from
+    # `index.end_s`, the sequential sum, by one sample. The oracle
+    # (tests/oracles/grad_spectrum.py) has the same line, and the oracle tests
+    # compare the two. Do not change it to `index.end_s`.
     nt = math.ceil(sum(seq.block_durations.values()) / dt)
     to_mt = 1e3 / seq.system.gamma  # Hz/m to mT/m
 
     # The padded waveform has n samples: pad zeros, the nt gradient samples, pad zeros.
     # scipy's spectrogram does not pad, so window j covers samples [j * hop, j * hop + nwin).
-    n = nt + 2 * pad
+    n = nt + 2 * pad  # n >= nwin: after the NO_GRADIENTS return, nt >= 1
     hop = nwin - nwin // 2
-    num_windows = (n - nwin) // hop + 1 if n >= nwin else 1
+    num_windows = (n - nwin) // hop + 1
 
     axes_max: dict[str, np.ndarray] = {}
     rss_max = None
-    freq = None
+    keep = None  # the frequencies to keep: the same for each chunk
     for first in range(0, num_windows, CHUNK_WINDOWS):
         last = min(first + CHUNK_WINDOWS, num_windows)
-        # The samples of windows first to last - 1. For a waveform shorter than one
-        # window, the whole waveform (scipy then shortens the window, as in one call).
+        # The samples of windows first to last - 1.
         start = first * hop
-        stop = n if n < nwin else (last - 1) * hop + nwin
+        stop = (last - 1) * hop + nwin
         rss_sq = 0.0
         for axis in "xyz":
             freq, sxx = _chunk_spectrogram(
                 sampler, f"g{axis}", start, stop, pad, nt, dt, nwin, to_mt
             )
-            keep = freq <= MAX_FREQUENCY_HZ + 1e-6
+            if keep is None:
+                keep = freq <= MAX_FREQUENCY_HZ + 1e-6
             sxx = sxx[keep]
             chunk_max = sxx.max(axis=1)
             axes_max[axis] = (
@@ -127,7 +131,7 @@ def gradient_spectrum(
             rss_sq = rss_sq + sxx**2
         chunk_rss = np.sqrt(rss_sq).max(axis=1)
         rss_max = chunk_rss if rss_max is None else np.maximum(rss_max, chunk_rss)
-    freq = freq[freq <= MAX_FREQUENCY_HZ + 1e-6]
+    freq = freq[keep]
     return GradientSpectrum(
         None, resonances, freq, axes_max, rss_max, _band_peaks(freq, rss_max, resonances)
     )

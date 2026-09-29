@@ -91,7 +91,7 @@ def _pulse_train(seq: pp.Sequence) -> tuple[_PulseTrain, float]:
     at = np.cumsum(n + 1) - (n + 1)
     train = _PulseTrain(
         event=event,
-        base=index.start_s[blocks] + delay[event] if blocks.size else np.empty(0),
+        base=index.start_s[blocks] + delay[event],
         add=np.zeros(blocks.size),
         block_id=index.block_id[blocks].astype(np.int64),
         ev_n=n,
@@ -149,7 +149,9 @@ class _Search:
         self.event = np.tile(train.event, copies)
         self.base = np.tile(train.base, copies)
         self.add = np.tile(train.add, copies)
-        self.shift = np.concatenate([np.zeros(m)] + ([np.full(m, period)] if period else []))
+        self.shift = np.concatenate(
+            [np.zeros(m)] + ([np.full(m, period)] if period is not None else [])
+        )
         self.n = train.ev_n[self.event]
         self.dt = train.ev_dt[self.event]
         self.at = train.ev_at[self.event]
@@ -208,13 +210,12 @@ class _Search:
             return 0.0
         pulses = np.arange(self.m)
         # The first sample of each pulse.
-        _, end_energy = self._before(self.first[pulses] + length)
+        lo, end_energy = self._before(self.first[pulses] + length)
         best = float(np.max(end_energy - self.energy_before[pulses]))
 
         # The samples that come in while the start moves over each pulse: those in
         # [fl(first + length), fl(last + length)), by global sample index.
         last = self._time(pulses, self.n[pulses] - 1)
-        lo, _ = self._before(self.first[pulses] + length)
         hi, _ = self._before(last + length)
         counts = np.maximum(hi - lo, 0)
         todo = np.flatnonzero(counts)

@@ -5511,13 +5511,16 @@ len(levels.level_max)` equals the ceiling division of `num_samples` by
 
 #### `test_result_does_not_depend_on_chunk_samples`
 
-**Checks:** The stored level and the summary do not depend on `chunk_samples`: exact
+**Checks:** The stored level and the summary do not depend on the chunk size: exact
 equality for chunks of 1, 2 and 7 bins and one chunk larger than the whole file.
 
 **How:** `gre_sequence(num_trs=20)`, long enough that the smallest case (1 bin per
-chunk) still has more than one chunk. `reference = pns_levels(seq)` (the default
-chunk size); then `pns_levels(seq, chunk_samples=...)` for `bin_samples * (1, 2, 7)`
-and `bin_samples * (num_samples // bin_samples + 10)` (bigger than the file).
+chunk) still has more than one chunk. `reference = pns_levels(seq)` (with the
+`CHUNK_SAMPLES` of the module); then, for each size in `1`, `bin_samples + 1`,
+`7 * bin_samples - 1` and `bin_samples * (num_samples // bin_samples + 10)`,
+`monkeypatch.setattr` sets `CHUNK_SAMPLES` of `pulseq_reports.pns_levels` to it and
+`pns_levels(seq)` runs again. `pns_levels` rounds the chunk up to a whole number of
+bins, so the sizes give chunks of 1, 2 and 7 bins and one chunk bigger than the file.
 `level_min`/`level_max` are compared with `numpy.array_equal`; `peak`, `peak_time_s`,
 `axis_peaks`, `num_samples` and `bin_samples` with `==`.
 
@@ -5578,7 +5581,7 @@ compared with a plain `pns_levels(seq)` call (`numpy.array_equal` for the arrays
 #### `test_pns_levels_refuses_rotations`
 
 **Checks:** `pns_levels` raises `NotImplementedError` for a sequence with a
-rotation library, as the other gradient cards do.
+rotation library, as the gradient cards do.
 
 **How:** `gre_sequence(num_trs=2)` with a non-empty `rotation_library` (the
 technique of `test_extensions.py`'s `_with_rotation_library`), inside
@@ -5592,30 +5595,6 @@ technique of `test_extensions.py`'s `_with_rotation_library`), inside
 
 **How:** `isinstance(pns_levels(spin_echo_sequence()), PnsLevels)`. A smoke test of
 the interface; the other tests of this section check individual fields.
-
-**Assumptions:** None.
-
-#### `test_chunk_samples_must_be_a_whole_number_of_bins`
-
-**Checks:** `pns_levels` raises `ValueError` for a `chunk_samples` that is not a
-positive whole number of bins.
-
-**How:** `pns_levels(spin_echo_sequence(), chunk_samples=...)` with `bin_samples //
-2` (not a multiple of `bin_samples`) and with `0`, each inside
-`pytest.raises(ValueError)`.
-
-**Assumptions:** None.
-
-#### `test_default_chunk_samples_is_the_nearest_whole_number_of_bins_at_or_above_the_fork_size`
-
-**Checks:** The default `chunk_samples` (no keyword given) is the smallest multiple
-of `bin_samples` that is at least `CHUNK_SAMPLES`.
-
-**How:** `gre_sequence(num_trs=20)`; `expected` is `bin_samples` times the ceiling
-division of `CHUNK_SAMPLES` by `bin_samples`, computed independently of
-`pns_levels`'s own formula. `pns_levels(seq, chunk_samples=expected)` and
-`pns_levels(seq)` (the default) are compared with `numpy.array_equal` on
-`level_min` and `level_max`.
 
 **Assumptions:** None.
 

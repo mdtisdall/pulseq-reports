@@ -12,13 +12,7 @@ from synthetic import (
 )
 
 from pulseq_reports import pns
-from pulseq_reports.pns_levels import (
-    CHUNK_SAMPLES,
-    PnsLevels,
-    _cast_outward,
-    bin_samples_for,
-    pns_levels,
-)
+from pulseq_reports.pns_levels import PnsLevels, _cast_outward, bin_samples_for, pns_levels
 
 _HW_FIELDS = ("tau1", "tau2", "tau3", "a1", "a2", "a3", "stim_limit", "g_scale")
 
@@ -186,21 +180,24 @@ def test_bin_samples_for_matches_the_formula():
     assert len(levels.level_max) == len(levels.level_min)
 
 
-def test_result_does_not_depend_on_chunk_samples():
-    """The stored level and the summary do not depend on `chunk_samples`: the fork's
+def test_result_does_not_depend_on_chunk_samples(monkeypatch):
+    """The stored level and the summary do not depend on the chunk size: the fork's
     chunk function is exact for any chunk size (`docs/plans/diagram-lanes.md`, section
     2.6, item 2), so a difference would be an error of this library's own binning, not
-    of the fork."""
+    of the fork. The test sets `CHUNK_SAMPLES` of `pulseq_reports.pns_levels`, and
+    `pns_levels` rounds the chunk up to a whole number of bins: 1 gives a chunk of 1 bin,
+    `bin_samples + 1` gives 2, and `7 * bin_samples - 1` gives 7."""
     seq = gre_sequence(num_trs=20)
     reference = pns_levels(seq)
     bin_samples = reference.bin_samples
     assert reference.num_samples > bin_samples * 7  # so the smallest case has > 1 chunk
 
-    sizes = [bin_samples * factor for factor in (1, 2, 7)]
+    sizes = [1, bin_samples + 1, 7 * bin_samples - 1]
     sizes.append(bin_samples * (reference.num_samples // bin_samples + 10))  # > the whole file
 
     for chunk_samples in sizes:
-        got = pns_levels(seq, chunk_samples=chunk_samples)
+        monkeypatch.setattr("pulseq_reports.pns_levels.CHUNK_SAMPLES", chunk_samples)
+        got = pns_levels(seq)
         assert np.array_equal(got.level_min, reference.level_min)
         assert np.array_equal(got.level_max, reference.level_max)
         assert got.peak == reference.peak
@@ -297,7 +294,7 @@ def test_asc_hardware_file_is_used_for_the_levels(write_gradient_asc):
 
 def test_pns_levels_refuses_rotations():
     """`pns_levels` raises `NotImplementedError` for a sequence with a rotation
-    library, as the other gradient cards do (`extensions.refuse_rotations`)."""
+    library, as the gradient cards do (`extensions.refuse_rotations`)."""
     with pytest.raises(NotImplementedError, match="rotation extension"):
         pns_levels(_with_rotation_library())
 
@@ -306,26 +303,3 @@ def test_pns_levels_is_a_frozen_dataclass():
     """`pns_levels` returns a `PnsLevels` instance (a smoke test of the interface, not
     of a specific field: the other tests of this module check the fields)."""
     assert isinstance(pns_levels(spin_echo_sequence()), PnsLevels)
-
-
-def test_chunk_samples_must_be_a_whole_number_of_bins():
-    """`pns_levels` raises `ValueError` for a `chunk_samples` that is not a positive
-    whole number of bins."""
-    seq = spin_echo_sequence()
-    bin_samples = pns_levels(seq).bin_samples
-    with pytest.raises(ValueError):
-        pns_levels(seq, chunk_samples=bin_samples // 2 or 1)
-    with pytest.raises(ValueError):
-        pns_levels(seq, chunk_samples=0)
-
-
-def test_default_chunk_samples_is_the_nearest_whole_number_of_bins_at_or_above_the_fork_size():
-    """The default `chunk_samples` (no keyword given) is the smallest multiple of
-    `bin_samples` that is at least `CHUNK_SAMPLES` (section 4.1, item 2)."""
-    seq = gre_sequence(num_trs=20)
-    bin_samples = pns_levels(seq).bin_samples
-    expected = bin_samples * -(-CHUNK_SAMPLES // bin_samples)  # ceil division
-    reference = pns_levels(seq, chunk_samples=expected)
-    default = pns_levels(seq)
-    assert np.array_equal(default.level_min, reference.level_min)
-    assert np.array_equal(default.level_max, reference.level_max)
