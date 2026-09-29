@@ -5,18 +5,21 @@ Not part of `scripts/check` or CI: a large run can take minutes and use several 
 memory. Run it in the devShell from the repository root:
 
     nix develop --command uv run python scripts/cards_scale.py \
-        --card pns|rf|limits|spectrum|diagram|all --blocks N --case repeating|worst \
+        --card pns|rf|limits|spectrum|diagram|rf-profile|all --blocks N \
+        --case repeating|worst \
         [--tr-s T] [--pns-lanes] --out DIR
 
 `--card`: which card to measure. `pns` is `cards.pns.pns_card`, `rf` is
 `cards.rf_exposure.rf_exposure_card`, `limits` is `cards.gradient_limits.gradient_limits_card`
 (no window, the default), `spectrum` is `cards.spectrum.spectrum_card`, `diagram` is
 `cards.diagram.diagram_card` with the "First ADC" and "Full sequence" windows
-(`waveforms.first_adc_window`, `waveforms.full_window`), as `diagram_scale.py` uses. Each
-card is called with its own defaults and one file. `--card all` runs each of the five
-cards in its own fresh process (a subprocess of this script with the same arguments and
-one `--card`), one after another, so that the peak RSS of one card does not hide
-another; it collects their JSON into one combined file too.
+(`waveforms.first_adc_window`, `waveforms.full_window`), as `diagram_scale.py` uses,
+`rf-profile` is `cards.rf_profile.rf_profile_card` (`docs/plans/rf-profiles.md`; the
+builders label their RF pulses, as the card needs). Each card is called with its own
+defaults and one file. `--card all` runs each of the six cards in its own fresh process
+(a subprocess of this script with the same arguments and one `--card`), one after
+another, so that the peak RSS of one card does not hide another; it collects their JSON
+into one combined file too.
 
 `--blocks N`: the target number of blocks, turned into a number of TRs the same way as
 `diagram_scale.py`: `n_trs = blocks // TR_BLOCKS` (`TR_BLOCKS` is 5, from
@@ -73,7 +76,7 @@ adds (section 2.4 of that plan).
 
 It writes one JSON file for each card run to `--out`, named
 `cards-scale-<card>-<case>-<blocks>.json`, or `cards-scale-<card>-pns-lanes-<case>-<blocks>.json`
-with `--pns-lanes` (pretty-printed; `blocks` is the requested `--blocks`). With `--card all`, it also writes the five results, keyed by card name, to
+with `--pns-lanes` (pretty-printed; `blocks` is the requested `--blocks`). With `--card all`, it also writes the six results, keyed by card name, to
 `cards-scale-all-<case>-<blocks>.json` in the same directory.
 
 Example, for a 370 s protocol of about 4e4 blocks:
@@ -104,6 +107,7 @@ from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.cards.rf_exposure import rf_exposure_card
+from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.page import Card
 from pulseq_reports.seq_utils import NamedSequence
@@ -114,7 +118,7 @@ _DIAGRAM_SCALE_PATH = _THIS_FILE.parent / "diagram_scale.py"
 
 _RASTER_S = 10e-6  # --tr-s is rounded to the nearest multiple of this (grad_raster_time)
 
-CARD_NAMES = ("pns", "rf", "limits", "spectrum", "diagram")
+CARD_NAMES = ("pns", "rf", "limits", "spectrum", "diagram", "rf-profile")
 
 
 def _load_diagram_scale() -> types.ModuleType:
@@ -189,6 +193,10 @@ def _run_diagram(named: NamedSequence, pns_lanes: bool) -> Card:
     return diagram_card(seqs, windows, pns=pns_lanes)
 
 
+def _run_rf_profile(named: NamedSequence, pns_lanes: bool) -> Card:
+    return rf_profile_card([named])
+
+
 def _card_bytes(card: Card) -> int:
     """The size of `card` in the page: its body HTML and its data as JSON (UTF-8)."""
     data = b"" if card.data is None else json.dumps(card.data).encode("utf-8")
@@ -201,6 +209,7 @@ CARD_RUNNERS = {
     "limits": _run_limits,
     "spectrum": _run_spectrum,
     "diagram": _run_diagram,
+    "rf-profile": _run_rf_profile,
 }
 
 
