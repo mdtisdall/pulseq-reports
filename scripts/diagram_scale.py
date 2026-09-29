@@ -24,7 +24,7 @@ The script does not import `tests/synthetic.py`; it copies the pieces of `gre_se
 that it needs, so it has no dependency on the test suite.
 
 It builds the sequence with exactly `--blocks` blocks, or the largest multiple of the
-TR's block count (5) that is not more than `--blocks`, and says so on stdout when the
+TR's block count (5) that is not more than `--blocks`, and says so on stderr when the
 two differ. It writes `DIR/diagram-scale-<case>-<N>.html` (a one-card report page: the
 diagram card only, for the "First ADC" and "Full sequence" windows) and
 `DIR/diagram-scale-<case>-<N>.json` (the measurements below, pretty-printed; `N` is the

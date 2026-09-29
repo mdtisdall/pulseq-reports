@@ -122,15 +122,14 @@ def test_rf_exposure_card_two_files_not_periodic_omits_repeated_wording():
 # ---- Comparisons with the oracle (task 3.5) ----
 #
 # The "All files" table combines the files' pulse trains into one, with the file offsets
-# (`cards/rf_exposure.py`'s `_combined_data`, from the pulse trains that `rf_exposure_card`
-# already built for each file's own table, section 4.5 item 7 of
+# (`cards/rf_exposure.py`'s `_combined_data`, from the pulse trains that
+# `rf_exposure_card` already built for each file's own table, section 4.5 item 7 of
 # docs/plans/cards-at-scale.md: no file is read twice). Before phase 3, the card instead
 # read each file's samples again with `oracle._rf_samples`, offset them by hand and called
 # `oracle._windowed_energy` on the concatenation (`cards/rf_exposure.py`'s own
-# `_combined_data`, before this task's changes; see `tests/oracles/rf_exposure.py`'s own
-# docstring). `_oracle_combined_data` rebuilds that approach directly from the oracle
-# module, so the tests below compare the new card's dict with it, independently of
-# `_combined_data`'s own implementation.
+# `_combined_data` before phase 3). `_oracle_combined_data` rebuilds that approach
+# directly from the oracle module, so the tests below compare the new card's dict with it,
+# independently of `_combined_data`'s own implementation.
 
 
 def _oracle_combined_data(seqs: list[NamedSequence], periodic: bool, window_s: float) -> dict:
@@ -231,8 +230,8 @@ def _two_and_three_file_cases() -> list[list[NamedSequence]]:
 @pytest.mark.parametrize("periodic", [True, False])
 def test_all_files_table_matches_oracle(seqs, periodic):
     """The "All files" table (`_combined_data`'s dict) for two and for three files
-    matches the oracle's own way of combining files (`_oracle_combined_data`), for both
-    `periodic` values, within the tolerance above."""
+    matches the oracle's own way of combining files (`_oracle_combined_data`) exactly,
+    for both `periodic` values."""
     ours = _combined_data_from_new_module(seqs, periodic, rf_exposure_module.WINDOW_S)
     theirs = _oracle_combined_data(seqs, periodic, rf_exposure_module.WINDOW_S)
     _assert_combined_data_matches_oracle(ours, theirs)

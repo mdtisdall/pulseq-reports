@@ -135,9 +135,6 @@ test file have the same name.
   check does not run.
 - In `scripts/check`, pytest runs on the `tests` directory without other
   test selection (no `-k`), so the file of test IDs lists every test.
-- `scripts/check` skips both the pytest run and this check, with a skip
-  line, when there is no `tests/` directory. This no longer applies once
-  `tests/` exists, as it does from phase 1 onward.
 - Test files are identified by file name only, without the directory. The
   check fails if two test files have the same name, in pytest, in the
   JavaScript tests, or between the two.
@@ -156,8 +153,7 @@ test file have the same name.
 
 **How:** `scripts/check` runs `node --test` on every file that matches
 `tests/js/test_*.js`, with the Node.js version from the Nix devShell. When
-the pattern matches no file, it prints a skip line and continues, instead of
-failing.
+the pattern matches no file, the step fails.
 
 **Assumptions:**
 
@@ -2115,10 +2111,10 @@ their frequency and their relative value within the same tolerance.
 `scripts/diagram_scale.py` (`build_repeating` and `build_worst`) at 10^4
 blocks (task 5.3 of `docs/plans/cards-at-scale.md`).
 
-**How:** The test imports `scripts/diagram_scale.py` by path, builds each
-sequence with `10^4 / TR_BLOCKS` TRs, and compares this module's spectrum with
-the oracle's, as the test above does, with the tolerance
-`1e-12 * max(1, duration in s)` instead of 1e-12.
+**How:** The test imports `scripts/diagram_scale.py` by path, through
+`synthetic.load_diagram_scale`, builds each sequence with `10^4 / TR_BLOCKS`
+TRs, and compares this module's spectrum with the oracle's, as the test above
+does, with the tolerance `1e-12 * max(1, duration in s)` instead of 1e-12.
 
 **Assumptions:**
 
@@ -3282,9 +3278,7 @@ button for each window in the given order (section 4.1 of
 `docs/plans/diagram-event-table.md`). There is no lane set and no point
 budget any more: every view is drawn in the browser from the tables (phase
 4's job is done there, not in Python). The last test is adapted from
-vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`, checking
-only the diagram card because phases 4 (gradient spectrum) and 5 (PNS) are
-not merged into this branch.
+vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`.
 
 #### `test_data_has_format_1_with_file_and_window_keys`
 
@@ -3413,23 +3407,18 @@ waveform."/"Minimum and maximum..." text into.
 
 **Assumptions:** None.
 
-#### `test_diagram_card_has_zoom_controls_before_its_chart_and_the_help_sentence_once`
+#### `test_diagram_card_has_zoom_controls_directly_before_its_chart`
 
 **Checks:** The rendered page has the zoom button group directly before the
-diagram's `<div class="chart">`, and the zoom and pan help text exactly
-once.
+diagram's `<div class="chart">`.
 
 **How:** Adapted from vb-pulseq's
-`test_report_has_zoom_controls_on_each_line_chart`, checking only the
-diagram card because phases 4 and 5 are not merged into this branch. The
-test builds a diagram card and renders it. It checks that
+`test_report_has_zoom_controls_on_each_line_chart`. The test builds a
+diagram card and renders it. It checks that
 `markup.zoom_controls("diagram-diagram")` appears exactly once, that the
 text right after it (skipping one newline) starts with
 `<div class="chart"` and has `id="diagram-diagram"` within its first 400
-characters, and that the zoom and pan help sentence ("Click the chart to
-mark the centre for the zoom buttons. Drag across the chart to zoom to that
-range. Hold Shift and drag, or scroll sideways, to pan.") appears exactly
-once.
+characters.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -3715,9 +3704,10 @@ checks that `<summary>Blocks (table view)</summary>` is in the result.
 expanded points (`lane_meta`). `waveforms.file_lanes` and
 `waveforms._events_in_range` are the reference (section 3.5 of
 `docs/plans/diagram-event-table.md`): the module must give the same numbers,
-because a later phase rebuilds these same numbers in JavaScript and a golden
-test there compares them with `==` and no tolerance. Most of these tests
-therefore compare with `numpy.array_equal` rather than `pytest.approx`.
+because `test_seq_lanes_golden.py` rebuilds these same numbers in JavaScript
+and a golden test there compares them with `==` and no tolerance. Most of
+these tests therefore compare with `numpy.array_equal` rather than
+`pytest.approx`.
 
 #### `test_rebuilt_polylines_exactly_match_events_in_range`
 
@@ -4855,7 +4845,8 @@ reference numbering, `_reference_index`, is a plain loop over the blocks with on
 for each event kind: the loop that `diagram_data.diagram_tables` had before it used the
 index. Its `*_first` arrays hold play indexes, as `SequenceIndex` does (the old loop
 kept block ids). The tests load `build_repeating` and `build_worst` from
-`scripts/diagram_scale.py` by path, because that script is not part of the package.
+`scripts/diagram_scale.py` by path, through `synthetic.load_diagram_scale`, because that
+script is not part of the package.
 
 #### `test_dense_columns_and_first_arrays_match_the_reference_numbering`
 
@@ -5404,7 +5395,7 @@ peak. Also checks `reason`, `hardware`, `asc_file`, `dt_s` and `on_raster` for t
 example-hardware, on-raster case.
 
 **How:** Parametrized over `spin_echo_sequence()`, `gre_sequence()`,
-`arbitrary_gradient_sequence()` and a module-level `_border_sequence()` (two
+`arbitrary_gradient_sequence()` and `synthetic.border_sequence()` (two
 `pp.make_extended_trapezoid` blocks on x, the second continuing the first's
 amplitude with no step, so `add_block` accepts the junction). The reference peak,
 peak time (the first sample at or above `peak * (1 - pns.PEAK_TOLERANCE)`, as
@@ -5966,7 +5957,8 @@ The golden test of task 4.5 of `docs/plans/diagram-lanes.md`: the browser module
 `PnsLanes` (`src/pulseq_reports/assets/pns_lanes.js`) against the Python
 `pns_levels.pns_levels` pipeline, as `test_seq_lanes_golden.py` checks `SeqLanes`
 against a Python reference. `_run_golden` writes one sequence's diagram tables and its
-`pns` object (plan section 4.4, including `gradScale`, decision 14) to a JSON file,
+`pns` object (plan section 4.4, including `gradScale`, decision 14), from
+`cards.diagram._pns_entry`, the function that makes it for the page, to a JSON file,
 runs `tests/js/golden_pns_lanes.js` with Node on it, and reads back the JSON result:
 `PnsLanes.decode`, one `exactView` call for the whole file (forced to the "samples"
 kind by a bin count far larger than the sample count, so every sample comes back,
@@ -5998,27 +5990,27 @@ minimum/maximum of the 4 bins of the level below it (no rounding: a min/max redu
 of already-float32 values).
 
 **How:** Parametrized over six sequences: the three synthetic builders of
-`tests/synthetic.py` that have a gradient event (`spin_echo_sequence`,
-`gre_sequence`, `arbitrary_gradient_sequence`; the empty sequence has no PNS bins to
-compare); a "border" sequence of two extended trapezoids whose gradient is not zero
-at the block junction, built again in this file (not imported from
-`test_pns_levels.py`'s `_border_sequence`, so the two files need no cross-import); a
-repeating sequence of 225 blocks (45 TRs of `gre_sequence`'s 5 blocks each), more
-than `3 * PnsLanes.GROUP_BLOCKS` (192), so the test crosses more than 3 of the
-JavaScript block map's checkpoint groups; and a sequence built with
-`pp.Opts(gamma=11.262e6)` (sodium), with a small trapezoid on every axis (areas
-scaled down from the proton sequences', since sodium's smaller gamma gives a smaller
+`tests/synthetic.py` that have a gradient event (`spin_echo_sequence`, `gre_sequence`,
+`arbitrary_gradient_sequence`; the empty sequence has no PNS bins to compare); a
+"border" sequence of two extended trapezoids whose gradient is not zero at the block
+junction (`synthetic.border_sequence()`, shared with `test_pns_levels.py` through
+`tests/synthetic.py`); a repeating sequence of 225 blocks (45 TRs of `gre_sequence`'s
+5 blocks each), more than `3 * PnsLanes.GROUP_BLOCKS` (192), so the test crosses more
+than 3 of the JavaScript block map's checkpoint groups; and a sequence built with
+`pp.Opts(gamma=11.262e6)` (sodium), with a small trapezoid on every axis (areas scaled
+down from the proton sequences', since sodium's smaller gamma gives a smaller
 max-gradient area in 1/m for the same mT/m hardware limit), so a wrong `gradScale`
 would show on all three axes.
 
-For each sequence: `_run_golden` builds the diagram tables, `pns_levels(seq)`, and
-`gradScale = seq_utils.GAMMA / seq.system.gamma`, writes them as the `pns` object of
-plan section 4.4 (`levels` encoded with `diagram_data.encode_tables`, as float32),
-and runs `golden_pns_lanes.js`. The JS sample times are checked against
-`(k + 0.5) * dt` with exact array equality; the JS totals against the Python
-reference with `max(|diff|) <= 1e-12 * peak`; each stored bin's `level_min`/`max`
-against the min/max of the JS samples in that bin, with the same tolerance; and the
-pyramid level by level, with exact equality, against the level below it.
+For each sequence: `_run_golden` builds the diagram tables and `pns_levels(seq)`,
+takes the `pns` object of plan section 4.4 from `cards.diagram._pns_entry(seq, levels)`
+(with `gradScale = seq_utils.GAMMA / seq.system.gamma`, and `levels` encoded with
+`diagram_data.encode_tables`, as float32), writes them, and runs
+`golden_pns_lanes.js`. The JS sample times are checked against `(k + 0.5) * dt` with
+exact array equality; the JS totals against the Python reference with
+`max(|diff|) <= 1e-12 * peak`; each stored bin's `level_min`/`max` against the min/max
+of the JS samples in that bin, with the same tolerance; and the pyramid level by
+level, with exact equality, against the level below it.
 
 **Assumptions:**
 
@@ -6831,11 +6823,13 @@ and 4.3; task 2.5, items 1 to 14): `block_pulse` (the RF of a block as played, t
 interval gradients, the gradient kind, the numbers, the pulse key and the echo pathway),
 `period`, `rf_uses_labeled`, `view_spec`, `simulate`, `quantity`, `echo_phase`,
 `widths`, `combined_profile` and `pulse_list`. Each test builds its sequences with
-pypulseq in the test file. The RF raster is 5 µs (3 µs in the interval test, 2.5 µs in
-one part of the as-played test), so a 1.5 ms sinc has 300 samples and the whole file
-runs in about 2 s. The expected values come from closed forms (trapezoid areas and
-means, the amplitude of a block pulse), from `rf_sim.spin_domain` called directly on
-points made in the test, or from the definitions of the plan written out with numpy.
+pypulseq, with the builders of `tests/rf_sequences.py` (shared with
+`test_rf_profile_card.py`) or the ones in the test file. The RF raster is 5 µs (3 µs in
+the interval test, 2.5 µs in one part of the as-played test), so a 1.5 ms sinc has 300
+samples and the whole file runs in about 2 s. The expected values come from closed forms
+(trapezoid areas and means, the amplitude of a block pulse), from `rf_sim.spin_domain`
+called directly on points made in the test, or from the definitions of the plan written
+out with numpy.
 
 **Assumptions for the whole file:**
 
@@ -7968,9 +7962,10 @@ tolerance; no comparison came close to its limit.
 section 4.5, items 1 and 2; task 5.3, items 1 to 7): `rf_table` (the RF table of a file,
 its pools and its label check), `rf_profile_data` (one file entry, labeled or not) and
 `rf_profile_card` (the options, the checks and the body). Each test builds its own
-sequences with pypulseq, with the same helpers as `test_rf_profiles.py` (copied, not
-imported). This card copies values from `rf_profiles` and `diagram_data`, so most checks
-compare with `==` or `np.array_equal` (exact); a comparison that is not exact says why.
+sequences with pypulseq, with the same helpers as `test_rf_profiles.py`, from
+`tests/rf_sequences.py`. This card copies values from `rf_profiles` and `diagram_data`,
+so most checks compare with `==` or `np.array_equal` (exact); a comparison that is not
+exact says why.
 
 #### `test_rf_table_matches_hold_samples_and_definitions`
 

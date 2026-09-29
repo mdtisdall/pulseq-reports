@@ -1,6 +1,8 @@
 """Small synthetic pypulseq sequences for the pulseq-reports tests."""
 
+import importlib.util
 import math
+from pathlib import Path
 
 import numpy as np
 import pypulseq as pp
@@ -40,28 +42,23 @@ def readout():
     return gx, adc, gx.amplitude * (adc.delay + echo_offset - gx.rise_time / 2)
 
 
-def spin_echo_sequence(
-    crusher_2_cycles: float = 3.0,
-    prephaser_fraction: float = 1.0,
-    prephaser_position: str = "before",
-) -> pp.Sequence:
-    """90°, readout prephaser, crusher (3 cycles across WIDTH), 180°, second crusher,
-    readout. Block pulses, so no slice-select gradients. With prephaser_position "after",
-    the readout prephaser is after the second crusher, with the opposite sign."""
+def spin_echo_sequence(prephaser_position: str = "before") -> pp.Sequence:
+    """90°, readout prephaser, crusher (3 cycles across WIDTH), 180°, second crusher
+    (the same), readout. Block pulses, so no slice-select gradients. With
+    prephaser_position "after", the readout prephaser is after the second crusher, with
+    the opposite sign."""
     if prephaser_position not in ("before", "after"):
         raise ValueError(f"prephaser_position must be 'before' or 'after': {prephaser_position!r}")
     gx, adc, balance = readout()
     seq = pp.Sequence(SYSTEM)
     sign = 1 if prephaser_position == "before" else -1
-    prephaser = pp.make_trapezoid(
-        channel="x", area=sign * prephaser_fraction * balance, system=SYSTEM
-    )
+    prephaser = pp.make_trapezoid(channel="x", area=sign * balance, system=SYSTEM)
     seq.add_block(block_pulse("excitation", math.pi / 2))
     if prephaser_position == "before":
         seq.add_block(prephaser)
     seq.add_block(pp.make_trapezoid(channel="y", area=3 / WIDTH, system=SYSTEM))
     seq.add_block(block_pulse("refocusing", math.pi))
-    seq.add_block(pp.make_trapezoid(channel="y", area=crusher_2_cycles / WIDTH, system=SYSTEM))
+    seq.add_block(pp.make_trapezoid(channel="y", area=3 / WIDTH, system=SYSTEM))
     if prephaser_position == "after":
         seq.add_block(prephaser)
     seq.add_block(gx, adc)
@@ -113,3 +110,35 @@ def arbitrary_gradient_sequence() -> pp.Sequence:
     g = pp.make_arbitrary_grad(channel="x", waveform=waveform, system=SYSTEM)
     seq.add_block(g)
     return seq
+
+
+def border_sequence() -> pp.Sequence:
+    """Two extended-trapezoid blocks on x whose gradient is not zero at the border
+    between them, unlike a plain trapezoid (which is zero at both ends of its own
+    event): the amplitude ramps up in block 0 and continues, unchanged, into block 1,
+    where it ramps back down to 0. `add_block` accepts this because the amplitude is
+    continuous across the junction (no step)."""
+    dt = SYSTEM.grad_raster_time
+    amp = 0.1 * SYSTEM.max_grad  # the same fraction of max_grad as arbitrary_gradient_sequence
+    n = 40
+    rise = n * dt
+    g1 = pp.make_extended_trapezoid(
+        channel="x", amplitudes=np.array([0.0, amp]), times=np.array([0.0, rise]), system=SYSTEM
+    )
+    g2 = pp.make_extended_trapezoid(
+        channel="x", amplitudes=np.array([amp, 0.0]), times=np.array([0.0, rise]), system=SYSTEM
+    )
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(g1)
+    seq.add_block(g2)
+    return seq
+
+
+def load_diagram_scale():
+    """`scripts/diagram_scale.py`, imported by path: it is not part of the package and
+    the test suite has no other reason to put `scripts/` on `sys.path`."""
+    path = Path(__file__).resolve().parent.parent / "scripts" / "diagram_scale.py"
+    spec = importlib.util.spec_from_file_location("diagram_scale", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

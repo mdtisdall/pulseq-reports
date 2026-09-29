@@ -70,14 +70,17 @@ For each card run, it records (as JSON, and prints a one-line summary):
 - `python_version`, `numpy_version`, `pypulseq_version`.
 
 `--pns-lanes`: the diagram card is called with `pns=True` (pypulseq's example hardware),
-so it adds the PNS lane (`docs/plans/diagram-lanes.md`); the other cards do not change.
-Its time and `card_bytes` minus those of a run without `--pns-lanes` are what the PNS lane
-adds (section 2.4 of that plan).
+so it adds the PNS lane (`docs/plans/diagram-lanes.md`). Its time and `card_bytes` minus
+those of a run without `--pns-lanes` are what the PNS lane adds (section 2.4 of that
+plan). No other card reads it, so `--pns-lanes` with a `--card` other than `diagram` or
+`all` is an error, and `--card all --pns-lanes` gives it only to the diagram subprocess.
 
 It writes one JSON file for each card run to `--out`, named
-`cards-scale-<card>-<case>-<blocks>.json`, or `cards-scale-<card>-pns-lanes-<case>-<blocks>.json`
-with `--pns-lanes` (pretty-printed; `blocks` is the requested `--blocks`). With `--card all`, it also writes the six results, keyed by card name, to
-`cards-scale-all-<case>-<blocks>.json` in the same directory.
+`cards-scale-<card>-<case>-<blocks>.json` (pretty-printed; `blocks` is the requested
+`--blocks`), or `cards-scale-diagram-pns-lanes-<case>-<blocks>.json` for the diagram
+card with `--pns-lanes`. With `--card all`, it also writes the six results, keyed by
+card name, to `cards-scale-all-<case>-<blocks>.json` in the same directory
+(`cards-scale-all-pns-lanes-<case>-<blocks>.json` with `--pns-lanes`).
 
 Example, for a 370 s protocol of about 4e4 blocks:
 
@@ -117,8 +120,6 @@ _THIS_FILE = Path(__file__).resolve()
 _DIAGRAM_SCALE_PATH = _THIS_FILE.parent / "diagram_scale.py"
 
 _RASTER_S = 10e-6  # --tr-s is rounded to the nearest multiple of this (grad_raster_time)
-
-CARD_NAMES = ("pns", "rf", "limits", "spectrum", "diagram", "rf-profile")
 
 
 def _load_diagram_scale() -> types.ModuleType:
@@ -171,19 +172,19 @@ def resolve_tr_margin(diagram_scale: types.ModuleType, case: str, tr_s: float) -
     return _round_to_raster(_round_to_raster(tr_s) - used)
 
 
-def _run_pns(named: NamedSequence, pns_lanes: bool) -> Card:
+def _run_pns(named: NamedSequence) -> Card:
     return pns_card(named)
 
 
-def _run_rf(named: NamedSequence, pns_lanes: bool) -> Card:
+def _run_rf(named: NamedSequence) -> Card:
     return rf_exposure_card([named])
 
 
-def _run_limits(named: NamedSequence, pns_lanes: bool) -> Card:
+def _run_limits(named: NamedSequence) -> Card:
     return gradient_limits_card([named])
 
 
-def _run_spectrum(named: NamedSequence, pns_lanes: bool) -> Card:
+def _run_spectrum(named: NamedSequence) -> Card:
     return spectrum_card([named])
 
 
@@ -193,7 +194,7 @@ def _run_diagram(named: NamedSequence, pns_lanes: bool) -> Card:
     return diagram_card(seqs, windows, pns=pns_lanes)
 
 
-def _run_rf_profile(named: NamedSequence, pns_lanes: bool) -> Card:
+def _run_rf_profile(named: NamedSequence) -> Card:
     return rf_profile_card([named])
 
 
@@ -211,6 +212,7 @@ CARD_RUNNERS = {
     "diagram": _run_diagram,
     "rf-profile": _run_rf_profile,
 }
+CARD_NAMES = tuple(CARD_RUNNERS)
 
 
 def run(
@@ -240,7 +242,7 @@ def run(
     named = NamedSequence(f"cards-scale-{card}-{case}-{blocks}", seq)
 
     card_start = time.perf_counter()
-    built = CARD_RUNNERS[card](named, pns_lanes)
+    built = _run_diagram(named, pns_lanes) if card == "diagram" else CARD_RUNNERS[card](named)
     card_s = time.perf_counter() - card_start
     peak_rss_after_card_bytes = diagram_scale._peak_rss_bytes()
 
@@ -295,8 +297,9 @@ def _run_all(
 ) -> dict:
     """Runs each of `CARD_NAMES` as a fresh subprocess of this script, with the same
     `--blocks`, `--case`, `--tr-s` and `--out`, and one `--card`, so that the peak RSS
-    of one card does not hide another. Reads back each subprocess's own JSON file and
-    combines them into one file, keyed by card name."""
+    of one card does not hide another. `pns_lanes` gives `--pns-lanes` to the diagram
+    subprocess only. Reads back each subprocess's own JSON file and combines them into
+    one file, keyed by card name."""
     combined: dict[str, dict] = {}
     for card in CARD_NAMES:
         cmd = [
@@ -313,11 +316,12 @@ def _run_all(
         ]
         if tr_s is not None:
             cmd += ["--tr-s", str(tr_s)]
-        if pns_lanes:
+        card_pns_lanes = pns_lanes and card == "diagram"
+        if card_pns_lanes:
             cmd.append("--pns-lanes")
         print(f"---- {card}: running in a fresh process ----", file=sys.stderr)
         subprocess.run(cmd, check=True)
-        json_path = out_dir / _json_name(card, case, blocks, pns_lanes)
+        json_path = out_dir / _json_name(card, case, blocks, card_pns_lanes)
         combined[card] = json.loads(json_path.read_text(encoding="utf-8"))
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -339,7 +343,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--pns-lanes", action="store_true", help="the diagram card with pns=True (the PNS lane)"
     )
     parser.add_argument("--out", type=Path, required=True, help="output directory")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.pns_lanes and args.card not in ("diagram", "all"):
+        parser.error("--pns-lanes needs --card diagram or --card all")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

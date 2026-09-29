@@ -7,8 +7,6 @@ lists hold play indexes, as `SequenceIndex` does (the old loop kept block ids).
 """
 
 import copy
-import importlib.util
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -19,6 +17,7 @@ from synthetic import (
     arbitrary_gradient_sequence,
     empty_sequence,
     gre_sequence,
+    load_diagram_scale,
     spin_echo_sequence,
 )
 
@@ -33,17 +32,7 @@ from pulseq_reports.seq_index import (
 _AXES = ("gx", "gy", "gz")
 
 
-def _load_diagram_scale():
-    """`scripts/diagram_scale.py`, imported by path: it is not part of the package and
-    this test suite has no other reason to put `scripts/` on `sys.path`."""
-    path = Path(__file__).resolve().parent.parent / "scripts" / "diagram_scale.py"
-    spec = importlib.util.spec_from_file_location("diagram_scale", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-_diagram_scale = _load_diagram_scale()
+_diagram_scale = load_diagram_scale()
 build_repeating = _diagram_scale.build_repeating
 build_worst = _diagram_scale.build_worst
 

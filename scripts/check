@@ -20,32 +20,22 @@ uv run ruff format --check .
 
 echo
 echo "# pytest"
-if [ -d tests ]; then
-  # The tests argument loads tests/conftest.py before pytest reads its options,
-  # so --collected-tests-file is known.
-  uv run pytest -q tests --collected-tests-file "$collected_tests"
-else
-  echo "skip  pytest: no tests/ directory"
-fi
+# The tests argument loads tests/conftest.py before pytest reads its options,
+# so --collected-tests-file is known.
+uv run pytest -q tests --collected-tests-file "$collected_tests"
 
 echo
 echo "# TESTS.md"
-if [ -d tests ]; then
-  uv run python scripts/check_tests_md.py --collected "$collected_tests"
-else
-  # With no tests there is nothing to document. TESTS.md comes with the first
-  # tests (phase 1 of docs/plans/pulseq-reports.md).
-  echo "skip  TESTS.md: no tests/ directory"
-fi
+uv run python scripts/check_tests_md.py --collected "$collected_tests"
 
 echo
 echo "# node"
 js_tests=(tests/js/test_*.js)
 if [ ! -e "${js_tests[0]}" ]; then
-  echo "skip  node: no JavaScript tests"
-else
-  node --test "${js_tests[@]}"
+  echo "error  node: no JavaScript tests in tests/js" >&2
+  exit 1
 fi
+node --test "${js_tests[@]}"
 
 echo
 echo "# shellcheck"

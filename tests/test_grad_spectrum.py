@@ -1,6 +1,4 @@
-import importlib.util
 import math
-from pathlib import Path
 
 import numpy as np
 import pypulseq as pp
@@ -11,6 +9,7 @@ from synthetic import (
     arbitrary_gradient_sequence,
     empty_sequence,
     gre_sequence,
+    load_diagram_scale,
     spin_echo_sequence,
 )
 
@@ -196,15 +195,6 @@ def test_matches_oracle_on_synthetic_sequences(seq):
     _assert_matches_oracle(grad_spectrum.gradient_spectrum(seq), oracle.gradient_spectrum(seq))
 
 
-def _load_diagram_scale():
-    """`scripts/diagram_scale.py`, imported by path, as `test_seq_index.py` does."""
-    path = Path(__file__).resolve().parent.parent / "scripts" / "diagram_scale.py"
-    spec = importlib.util.spec_from_file_location("diagram_scale", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.mark.parametrize("case", ["repeating", "worst"])
 def test_matches_oracle_on_long_sequences(case):
     """The builders of `scripts/diagram_scale.py` at 10^4 blocks (task 5.3 of
@@ -216,7 +206,7 @@ def test_matches_oracle_on_long_sequences(case):
     time, and a gradient ramp turns it into a value difference, so the difference grows
     with the duration of the sequence. Measured: 2.5e-12 of the peak at 10^4 repeating
     blocks (12 s), 3.6e-12 at 10^5 blocks. Neither is more correct than the other."""
-    diagram_scale = _load_diagram_scale()
+    diagram_scale = load_diagram_scale()
     n_trs = 10_000 // diagram_scale.TR_BLOCKS
     build = diagram_scale.build_repeating if case == "repeating" else diagram_scale.build_worst
     seq = build(n_trs)
