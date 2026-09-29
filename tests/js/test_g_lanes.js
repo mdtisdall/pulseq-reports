@@ -606,9 +606,9 @@ test("test_lane_meta_domain_ticks_and_the_other_fixed_fields", () => {
   const peak = model.wholeFileMax;
   assert.deepEqual(meta.domain, [0, 1.1 * peak]);
   assert.deepEqual(meta.ticks, [0, peak]);
-  // 3 significant figures, the same convention as assets/chart_math.js's `fmt`,
-  // pns_lanes.js's `_fmtBinMs` and diagram_data.lane_meta's own peak-dependent tick
-  // label.
+  // 3 significant figures, the same convention as diagram_data.lane_meta's own
+  // peak-dependent tick label, and the helper `ChartMath.sig3`, which `ChartMath.fmt`,
+  // `GLanes.laneMeta` and `PnsLanes.statusText` share.
   assert.deepEqual(meta.tick_labels, ["0", Number(peak.toPrecision(3)).toString()]);
 });
 

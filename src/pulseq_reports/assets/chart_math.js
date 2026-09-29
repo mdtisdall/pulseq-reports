@@ -1,14 +1,22 @@
-// Pure functions of the report charts, loaded before lane_chart.js in the page and by
-// `require` in tests/js.
+// Pure functions of the report charts, loaded first in the page (page.py), and by
+// `require` in tests/js and in seq_lanes.js, pns_lanes.js and g_lanes.js under Node.
 const ChartMath = (() => {
+  // Returns v rounded to 3 significant digits, as text with no fixed decimal count (so 6.15,
+  // 24.6, 393 and 1570 all read naturally, not "393.000" or "6.150000") and no trailing
+  // zeros. A negative v keeps its ASCII minus sign. `fmt`, the |G| lane's tick label and
+  // the PNS status line's bin width all use it.
+  function sig3(v) {
+    return Number(v.toPrecision(3)).toString();
+  }
+
   // Returns the text of a value for display: an em dash (U+2014) for null or undefined, a
-  // string as it is, "0" when |v| < 5e-4, and else v rounded to 3 significant digits, with
-  // no trailing zeros and a minus sign (U+2212) for a negative v.
+  // string as it is, "0" when |v| < 5e-4, and else v rounded to 3 significant digits (`sig3`)
+  // with a minus sign (U+2212) for a negative v.
   const fmt = v => {
     if (v === null || v === undefined) return "\u2014";
     if (typeof v === "string") return v;
     if (Math.abs(v) < 5e-4) return "0";
-    return Number(v.toPrecision(3)).toString().replace("-", "\u2212");
+    return sig3(v).replace("-", "\u2212");
   };
 
   // Returns the multiples of a step in [lo, hi], in increasing order. The step is the
@@ -254,7 +262,66 @@ const ChartMath = (() => {
     return Math.max(0, Math.min(n - 1, Math.round((value - lo) / (hi - lo) * (n - 1))));
   }
 
-  return {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
-    dragView, laneGroupMap, visibleLanes, colorRamp, colorIndex, nearestIndex};
+  // An iterative segment tree over the group minima or maxima. Leaves sit at [n, 2n); node j
+  // holds the extreme of its two children. `query(lo, hi)` combines [lo, hi) in O(log n).
+  // The comparison is written out for the minimum and for the maximum rather than taken as a
+  // function, so the query does not make an indirect call at each level. This layout needs no
+  // power-of-two padding, so it costs 2n entries, not the n log n of a sparse table (25 MB
+  // against 225 MB at 10^7 blocks). `seq_lanes.js` and `g_lanes.js` both build their group
+  // trees with it.
+  function segTree(values, n, isMin) {
+    const id = isMin ? Infinity : -Infinity;
+    const tree = new Float64Array(2 * n).fill(id);
+    for (let j = 0; j < n; j++) tree[n + j] = values[j];
+    for (let j = n - 1; j >= 1; j--) {
+      const a = tree[2 * j], b = tree[2 * j + 1];
+      tree[j] = isMin ? (a < b ? a : b) : (a > b ? a : b);
+    }
+    return {
+      tree, n, isMin,
+      query(lo, hi) {
+        let acc = id;
+        if (isMin) {
+          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
+            if (l & 1) { const v = tree[l++]; if (v < acc) acc = v; }
+            if (r & 1) { const v = tree[--r]; if (v < acc) acc = v; }
+          }
+        } else {
+          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
+            if (l & 1) { const v = tree[l++]; if (v > acc) acc = v; }
+            if (r & 1) { const v = tree[--r]; if (v > acc) acc = v; }
+          }
+        }
+        return acc;
+      },
+    };
+  }
+
+  // Returns the zigzag segments of a minimum/maximum lane: the points [edge, min] and
+  // [centre, max] for each bin that has a value, where the edge and the centre are in ms
+  // (`edges` is in s). A bin with no value ends the current segment. `binAt(k)` returns the
+  // [min, max] of bin k, already in the lane's unit (this function does not scale them), or
+  // null when the bin has no value. The layout is the one of `SeqLanes.minMaxLanes`, so
+  // `laneChart` draws every such lane alike. The points are not rounded.
+  function minMaxSegments(edges, bins, binAt) {
+    const segments = [];
+    let current = null;
+    for (let k = 0; k < bins; k++) {
+      const range = binAt(k);
+      if (range === null) {
+        if (current !== null) { segments.push(current); current = null; }
+        continue;
+      }
+      if (current === null) current = [];
+      const centre = edges[k] + (edges[k + 1] - edges[k]) / 2;
+      current.push([edges[k] * 1000, range[0]], [centre * 1000, range[1]]);
+    }
+    if (current !== null) segments.push(current);
+    return segments;
+  }
+
+  return {fmt, sig3, segTree, minMaxSegments, niceTicks, valueAt, minMaxAt, visiblePoints,
+    clampView, zoomView, panView, dragView, laneGroupMap, visibleLanes, colorRamp, colorIndex,
+    nearestIndex};
 })();
 if (typeof module !== "undefined") module.exports = ChartMath;

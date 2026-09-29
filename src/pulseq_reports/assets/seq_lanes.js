@@ -11,6 +11,13 @@
 // its point count. `minMaxLanes` gives the minimum/maximum view (section
 // 4.4, item 2), from the group tree of section 4.5 that `decode` builds, and
 // `lanesFor` chooses between the two views for each render (item 3).
+
+// In Node, `require` chart_math.js and make it available as the bare global `ChartMath`,
+// as the browser already has it: page.py loads chart_math.js in its own <script> element
+// before this one, and a top-level `const` of one classic <script> is visible as a bare
+// identifier to a later one on the same page.
+if (typeof require === "function") global.ChartMath = require("./chart_math.js");
+
 const SeqLanes = (() => {
   const EXACT_POINT_LIMIT = 20000;
   const CHECKPOINT_BLOCKS = 1024; // section 4.2: one checkpoint for each 1024 blocks
@@ -215,41 +222,6 @@ const SeqLanes = (() => {
     return {col: tb[laneId], n: tb.grad_n, min: model.grad.min, max: model.grad.max};
   }
 
-  // An iterative segment tree over the group minima or maxima. Leaves sit
-  // at [n, 2n); node j holds the extreme of its two children. `query(lo,
-  // hi)` combines [lo, hi) in O(log n). The comparison is written out for
-  // the minimum and for the maximum rather than taken as a function, so
-  // the query does not make an indirect call at each level. This layout
-  // needs no power-of-two padding, so it costs 2n entries, not the
-  // n log n of a sparse table (25 MB against 225 MB at 10^7 blocks).
-  function _segTree(values, n, isMin) {
-    const id = isMin ? Infinity : -Infinity;
-    const tree = new Float64Array(2 * n).fill(id);
-    for (let j = 0; j < n; j++) tree[n + j] = values[j];
-    for (let j = n - 1; j >= 1; j--) {
-      const a = tree[2 * j], b = tree[2 * j + 1];
-      tree[j] = isMin ? (a < b ? a : b) : (a > b ? a : b);
-    }
-    return {
-      tree, n, isMin,
-      query(lo, hi) {
-        let acc = id;
-        if (isMin) {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v < acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v < acc) acc = v; }
-          }
-        } else {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v > acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v > acc) acc = v; }
-          }
-        }
-        return acc;
-      },
-    };
-  }
-
   // The per-group summaries and the trees over them (section 4.5), built
   // once by `decode`. For each group and each value lane: the minimum, the
   // maximum and whether any block of the group has an event on that lane.
@@ -305,8 +277,8 @@ const SeqLanes = (() => {
     for (const laneId of VALUE_LANES) {
       const lane = lanes[laneId];
       trees[laneId] = {
-        min: _segTree(lane.min, G, true),
-        max: _segTree(lane.max, G, false),
+        min: ChartMath.segTree(lane.min, G, true),
+        max: ChartMath.segTree(lane.max, G, false),
       };
     }
     return {count: G, lanes, trees, pointsPrefix, adcCount};
