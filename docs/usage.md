@@ -27,23 +27,30 @@ uv add "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.1.0"
 To move to a later tag, change `@v0.1.0` and run `uv lock --upgrade-package
 pulseq-reports` (or the equivalent command of your tool). This document
 describes `main`; the release candidate `v0.2.0rc1` has everything in it. To
-try it, pin `@v0.2.0rc1`, and add the pypulseq source line of the next
-paragraph.
+try it, pin `@v0.2.0rc1`, and read the next paragraph about pypulseq.
 
 The PNS summary card and the diagram card's PNS lane need a chunked SAFE
 recursion that stock pypulseq does not have: `pns_levels.py` imports a
 private function of a pypulseq fork, `_safe_gwf_to_pns_chunk`. So
-`pulseq-reports` pins a branch of that fork, `mdtisdall/pypulseq` at
-`pns-chunked`, in its own `[tool.uv.sources]`. uv uses `[tool.uv.sources]`
-only for this project's own environment: a project that depends on
-`pulseq-reports` gets stock pypulseq from PyPI unless it adds the same
-source line itself, and then a call into the PNS card or the PNS lane fails
-with an `ImportError`. Add this to the consumer's own `pyproject.toml`, with
-the same commit as `pulseq-reports`'s own `pyproject.toml`:
+`pulseq-reports` pins a commit of that fork, `mdtisdall/pypulseq`, in its own
+`[tool.uv.sources]`: pypulseq 1.5.0.post1 with four changes (the fork's tag
+`pulseq-reports-pin-1`; `TODO.md` lists the changes).
 
-```toml
-[tool.uv.sources]
-pypulseq = { git = "https://github.com/mdtisdall/pypulseq", rev = "<the commit pulseq-reports pins>" }
+- **With uv**, a project that depends on `pulseq-reports` by git URL gets the
+  same fork commit, because uv applies the `[tool.uv.sources]` of a git
+  dependency. This is so even when the project lists pypulseq itself, or
+  gives pypulseq its own index source (checked with uv 0.12.11). The project
+  then builds its own sequences with the fork, which is pypulseq 1.5.0.post1
+  apart from the four changes. To use a different pypulseq, the project sets
+  `override-dependencies = ["pypulseq==<version>"]` in its `[tool.uv]`; the
+  PNS card and the PNS lane then fail with an `ImportError`.
+- **With pip**, which ignores `[tool.uv.sources]`, the project gets pypulseq
+  from PyPI, and the PNS card and the PNS lane fail with an `ImportError`.
+  Add the fork to the project's own requirements, with the commit that
+  `pulseq-reports`'s own `pyproject.toml` pins:
+
+```
+pypulseq @ git+https://github.com/mdtisdall/pypulseq@<the commit pulseq-reports pins>
 ```
 
 This paragraph applies while `pulseq-reports` pins a fork commit instead of

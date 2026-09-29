@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 import pypulseq as pp
 
-# The chunk function of the pypulseq fork (branch pns-chunked). It is private in the
+# The chunk function of the pypulseq fork (TODO.md, "Move from the pypulseq fork to a
+# pypulseq release"). It is private in the
 # fork, so that the upstream proposal adds no public name: decision 11 of
 # docs/plans/diagram-lanes.md. This is the only module that imports it.
 from pypulseq.utils.safe_pns_prediction import _safe_gwf_to_pns_chunk, safe_example_hw

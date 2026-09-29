@@ -4,32 +4,42 @@ Work that is planned but not started. Delete an item when its PR merges.
 
 ## Move from the pypulseq fork to a pypulseq release
 
-**Why.** PNS at 10^7 blocks needs two changes of pypulseq that no release has
-yet. This project pins them from the fork `mdtisdall/pypulseq` in
-`[tool.uv.sources]` of `pyproject.toml` (`docs/plans/cards-at-scale.md`,
-section 3.6):
+**Why.** This project needs changes of pypulseq that no release has yet. It
+pins them from the fork `mdtisdall/pypulseq` in `[tool.uv.sources]` of
+`pyproject.toml`: the tag `pulseq-reports-pin-1` (branch `pulseq-reports-pin`,
+commit `a74ab06`). That is the release 1.5.0.post1 with four commits. Each one
+is a cherry-pick (`git cherry-pick -x`) of a commit on upstream `master` or on
+a fork branch from upstream `master`:
 
-| Fork branch | Commit | Change | Upstream |
+| Pin commit | From | Change | Upstream |
 |---|---|---|---|
-| `pns-lfilter` | `e476200` | `safe_tau_lowpass` as a recursion (`scipy.signal.lfilter`), not a convolution: the PNS card of a 370 s file in 5.5 s instead of 258 s | not proposed yet (draft 06 of `github.com/mdtisdall/pypulseq-issues`) |
-| `pns-chunked` | `20b9e5e` | `calc_pns` in chunks, and the chunk function `_safe_gwf_to_pns_chunk`: the memory of `calculate_pns` near the size of its result | not proposed yet (the same draft 06) |
+| `250791d` | `e476200` (fork branch `pns-lfilter`) | `safe_tau_lowpass` as a recursion (`scipy.signal.lfilter`), not a convolution: the PNS card of a 370 s file in 5.5 s instead of 258 s | not proposed yet (draft 06 of `github.com/mdtisdall/pypulseq-issues`) |
+| `3d826dd` | `20b9e5e` (fork branch `pns-chunked`) | `calc_pns` in chunks, and the chunk function `_safe_gwf_to_pns_chunk`: the memory of `calculate_pns` near the size of its result | not proposed yet (the same draft 06) |
+| `8c089a1` | `6db882b` (fork branch `fix-oversampled-get-block`) | `get_block` gives an oversampled arbitrary gradient its correct `shape_dur` (B4 of `docs/reviews/2026-09-28-code-review.md`) | issue #423, PR #424 (open on 2026-09-29) |
+| `a74ab06` | `36d9fa3` (upstream `master`) | `Sequence.read` does not hang on an unsigned file whose last section is `[TRAP]`, `[ADC]` or an extension | #359, merged, not in a release |
 
-The pin has two more consequences:
+The pin has more consequences:
 
-- The fork branches are on upstream `master` (`f2c582b`), so the pin also has
-  28 upstream commits that are not in a release
-  (`docs/plans/diagram-lanes.md`, section 2.6, item 5).
+- Apart from the four commits, the pin is the release 1.5.0.post1. It has
+  none of the other upstream commits after the release. A project that uses
+  uv gets this pin too (`docs/usage.md`, section 1), and builds its own
+  sequences with it.
 - `pns_levels.py` imports the private `_safe_gwf_to_pns_chunk`
   (`docs/plans/diagram-lanes.md`, decision 11). If the upstream review renames
   or changes it, `pns_levels.py` changes with it.
+- `v0.2.0rc1` pins the earlier fork commit `20b9e5e` (branch `pns-chunked`,
+  on upstream `master` `f2c582b`). Do not delete that branch.
 
-A project that depends on pulseq-reports gets stock pypulseq from PyPI unless
-it adds the same source line (`docs/usage.md`).
+To change the pin: put each change for upstream on its own fork branch from
+upstream `master` (for its pull request). Cherry-pick it onto
+`pulseq-reports-pin`, tag the new commit `pulseq-reports-pin-<n + 1>`, and
+pin that commit. Do not move or delete a tag.
 
-**What.** When a pypulseq release has both changes: pin that release in
+**What.** When a pypulseq release has all four changes: pin that release in
 `[project] dependencies`, remove `[tool.uv.sources]`, change `pns_levels.py`
 to the released name of the chunk function, and remove the fork paragraph of
-`docs/usage.md`.
+`docs/usage.md`. When a release has only some of them, make a new pin branch
+from that release, with the other changes.
 
 **How to check.** `scripts/check`, and `scripts/cards_scale.py --card pns` for
 the 370 s file.
