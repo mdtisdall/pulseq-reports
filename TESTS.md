@@ -7941,6 +7941,40 @@ card body says "No RF pulses." for that file.
 
 **Assumptions:** None.
 
+#### `test_page_has_the_card_script_and_the_elements_it_reads`
+
+**Checks:** The card script (`assets/cards/rf-profile.js`) is DOM code, which the
+library tests only in a browser check (decision 10 of `docs/plans/pulseq-reports.md`);
+this test holds the Python half to what the script reads. On a page with a diagram card
+and this card, for an RF-spoiled GRE, a file without use labels and a spin echo: the page
+has the card script one time (`PulseqReport.registerCard("rf-profile"` and the text of
+`page.card_asset("rf-profile")`); the card data names the diagram card; the body has the
+status line with `aria-live="polite"`, the empty pulses element, and the combined
+element, hidden, whose first paragraph is the primary echo note (the script hides that
+paragraph above a period without a combined profile) and which holds the empty combined
+body. The "Show" buttons are exactly one for each distinct pulse of each labeled file,
+in order: `data-file` the file's index in the card's list (the unlabeled file, index 1,
+has none) and `data-block` the pulse's first block.
+
+**How:** `page.render_page` with `diagram_card` (a full window for each file) and
+`rf_profile_card`; regular expressions on the body for the elements and the buttons,
+compared with the card data's `pulses`.
+
+**Assumptions:** None.
+
+#### `test_usage_md_has_the_primary_echo_note_word_for_word`
+
+**Checks:** `docs/usage.md` has `**{PRIMARY_ECHO_TITLE}** {PRIMARY_ECHO_NOTE}` word for
+word (task 5.3, item 7: the card HTML, the card script and the documents use the one
+text of the constants).
+
+**How:** The test reads `docs/usage.md`, drops the `>` quote mark at the start of each
+line, joins the lines with spaces and makes each run of white space one space, so that
+the line breaks of the Markdown quote do not matter, then looks for the text.
+
+**Assumptions:** `docs/usage.md` is in the repository at `docs/usage.md` from the tests
+directory's parent.
+
 ### 2.35 RF profiles against external references (`test_rf_references.py`)
 
 `test_rf_references.py` holds the Python reference of RF pulse profiles (`rf_profiles`,

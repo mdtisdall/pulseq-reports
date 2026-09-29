@@ -100,6 +100,7 @@ The page's subtitle gives the `pulseq-reports` version that built it.
 | Timing check | pypulseq's own timing check, and a table of errors when there are errors. |
 | RF exposure | Peak B1, the B1² integral and B1+rms of each file, and of all the files together when there are several. |
 | Sequence diagram | RF magnitude and phase, the ADC, Gx, Gy, Gz, \|G\| and (optional) PNS against time, with zoom, pan and buttons for named time windows. |
+| RF pulse profiles | The simulated profiles of the RF pulses at the cursor of the sequence diagram (one TR, or one echo train): \|Mxy\|, Mz or \|β\|² with the slice width, edges and phase, the combined profile of the first echo, and optional maps. Needs RF use labels. |
 | Gradient spectrum | The spectrum of each gradient axis, against the acoustic resonance bands of a gradient coil. |
 | PNS prediction | The SAFE-model PNS peak of each axis and of all axes, with pypulseq's example hardware or the gradient `.asc` file of your scanner. |
 | Gradient limits | Peak amplitude, peak slew rate and RMS of each axis and of \|G\|, as a percent of the hardware limits. |
