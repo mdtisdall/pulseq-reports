@@ -1013,11 +1013,12 @@ const SeqLanes = (() => {
   }
 
   // True when an ADC window overlaps the bin [e0, e1), given the blocks
-  // that hold the bin's two edges. The blocks of the two groups at the
-  // ends are checked one by one, because a window there can start before
-  // the bin and reach into it, or start inside it and reach past its end.
-  // The groups strictly between them are answered by the prefix count
-  // alone: if any of them holds an ADC block, that block lies wholly
+  // that hold the bin's two edges. The two end scans are block by block:
+  // the first covers `first - 1` (one block before the bin, whose window
+  // can reach into it) to the end of the group of `first` (at most 65
+  // blocks), and the second covers the start of the group of `last` to
+  // `last`. The groups strictly between them are answered by the prefix
+  // count alone: if any of them holds an ADC block, that block lies wholly
   // inside the bin, so a window starts inside the bin and the bin is on.
   // Without this, a bin of a whole-file view would walk every block it
   // spans, which is the whole file.
@@ -1035,7 +1036,10 @@ const SeqLanes = (() => {
     };
     // One block before the bin's first: its window can reach into the bin.
     const from = Math.max(0, first - 1);
-    const gFrom = Math.floor(from / GROUP_BLOCKS);
+    // The group of `first`, not of `from`: block `first` holds e0, so its ADC
+    // window can end before the bin. Its group is an end group: scanned block
+    // by block, never answered by the prefix count.
+    const gFrom = Math.floor(first / GROUP_BLOCKS);
     const gLast = Math.floor(last / GROUP_BLOCKS);
     const scan = (a, b) => {
       if (b < a) return false;
