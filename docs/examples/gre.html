@@ -128,7 +128,7 @@ details summary { cursor: pointer; font-weight: 600; }
 <div class="controls" role="group" aria-label="Zoom" data-zoom-for="diagram-diagram"><button type="button" data-zoom="10" aria-label="Zoom in 10 times">×10</button><button type="button" data-zoom="2" aria-label="Zoom in 2 times">×2</button><button type="button" data-zoom="0.5" aria-label="Zoom out 2 times">×0.5</button><button type="button" data-zoom="0.1" aria-label="Zoom out 10 times">×0.1</button><button type="button" data-zoom="reset">Reset</button></div>
 <div class="chart" id="diagram-chart">
 <svg id="diagram-diagram" tabindex="0" role="img"
-  aria-label="Sequence diagram: RF magnitude and phase, ADC, Gx, Gy and Gz against time"></svg>
+  aria-label="Sequence diagram: RF magnitude and phase, ADC, Gx, Gy, Gz, |G| and PNS against time"></svg>
 <div class="tip" id="diagram-tip" hidden></div>
 </div>
 <p class="muted" id="diagram-mode" aria-live="polite">Loading…</p>
@@ -181,16 +181,31 @@ Click the chart to mark the centre for the zoom buttons. Drag across the chart t
 </section>
 </main>
 <script>
-// Pure functions of the report charts, loaded before report.js in the page and by
-// `require` in tests/js.
+// Pure functions of the report charts, loaded first in the page (page.py), and by
+// `require` in tests/js and in seq_lanes.js, pns_lanes.js and g_lanes.js under Node.
 const ChartMath = (() => {
+  // Returns v rounded to 3 significant digits, as text with no fixed decimal count (so 6.15,
+  // 24.6, 393 and 1570 all read naturally, not "393.000" or "6.150000") and no trailing
+  // zeros. A negative v keeps its ASCII minus sign. `fmt`, the |G| lane's tick label and
+  // the PNS status line's bin width all use it.
+  function sig3(v) {
+    return Number(v.toPrecision(3)).toString();
+  }
+
+  // Returns the text of a value for display: an em dash (U+2014) for null or undefined, a
+  // string as it is, "0" when |v| < 5e-4, and else v rounded to 3 significant digits (`sig3`)
+  // with a minus sign (U+2212) for a negative v.
   const fmt = v => {
     if (v === null || v === undefined) return "\u2014";
     if (typeof v === "string") return v;
     if (Math.abs(v) < 5e-4) return "0";
-    return Number(v.toPrecision(3)).toString().replace("-", "\u2212");
+    return sig3(v).replace("-", "\u2212");
   };
 
+  // Returns the multiples of a step in [lo, hi], in increasing order. The step is the
+  // smallest of 1, 2, 5 and 10 times a power of ten that is at least (hi - lo) / n, so a
+  // whole number n gives at most n + 1 values. Each value is rounded to 9 decimals to drop
+  // floating-point error.
   function niceTicks(lo, hi, n) {
     const raw = (hi - lo) / n, p = Math.pow(10, Math.floor(Math.log10(raw)));
     const step = [1, 2, 5, 10].map(m => m * p).find(s => s >= raw);
@@ -201,6 +216,10 @@ const ChartMath = (() => {
     return out;
   }
 
+  // Returns the value of `lane` at `t`. For a gate lane, that is "on" when t is in one of
+  // its `windows` and "off" when it is not. For another lane, that is the value in the
+  // first of its `segments` that covers t, linear between the two points that bracket t,
+  // and `lane.fill` where no segment covers t.
   function valueAt(lane, t) {
     if (lane.kind === "gate") {
       return lane.windows.some(([a, b]) => t >= a && t <= b) ? "on" : "off";
@@ -226,10 +245,10 @@ const ChartMath = (() => {
   // value. A bin's own right edge is not read from a following pair (there
   // may be none, or it may belong to the next, unrelated bin across a gap);
   // it is derived from the bin's own pair instead, as `2 * centre - start`,
-  // which is exact because centre is the midpoint of the bin. Returns null
-  // when t is not covered by any bin: a gap between two segments, for
-  // example an RF-phase pulse gap. A gate lane has no such gap; it is read
-  // with valueAt instead.
+  // which equals the bin's end up to rounding because centre is the
+  // midpoint of the bin. Returns null when t is not covered by any bin: a
+  // gap between two segments, for example an RF-phase pulse gap. A gate
+  // lane has no such gap; it is read with valueAt instead.
   function minMaxAt(lane, t) {
     for (const seg of lane.segments) {
       for (let i = 0; i < seg.length; i += 2) {
@@ -426,8 +445,67 @@ const ChartMath = (() => {
     return Math.max(0, Math.min(n - 1, Math.round((value - lo) / (hi - lo) * (n - 1))));
   }
 
-  return {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
-    dragView, laneGroupMap, visibleLanes, colorRamp, colorIndex, nearestIndex};
+  // An iterative segment tree over the group minima or maxima. Leaves sit at [n, 2n); node j
+  // holds the extreme of its two children. `query(lo, hi)` combines [lo, hi) in O(log n).
+  // The comparison is written out for the minimum and for the maximum rather than taken as a
+  // function, so the query does not make an indirect call at each level. This layout needs no
+  // power-of-two padding, so it costs 2n entries, not the n log n of a sparse table (25 MB
+  // against 225 MB at 10^7 blocks). `seq_lanes.js` and `g_lanes.js` both build their group
+  // trees with it.
+  function segTree(values, n, isMin) {
+    const id = isMin ? Infinity : -Infinity;
+    const tree = new Float64Array(2 * n).fill(id);
+    for (let j = 0; j < n; j++) tree[n + j] = values[j];
+    for (let j = n - 1; j >= 1; j--) {
+      const a = tree[2 * j], b = tree[2 * j + 1];
+      tree[j] = isMin ? (a < b ? a : b) : (a > b ? a : b);
+    }
+    return {
+      tree, n, isMin,
+      query(lo, hi) {
+        let acc = id;
+        if (isMin) {
+          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
+            if (l & 1) { const v = tree[l++]; if (v < acc) acc = v; }
+            if (r & 1) { const v = tree[--r]; if (v < acc) acc = v; }
+          }
+        } else {
+          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
+            if (l & 1) { const v = tree[l++]; if (v > acc) acc = v; }
+            if (r & 1) { const v = tree[--r]; if (v > acc) acc = v; }
+          }
+        }
+        return acc;
+      },
+    };
+  }
+
+  // Returns the zigzag segments of a minimum/maximum lane: the points [edge, min] and
+  // [centre, max] for each bin that has a value, where the edge and the centre are in ms
+  // (`edges` is in s). A bin with no value ends the current segment. `binAt(k)` returns the
+  // [min, max] of bin k, already in the lane's unit (this function does not scale them), or
+  // null when the bin has no value. The layout is the one of `SeqLanes.minMaxLanes`, so
+  // `laneChart` draws every such lane alike. The points are not rounded.
+  function minMaxSegments(edges, bins, binAt) {
+    const segments = [];
+    let current = null;
+    for (let k = 0; k < bins; k++) {
+      const range = binAt(k);
+      if (range === null) {
+        if (current !== null) { segments.push(current); current = null; }
+        continue;
+      }
+      if (current === null) current = [];
+      const centre = edges[k] + (edges[k + 1] - edges[k]) / 2;
+      current.push([edges[k] * 1000, range[0]], [centre * 1000, range[1]]);
+    }
+    if (current !== null) segments.push(current);
+    return segments;
+  }
+
+  return {fmt, sig3, segTree, minMaxSegments, niceTicks, valueAt, minMaxAt, visiblePoints,
+    clampView, zoomView, panView, dragView, laneGroupMap, visibleLanes, colorRamp, colorIndex,
+    nearestIndex};
 })();
 if (typeof module !== "undefined") module.exports = ChartMath;
 
@@ -436,13 +514,12 @@ if (typeof module !== "undefined") module.exports = ChartMath;
 // The lane chart of the report cards, the card registry, the page-level
 // publish/subscribe message bus (`publish`/`subscribe`/`createMessageBus`,
 // docs/plans/rf-profiles.md section 4.1) and the shared table decoder
-// (`decodeTable`, moved here from assets/cards/diagram.js so any card can use
-// it), in one global object, PulseqReport. Loaded after chart_math.js and
-// before the card scripts and page.js. Node tests `require` this file
-// directly (after setting `global.ChartMath`, since the top level reads it);
-// nothing at the top level touches `document` or `window`, so the file loads
-// under Node even though `laneChart` and `decodeTable` use browser APIs once
-// a card actually calls them.
+// (`decodeTable`, which any card can use), in one global object, PulseqReport.
+// Loaded after chart_math.js and before the card scripts and page.js. Node tests
+// `require` this file directly (after setting `global.ChartMath`, since the top level
+// reads it); nothing at the top level touches `document` or `window`, so the file loads
+// under Node even though `laneChart` and `decodeTable` use browser APIs once a card
+// actually calls them.
 const PulseqReport = (() => {
   const NS = "http://www.w3.org/2000/svg";
   const W = 960, LEFT = 128, RIGHT = 20, TOP = 10, LANE_H = 64, LANE_GAP = 18, AXIS_H = 38;
@@ -490,16 +567,15 @@ const PulseqReport = (() => {
   // `groups` and `groupControls` given, one `<button type="button" aria-pressed="...">` is
   // rendered into it for each group (its text is the group's `label`); a click toggles that
   // group's visibility and re-renders. Without `groupControls`, a group's own `visible` flag
-  // still governs it, but nothing in the page can change it. Without `groups`, `laneChart`
-  // behaves exactly as it did before `groups` existed.
+  // still governs it, but nothing in the page can change it. Without `groups`, every lane
+  // is drawn, no group control is made, and `lanesFor` gets null as its third argument.
   // `onCursor(x, pxX)`, when given, is called whenever the hover cursor's value
   // changes: `x` in chart units, or null when the pointer leaves the plot or the
   // cursor is otherwise cleared (Escape, or a `setView`/`setWindow` call); `pxX` is
   // the chart units per unit of plot width, `(view[1] - view[0]) / PLOT_W`.
   // `onAnchor(x)`, when given, is called whenever the anchor (the zoom marker that a
   // click or the arrow keys set) changes, with null when it is cleared (Escape, a
-  // drag-zoom, a reset, `setView` or `setWindow`). Both default to a no-op, so
-  // without them `laneChart` behaves exactly as it did before they existed.
+  // drag-zoom, a reset, `setView` or `setWindow`). Both default to a no-op.
   // Returns {setView, setLanes, setWindow, setAnchor}: setView changes the view
   // without calling onViewChange. setWindow replaces the lanes, `xDomain` and
   // `extent` together, and keeps `lanesFor` and `groups` if they were given.
@@ -518,7 +594,7 @@ const PulseqReport = (() => {
     // Lane groups (comment above `laneChart`). `groupMap` and `filterLanes` are built once;
     // `visibleGroupIds` changes when a group control is clicked. Without `groups`,
     // `filterLanes` is the identity function, so `lanes.length` and the lanes actually drawn
-    // never differ from what `laneChart` was given, as before `groups` existed.
+    // never differ from what `laneChart` was given.
     const groupMap = groups ? laneGroupMap(groups) : null;
     let visibleGroupIds = groups
       ? new Set(groups.filter(g => g.visible).map(g => g.id)) : null;
@@ -683,7 +759,8 @@ const PulseqReport = (() => {
       }
     }
 
-    // Formats a lane's value for the tooltip, as before.
+    // Formats a lane's value for the tooltip: `fmt(v)`, then the lane's unit if it has one,
+    // except for a string or null value (for example a gate lane's "on").
     const valueText = (lane, v) => lane.unit && typeof v !== "string" && v !== null
       ? `${fmt(v)} ${lane.unit}` : fmt(v);
 
@@ -959,8 +1036,8 @@ const PulseqReport = (() => {
     cards.set(name, init);
   }
 
-  // ---- The shared table decoder (moved here from assets/cards/diagram.js, docs/plans/
-  // rf-profiles.md section 4.1, item 2, so any card can decode a table the same way) ----
+  // ---- The shared table decoder (docs/plans/rf-profiles.md section 4.1, item 2: any card
+  // can decode a table the same way) ----
 
   // The typed array for one table entry {dtype, length, data} (diagram_data.encode_tables,
   // and any other card that sends a table the same way): base64 -> gzip bytes ->
@@ -3671,9 +3748,22 @@ if (typeof module !== "undefined") module.exports = RfProfiles;
 // its point count. `minMaxLanes` gives the minimum/maximum view (section
 // 4.4, item 2), from the group tree of section 4.5 that `decode` builds, and
 // `lanesFor` chooses between the two views for each render (item 3).
+
+// In Node, `require` chart_math.js and make it available as the bare global `ChartMath`,
+// as the browser already has it: page.py loads chart_math.js in its own <script> element
+// before this one, and a top-level `const` of one classic <script> is visible as a bare
+// identifier to a later one on the same page.
+if (typeof require === "function") global.ChartMath = require("./chart_math.js");
+
 const SeqLanes = (() => {
   const EXACT_POINT_LIMIT = 20000;
   const CHECKPOINT_BLOCKS = 1024; // section 4.2: one checkpoint for each 1024 blocks
+
+  // 64 blocks in each group. A zoomed-out render must find the minimum and
+  // the maximum of millions of blocks in each of about 800 bins, so it can
+  // not walk the blocks. It reads whole groups from a tree instead, and
+  // touches single blocks only in the two groups that a bin's edges cut.
+  const GROUP_BLOCKS = 64;
 
   // The factor from the diagram's gradient values (mT/m, computed by
   // diagram_data.diagram_tables as Hz/m / seq_utils.GAMMA * 1e3, with the
@@ -3752,9 +3842,14 @@ const SeqLanes = (() => {
   // objects of section 4.1 ("lanes"), without "segments" and "windows".
   // Returns a model: the block-table columns kept as the given typed arrays
   // (never expanded to a start-time array of length N), plus the values
-  // this module computes once at decode time (the end of the file, the
-  // last block with a duration above zero, and the per-event minimum,
-  // maximum and point count of section 4.5).
+  // this module computes once at decode time: `durationS` (the end of the
+  // file), `lastNonZeroBlock` (the last block with a duration above zero),
+  // `groupStart` (the start of each group of GROUP_BLOCKS blocks), the
+  // minimum and the maximum of each event (`rf`, `grad`, section 4.5), and
+  // `groups` (the group summaries and the trees over them, `_buildGroups`).
+  // The point count of each event is its `*_n` table, as given. `pyramids`
+  // starts empty and gets a pool's pyramid on the first render that needs
+  // it (`_poolMinMax`).
   function decode(format, tables, lanesMeta) {
     if (format !== 1) {
       throw new Error(`SeqLanes.decode: unsupported format ${format} (only format 1 is known)`);
@@ -3831,33 +3926,8 @@ const SeqLanes = (() => {
 
   // ---- The groups and the tree over them (section 4.5) ----
 
-  // 64 blocks in each group. A zoomed-out render must find the minimum and
-  // the maximum of millions of blocks in each of about 800 bins, so it can
-  // not walk the blocks. It reads whole groups from a tree instead, and
-  // touches single blocks only in the two groups that a bin's edges cut.
-  const GROUP_BLOCKS = 64;
-
   // The lanes that carry values (the ADC gate is counted separately).
   const VALUE_LANES = ["rf_mag", "rf_phase", "gx", "gy", "gz"];
-
-  // The minimum and the maximum of one block on one value lane, or null
-  // when the block has no event on that lane. Both come from the per-event
-  // values that `decode` computed, so this never expands a point.
-  function _blockRange(model, i, laneId) {
-    const tb = model.tables;
-    if (laneId === "rf_mag" || laneId === "rf_phase") {
-      const k = tb.rf[i];
-      if (k === 0) return null;
-      const n = laneId === "rf_mag" ? tb.rf_mag_n[k - 1] : tb.rf_phase_n[k - 1];
-      if (n === 0) return null;
-      return laneId === "rf_mag"
-        ? [model.rf.magMin[k - 1], model.rf.magMax[k - 1]]
-        : [model.rf.phaseMin[k - 1], model.rf.phaseMax[k - 1]];
-    }
-    const k = tb[laneId][i];
-    if (k === 0 || tb.grad_n[k - 1] === 0) return null;
-    return [model.grad.min[k - 1], model.grad.max[k - 1]];
-  }
 
   // The number of points that block `i` contributes to `pointsIn`.
   function _blockPoints(model, i) {
@@ -3865,10 +3935,10 @@ const SeqLanes = (() => {
     let count = 0;
     const rfK = tb.rf[i];
     if (rfK !== 0) count += tb.rf_mag_n[rfK - 1] + tb.rf_phase_n[rfK - 1];
-    for (const axis of ["gx", "gy", "gz"]) {
-      const gK = tb[axis][i];
-      if (gK !== 0) count += tb.grad_n[gK - 1];
-    }
+    const gxK = tb.gx[i], gyK = tb.gy[i], gzK = tb.gz[i];
+    if (gxK !== 0) count += tb.grad_n[gxK - 1];
+    if (gyK !== 0) count += tb.grad_n[gyK - 1];
+    if (gzK !== 0) count += tb.grad_n[gzK - 1];
     if (tb.adc[i] !== 0) count += 2;
     return count;
   }
@@ -3887,41 +3957,6 @@ const SeqLanes = (() => {
       return {col: tb.rf, n: tb.rf_phase_n, min: model.rf.phaseMin, max: model.rf.phaseMax};
     }
     return {col: tb[laneId], n: tb.grad_n, min: model.grad.min, max: model.grad.max};
-  }
-
-  // An iterative segment tree over the group minima or maxima. Leaves sit
-  // at [n, 2n); node j holds the extreme of its two children. `query(lo,
-  // hi)` combines [lo, hi) in O(log n). The comparison is written out for
-  // the minimum and for the maximum rather than taken as a function, so
-  // the query does not make an indirect call at each level. This layout
-  // needs no power-of-two padding, so it costs 2n entries, not the
-  // n log n of a sparse table (25 MB against 225 MB at 10^7 blocks).
-  function _segTree(values, n, isMin) {
-    const id = isMin ? Infinity : -Infinity;
-    const tree = new Float64Array(2 * n).fill(id);
-    for (let j = 0; j < n; j++) tree[n + j] = values[j];
-    for (let j = n - 1; j >= 1; j--) {
-      const a = tree[2 * j], b = tree[2 * j + 1];
-      tree[j] = isMin ? (a < b ? a : b) : (a > b ? a : b);
-    }
-    return {
-      tree, n, isMin,
-      query(lo, hi) {
-        let acc = id;
-        if (isMin) {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v < acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v < acc) acc = v; }
-          }
-        } else {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v > acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v > acc) acc = v; }
-          }
-        }
-        return acc;
-      },
-    };
   }
 
   // The per-group summaries and the trees over them (section 4.5), built
@@ -3979,8 +4014,8 @@ const SeqLanes = (() => {
     for (const laneId of VALUE_LANES) {
       const lane = lanes[laneId];
       trees[laneId] = {
-        min: _segTree(lane.min, G, true),
-        max: _segTree(lane.max, G, false),
+        min: ChartMath.segTree(lane.min, G, true),
+        max: ChartMath.segTree(lane.max, G, false),
       };
     }
     return {count: G, lanes, trees, pointsPrefix, adcCount};
@@ -4114,32 +4149,39 @@ const SeqLanes = (() => {
     });
   }
 
-  // Calls `fn(i, start, duration)` for each block `i` whose closed interval
-  // [start, start + duration] overlaps [lo, hi] (both ends inclusive, so a
-  // point exactly at lo or at hi is never missed), in play order. Starts
-  // from `blockAt(model, lo)` and first walks back over any earlier blocks
-  // that also overlap: the block before it when lo is exactly the start of
-  // the block that `blockAt` gives (that earlier block's last point can be
-  // exactly at lo), and any blocks of zero duration at the same instant.
-  // Then it scans forward until a block starts after hi.
-  function _forEachBlockInRange(model, lo, hi, fn) {
-    const N = model.numBlocks;
-    if (N === 0) return;
+  // The first block whose closed interval [start, start + duration] overlaps
+  // [lo, hi], and its start: `_blockAtStart(model, lo)`, then a walk back over
+  // the earlier blocks that also overlap (the block before, when lo is exactly
+  // its end, and blocks of zero duration at the same instant). Each earlier
+  // start comes from `blockStart` (a forward sum from its group start), never
+  // from `start - duration`: the subtraction is a different sequence of
+  // float64 operations from the forward sum that section 4.3 requires, and
+  // the two differ often enough to move an emitted point (a short block
+  // before a long one loses the short block's start almost entirely). The
+  // model must have a block.
+  function _firstOverlapping(model, lo, hi) {
     const tb = model.tables;
-    let i = Math.min(Math.max(blockAt(model, lo), 0), N - 1);
-    let start = blockStart(model, i);
+    let [i, start] = _blockAtStart(model, lo);
     while (i > 0) {
       const prevDur = tb.durations[tb.duration_index[i - 1]];
-      // The earlier block's start comes from `blockStart`, never from
-      // `start - prevDur`: subtraction is a different sequence of float64
-      // operations from the forward sum that section 4.3 requires, and the
-      // two differ often enough to move an emitted point (a short block
-      // before a long one loses the short block's start almost entirely).
       const prevStart = blockStart(model, i - 1);
       if (prevStart + prevDur < lo || prevStart > hi) break;
       i--;
       start = prevStart;
     }
+    return [i, start];
+  }
+
+  // Calls `fn(i, start, duration)` for each block `i` whose closed interval
+  // [start, start + duration] overlaps [lo, hi] (both ends inclusive, so a
+  // point exactly at lo or at hi is never missed), in play order. Starts
+  // from `_firstOverlapping(model, lo, hi)`, then scans forward until a
+  // block starts after hi.
+  function _forEachBlockInRange(model, lo, hi, fn) {
+    const N = model.numBlocks;
+    if (N === 0) return;
+    const tb = model.tables;
+    let [i, start] = _firstOverlapping(model, lo, hi);
     for (; i < N; i++) {
       const duration = tb.durations[tb.duration_index[i]];
       if (start > hi) break;
@@ -4257,15 +4299,15 @@ const SeqLanes = (() => {
     if (0 >= t0 && 0 <= t1) {
       pts.unshift([0, 0]);
     } else if (N > 0) {
-      const a = Math.min(Math.max(blockAt(model, t0), 0), N - 1);
-      const before = _prevLinePoint(model, laneId, a, blockStart(model, a), t0);
+      const [a, aStart] = _blockAtStart(model, t0);
+      const before = _prevLinePoint(model, laneId, a, aStart, t0);
       pts.unshift(before || [0, 0]);
     }
     if (durationS >= t0 && durationS <= t1) {
       pts.push([durationS, 0]);
     } else if (N > 0) {
-      const a = Math.min(Math.max(blockAt(model, t1), 0), N - 1);
-      const after = _nextLinePoint(model, laneId, a, blockStart(model, a), t1);
+      const [a, aStart] = _blockAtStart(model, t1);
+      const after = _nextLinePoint(model, laneId, a, aStart, t1);
       pts.push(after || [durationS, 0]);
     }
     return pts;
@@ -4312,21 +4354,20 @@ const SeqLanes = (() => {
   // [from, to] (both inclusive), without expanding a point: whole groups
   // come from the tree, and the blocks of the two partial groups at the
   // ends come one at a time from their event's own minimum and maximum.
-  // Returns null when no block in the range has an event on the lane.
-  function _rangeMinMax(model, laneId, from, to, lane) {
+  // `cols` is the lane's `_laneArrays`. Returns null when no block in the
+  // range has an event on the lane.
+  function _rangeMinMax(model, laneId, from, to, cols) {
     const N = model.numBlocks;
     if (to < from || N === 0) return null;
     from = Math.max(0, from);
     to = Math.min(N - 1, to);
-    const cols = lane || _laneArrays(model, laneId);
     const col = cols.col, cn = cols.n, emin = cols.min, emax = cols.max;
     const gFrom = Math.floor(from / GROUP_BLOCKS);
     const gTo = Math.floor(to / GROUP_BLOCKS);
     let lo = Infinity, hi = -Infinity;
 
-    const scanFrom = gFrom === gTo ? from : from;
     const scanTo = gFrom === gTo ? to : (gFrom + 1) * GROUP_BLOCKS - 1;
-    for (let i = scanFrom; i <= scanTo; i++) {
+    for (let i = from; i <= scanTo; i++) {
       const k = col[i];
       if (k === 0) continue;
       const idx = k - 1;
@@ -4616,22 +4657,13 @@ const SeqLanes = (() => {
   }
 
   // The first and the last block whose closed interval overlaps [lo, hi],
-  // without walking the blocks between them.
+  // without walking the blocks between them. The model must have a block.
   function _blockSpan(model, lo, hi) {
     const N = model.numBlocks;
     const tb = model.tables;
-    let first = Math.min(Math.max(blockAt(model, lo), 0), N - 1);
-    let start = blockStart(model, first);
-    while (first > 0) {
-      const prevDur = tb.durations[tb.duration_index[first - 1]];
-      const prevStart = blockStart(model, first - 1);
-      if (prevStart + prevDur < lo || prevStart > hi) break;
-      first--;
-      start = prevStart;
-    }
-    let last = Math.min(Math.max(blockAt(model, hi), 0), N - 1);
+    const [first] = _firstOverlapping(model, lo, hi);
+    let [last, lastStart] = _blockAtStart(model, hi);
     // Blocks of zero duration at the same instant as `hi` still overlap it.
-    let lastStart = blockStart(model, last);
     while (last + 1 < N) {
       const nextStart = lastStart + tb.durations[tb.duration_index[last]];
       if (nextStart > hi) break;
@@ -4745,9 +4777,6 @@ const SeqLanes = (() => {
       edgeBlock[k] = found[0];
       edgeStart[k] = found[1];
     }
-    const inBin = (time, k) =>
-      k === bins - 1 ? time >= edges[k] && time <= edges[k + 1]
-                     : time >= edges[k] && time < edges[k + 1];
 
     return model.lanesMeta.map(meta => {
       if (meta.id === "adc") {
@@ -4795,6 +4824,7 @@ const SeqLanes = (() => {
       const segments = [];
       let current = null;
       const out = [Infinity, -Infinity];
+      const take = v => { if (v < out[0]) out[0] = v; if (v > out[1]) out[1] = v; };
       // The points of the event of edge `j` that are in bin `k`: a
       // contiguous index range, found by binary search with the same rule as
       // a point test (e_k <= t < e_(k+1), or <= e_(k+1) in the last bin).
@@ -4817,7 +4847,6 @@ const SeqLanes = (() => {
       for (let k = 0; k < bins; k++) {
         out[0] = Infinity;
         out[1] = -Infinity;
-        const take = v => { if (v < out[0]) out[0] = v; if (v > out[1]) out[1] = v; };
         // The two blocks the bin's edges cut: only their points inside the
         // bin count.
         takeEdgeEvent(k, k);
@@ -4879,25 +4908,27 @@ if (typeof module !== "undefined") module.exports = SeqLanes;
 // `decode` builds a model from the decoded diagram tables (as
 // `SeqLanes.decode` takes them) and the file entry's `pns` object (plan
 // section 4.4). `exactView` answers the exact PNS of a time range from that
-// model, using the block maps of the prototype's README ("Block maps": a
-// scan with a checkpoint every `GROUP_BLOCKS` blocks), not a per-sample
-// recursion over the whole file. `levels` builds the coarser pyramid levels
-// (plan section 4.5) that `lanesFor` reads for a zoomed-out view. `laneMeta`
-// and `statusText` are the two pure helpers the diagram card script
+// model, using the block maps of the prototype,
+// `prototypes/pns_lanes/pns_lanes.js` and its README in the tag
+// `archive/pns-lanes-prototype` (README section "Block maps": a scan with a
+// checkpoint every `GROUP_BLOCKS` blocks), not a per-sample recursion over
+// the whole file. `levels` builds the coarser pyramid levels (plan section
+// 4.5) that `lanesFor` reads for a zoomed-out view. `laneMeta` and
+// `statusText` are the two pure helpers the diagram card script
 // (assets/cards/diagram.js, phase 4) uses to draw the lane and its part of
 // the status line: `laneMeta` builds the lane object without "segments",
 // and `statusText` turns one `lanesFor` result into the sentence that says
 // which data drew the render.
 //
-// The model (unchanged from the prototype, prototypes/pns_lanes/pns_lanes.js
-// and its README): each block `i` holds `n_i = round(duration_i / dt)`
-// gradient-raster samples, at the local times `(j + 0.5) * dt` from the
-// block start. The gradient of one axis in a block is the event's points at
-// `grad_delay + grad_offset` (s, from the block start), with values
-// `grad_value / 1000 * gradScale` (T/m; `gradScale` is the file's
-// `pns.gradScale`, 1.0 for a proton sequence, plan section 4.4, decision
-// 14), linear between points, 0 before the first point and after the last,
-// 0 for a block with no event on the axis. This
+// The model (unchanged from the prototype, `prototypes/pns_lanes/pns_lanes.js`
+// and its README in the tag `archive/pns-lanes-prototype`): each block `i`
+// holds `n_i = round(duration_i / dt)` gradient-raster samples, at the local
+// times `(j + 0.5) * dt` from the block start. The gradient of one axis in a
+// block is the event's points at `grad_delay + grad_offset` (s, from the
+// block start), with values `grad_value / 1000 * gradScale` (T/m; `gradScale`
+// is the file's `pns.gradScale`, 1.0 for a proton sequence, plan section 4.4,
+// decision 14), linear between points, 0 before the first point and after
+// the last, 0 for a block with no event on the axis. This
 // agrees with pypulseq for a sequence that pypulseq accepts: pypulseq's own
 // `get_gradients` draws a line across the gap between two events (0 to the
 // first point, the last point to 0), and `add_block` makes a gradient
@@ -4914,14 +4945,22 @@ if (typeof module !== "undefined") module.exports = SeqLanes;
 // (section 4.3 of the plan; the prototype's loop read `model.hw[axis]` and
 // closed over an `emit` callback for each sample, which this module does
 // not do).
+
+// In Node, `require` chart_math.js and make it available as the bare global `ChartMath`,
+// as the browser already has it: page.py loads chart_math.js in its own <script> element
+// before this one, and a top-level `const` of one classic <script> is visible as a bare
+// identifier to a later one on the same page.
+if (typeof require === "function") global.ChartMath = require("./chart_math.js");
+
 const PnsLanes = (() => {
   const AXES = ["x", "y", "z"];
   const GROUP_BLOCKS = 64; // blocks between two checkpoints
   const EXACT_MAX_S = 10.0; // the longest exact view (plan section 4.2, decision 13)
   const ZERO_H = [0, 0, 0];
 
-  // ---- Per-event data (README "Per-event data (computed one time for each
-  // unique event)"): the samples g[j] (T/m) of one gradient event, for a
+  // ---- Per-event data (the README's section "Data layout of the model" in
+  // the tag `archive/pns-lanes-prototype`, the item for each unique gradient
+  // event): the samples g[j] (T/m) of one gradient event, for a
   // block of `n` samples starting where the event's own delay/offset times
   // are measured from (the block start). Linear interpolation between the
   // event's points (delay + offset[p], value[p] mT/m / 1000 * scale), 0
@@ -4932,7 +4971,7 @@ const PnsLanes = (() => {
   // non-decreasing, so one sequential merge (not a binary search per
   // sample) computes all n samples in O(n + point count). Reads only
   // grad_delay, grad_n, grad_offset_at, grad_at, grad_offset, grad_value
-  // (the tables this module needs, per the interface note).
+  // (the tables this module needs).
   function _eventSamples(tables, dt, eventIdx, n, scale) {
     const idx = eventIdx - 1;
     const delay = tables.grad_delay[idx];
@@ -4956,7 +4995,8 @@ const PnsLanes = (() => {
       const t1 = delay + offset[offAt + p + 1];
       const v0 = value[valAt + p] / 1000 * scale;
       const v1 = value[valAt + p + 1] / 1000 * scale;
-      g[j] = t1 === t0 ? v1 : v0 + (v1 - v0) / (t1 - t0) * (t - t0);
+      // The `while` above stops with t0 <= t < t1, so t1 > t0.
+      g[j] = v0 + (v1 - v0) / (t1 - t0) * (t - t0);
     }
     return g;
   }
@@ -5014,7 +5054,8 @@ const PnsLanes = (() => {
     let pair = cache.get(n);
     if (pair !== undefined) return pair;
     const cn = Math.pow(c, n);
-    const cn1 = n === 0 ? Math.pow(c, -1) : Math.pow(c, n - 1);
+    // n >= 1: `_applyBlockMap` returns first for n === 0.
+    const cn1 = Math.pow(c, n - 1);
     pair = [cn, cn1];
     cache.set(n, pair);
     return pair;
@@ -5026,6 +5067,14 @@ const PnsLanes = (() => {
   // on that axis (0 = no event). A block of n = 0 samples (a delay-raster
   // block with no gradient-raster samples) leaves everything unchanged: it
   // has no boundary sample and contributes no filter input.
+  //
+  // For one filter, the block map of a block of n samples takes the start
+  // state s to the state after the block (the README's section "Block maps"
+  // in the tag `archive/pns-lanes-prototype`):
+  //   s_n = c^n * s + c^(n - 1) * alpha * u0 + h[n - 1]
+  // with u0 the boundary input (x[0] = (g[0] - lastG) / dt, or its absolute
+  // value for the filter of |x|) and h[n - 1] the zero-state response of the
+  // event's own samples (`_zeroStateResponse`).
   function _applyBlockMap(model, n, eventIdx, state, lastG) {
     if (n === 0) return;
     const dt = model.dt;
@@ -5052,98 +5101,6 @@ const PnsLanes = (() => {
       }
       lastG[axis] = gLast;
     }
-  }
-
-  // The per-sample recursion (the plain method) for one block: advances
-  // `state` and `lastG` in place, sample by sample, and calls
-  // `emit(globalSampleIndex, total, px, py, pz)` for every sample of the
-  // block. Used only by `_plainRecursion` (the whole-file baseline that the
-  // tests compare `exactView` against), never by `exactView` itself:
-  // `exactView`'s own inner loop (below) is written out by hand instead, so
-  // that it reads no object property and calls no function for each sample.
-  function _runBlockSamples(model, n, eventIdx, state, lastG, sampleCursor, emit) {
-    if (n === 0) return;
-    const dt = model.dt;
-    const g = [null, null, null];
-    for (let axis = 0; axis < 3; axis++) {
-      const ev = eventIdx[axis];
-      g[axis] = ev === 0 ? null : _eventEntry(model, axis, ev, n).g;
-    }
-    const alpha = model.alpha, c = model.c, aCoef = model.aCoef, axisFactor = model.axisFactor;
-    for (let j = 0; j < n; j++) {
-      let px = 0, py = 0, pz = 0;
-      for (let axis = 0; axis < 3; axis++) {
-        const garr = g[axis];
-        const cur = garr === null ? 0 : garr[j];
-        const x = (cur - lastG[axis]) / dt;
-        lastG[axis] = cur;
-        const base = axis * 3;
-        const y0 = alpha[base] * x + c[base] * state[base];
-        const y1 = alpha[base + 1] * Math.abs(x) + c[base + 1] * state[base + 1];
-        const y2 = alpha[base + 2] * x + c[base + 2] * state[base + 2];
-        state[base] = y0; state[base + 1] = y1; state[base + 2] = y2;
-        const p = (aCoef[base] * Math.abs(y0) + aCoef[base + 1] * y1 + aCoef[base + 2] * Math.abs(y2))
-          * axisFactor[axis];
-        if (axis === 0) px = p; else if (axis === 1) py = p; else pz = p;
-      }
-      const total = Math.sqrt(px * px + py * py + pz * pz);
-      emit(sampleCursor + j, total, px, py, pz);
-    }
-  }
-
-  // The per-sample recursion over the whole file, from a zero initial state
-  // (the filter and the boundary sample before the first real sample are
-  // both zero, from the zero padding before the file). Renamed from the
-  // prototype's `wholeFileRecursion`: used only as the brute-force baseline
-  // that `exactView` (the block maps) is checked against (plan section 3.5,
-  // item 1), never by `exactView` itself. Calls
-  // `onChunk({fromSample, count, t, total, x, y, z})` once for each chunk of
-  // up to `chunkSize` samples, in play order.
-  function _plainRecursion(model, onChunk, chunkSize = 65536) {
-    const dt = model.dt;
-    const state = new Float64Array(9);
-    const lastG = new Float64Array(3);
-    const tb = model.tables;
-    const eventIdx = [0, 0, 0];
-
-    let chunkFrom = 0;
-    let chunkT = new Float64Array(chunkSize);
-    let chunkTotal = new Float64Array(chunkSize);
-    let chunkX = new Float64Array(chunkSize);
-    let chunkY = new Float64Array(chunkSize);
-    let chunkZ = new Float64Array(chunkSize);
-    let chunkLen = 0;
-
-    const flush = () => {
-      if (chunkLen === 0) return;
-      onChunk({
-        fromSample: chunkFrom,
-        count: chunkLen,
-        t: chunkT.subarray(0, chunkLen),
-        total: chunkTotal.subarray(0, chunkLen),
-        x: chunkX.subarray(0, chunkLen),
-        y: chunkY.subarray(0, chunkLen),
-        z: chunkZ.subarray(0, chunkLen),
-      });
-      chunkFrom += chunkLen;
-      chunkLen = 0;
-    };
-
-    const emit = (k, tot, px, py, pz) => {
-      if (chunkLen === chunkSize) flush();
-      chunkT[chunkLen] = (k + 0.5) * dt;
-      chunkTotal[chunkLen] = tot; chunkX[chunkLen] = px; chunkY[chunkLen] = py; chunkZ[chunkLen] = pz;
-      chunkLen++;
-    };
-
-    let sampleCursor = 0;
-    for (let i = 0; i < model.numBlocks; i++) {
-      const n = model.blockLen[i];
-      eventIdx[0] = tb.gx[i]; eventIdx[1] = tb.gy[i]; eventIdx[2] = tb.gz[i];
-      _runBlockSamples(model, n, eventIdx, state, lastG, sampleCursor, emit);
-      sampleCursor += n;
-    }
-    flush();
   }
 
   // ---- decode ----
@@ -5205,7 +5162,7 @@ const PnsLanes = (() => {
     // blockLen[i] = round(duration / dt), the number of gradient-raster
     // samples of block i. `onRaster` is false when any block's duration is
     // not within 1e-6 samples of a whole number: then `exactView` throws
-    // and `lanesFor` never chooses the exact view (item 2, gap = true).
+    // and `lanesFor` never chooses the exact view.
     const blockLen = new Uint32Array(numBlocks);
     const numGroups = Math.ceil(numBlocks / GROUP_BLOCKS) || 1;
     const groupFirstSample = new Float64Array(numGroups);
@@ -5323,20 +5280,21 @@ const PnsLanes = (() => {
     return [k0, k1];
   }
 
-  // The exact PNS of the samples k with t0 <= (k + 0.5) * dt <= t1
-  // (interface doc). Starts from the checkpoint of the group before the
-  // view, applies block maps (not per-sample recursion) up to the block
-  // that holds the first sample in range, then runs the per-sample
-  // recursion from there by hand (not `_runBlockSamples`, and not through a
-  // callback), emitting only the samples in range, and stops as soon as the
-  // range is covered.
+  // The exact PNS of the samples k with t0 <= (k + 0.5) * dt <= t1 (as the
+  // README's section "Interface of `pns_lanes.js`" in the tag
+  // `archive/pns-lanes-prototype` has it). Starts from the checkpoint of the
+  // group before the view, applies block maps (not per-sample recursion) up
+  // to the block that holds the first sample in range, then runs the
+  // per-sample recursion from there by hand (not through a callback),
+  // emitting only the samples in range, and stops as soon as the range is
+  // covered.
   //
   // All per-axis, per-filter constants are read out of the model's typed
   // arrays into local variables once, before either loop, and the running
   // filter states and last gradient samples are kept in local variables
   // (not array slots) through the per-sample loop: nothing in that loop
   // reads an object property or a Map, and nothing calls a function once
-  // for each sample (module doc, plan section 4.3, item 3).
+  // for each sample (module doc, plan section 4.3, item 1).
   function exactView(model, t0, t1, bins) {
     if (!model.onRaster) {
       throw new Error("PnsLanes.exactView: the file is not on the gradient raster");
@@ -5345,7 +5303,7 @@ const PnsLanes = (() => {
     const [k0, k1] = sampleRangeFor(dt, model.numSamples, t0, t1);
     const count = k1 - k0 + 1;
     const kind = count <= 2 * bins ? "samples" : "bins";
-    if (count <= 0 || model.numBlocks === 0) {
+    if (count <= 0) {
       return { kind: "samples", t: new Float64Array(0), total: new Float64Array(0) };
     }
 
@@ -5466,42 +5424,22 @@ const PnsLanes = (() => {
 
   // ---- lanesFor ----
 
-  // The zigzag segments of a minimum/maximum lane ([edge, min], [centre,
-  // max] for each bin that has a value; a bin with no value ends the
-  // current segment), reading a bin's [min, max] from `binAt(k)` (null when
-  // the bin has no value). Used by both branches of `lanesFor` (the exact
-  // "bins" kind and the pyramid). The layout is the one of
-  // `SeqLanes.minMaxLanes`, so `laneChart` draws both alike. The points
-  // are percent (`* 100`) and milliseconds (`* 1000`), not rounded here.
-  function _zigzag(edges, bins, binAt) {
-    const segments = [];
-    let current = null;
-    for (let k = 0; k < bins; k++) {
-      const range = binAt(k);
-      if (range === null) {
-        if (current !== null) { segments.push(current); current = null; }
-        continue;
-      }
-      if (current === null) current = [];
-      const centre = edges[k] + (edges[k + 1] - edges[k]) / 2;
-      current.push([edges[k] * 1000, range[0] * 100], [centre * 1000, range[1] * 100]);
-    }
-    if (current !== null) segments.push(current);
-    return segments;
-  }
-
   // The PNS lane for the view `viewMs` (ms) with `bins` plot columns
-  // (interface doc; plan section 4.5, item 1). `meta` is the lane object
+  // (plan section 4.5, item 1). `meta` is the lane object
   // without "segments" (id, title, unit, color, kind, domain, ticks,
   // tick_labels, ...), built by the card script (phase 4). Values in the
-  // lane are percent (100 * fraction); times are ms.
+  // lane are percent (100 * fraction); times are ms. Each result also holds
+  // `onRaster` (`model.onRaster`), which `statusText` reads.
   function lanesFor(model, meta, viewMs, bins) {
     const t0 = viewMs[0] / 1000, t1 = viewMs[1] / 1000;
     const span = t1 - t0;
 
     if (model.numSamples === 0) {
       // An empty file: no exact data and no stored level either.
-      return { lane: { ...meta, segments: [] }, exact: true, binMs: null, gap: false };
+      return {
+        lane: { ...meta, segments: [] }, exact: true, binMs: null, gap: false,
+        onRaster: model.onRaster,
+      };
     }
 
     if (span <= EXACT_MAX_S && model.onRaster) {
@@ -5510,13 +5448,20 @@ const PnsLanes = (() => {
         const segments = view.t.length === 0
           ? []
           : [Array.from(view.t, (tSec, idx) => [tSec * 1000, view.total[idx] * 100])];
-        return { lane: { ...meta, segments }, exact: true, binMs: null, gap: false };
+        return {
+          lane: { ...meta, segments }, exact: true, binMs: null, gap: false,
+          onRaster: model.onRaster,
+        };
       }
-      const segments = _zigzag(view.edges, bins, k => {
+      // The lane's values are percent, so `binAt` scales them by 100.
+      const segments = ChartMath.minMaxSegments(view.edges, bins, k => {
         const hi = view.max[k];
-        return hi === -Infinity ? null : [view.min[k], hi];
+        return hi === -Infinity ? null : [view.min[k] * 100, hi * 100];
       });
-      return { lane: { ...meta, segments, minmax: true }, exact: true, binMs: null, gap: false };
+      return {
+        lane: { ...meta, segments, minmax: true }, exact: true, binMs: null, gap: false,
+        onRaster: model.onRaster,
+      };
     }
 
     // Item 2: the pyramid. The display bin is D = span / bins; take the
@@ -5531,8 +5476,8 @@ const PnsLanes = (() => {
     // `gap`: even the stored level (level 0) has bins longer than D / 2 (the
     // gap of plan section 4.2), so each stored bin is wider than half a
     // display bin. It says only that; a file that is not on the raster
-    // (`model.onRaster` false) has no exact view at any zoom, and the card
-    // script reads `model.onRaster` for that.
+    // (`model.onRaster` false) has no exact view at any zoom, and
+    // `result.onRaster` carries that to `statusText`.
     const gap = chosen === -1;
     const level = levelsArr[gap ? 0 : chosen];
 
@@ -5542,7 +5487,7 @@ const PnsLanes = (() => {
     const edges = new Float64Array(bins + 1);
     for (let k = 0; k <= bins; k++) edges[k] = t0 + (span * k) / bins;
 
-    const segments = _zigzag(edges, bins, k => {
+    const segments = ChartMath.minMaxSegments(edges, bins, k => {
       let lo = Math.floor(edges[k] / B_L);
       let hi = Math.ceil(edges[k + 1] / B_L) - 1;
       if (lo < 0) lo = 0;
@@ -5553,7 +5498,7 @@ const PnsLanes = (() => {
         if (level.min[m] < mn) mn = level.min[m];
         if (level.max[m] > mx) mx = level.max[m];
       }
-      return mx === -Infinity ? null : [mn, mx];
+      return mx === -Infinity ? null : [mn * 100, mx * 100];
     });
 
     return {
@@ -5561,6 +5506,7 @@ const PnsLanes = (() => {
       exact: false,
       binMs: B_L * 1000,
       gap,
+      onRaster: model.onRaster,
     };
   }
 
@@ -5593,19 +5539,10 @@ const PnsLanes = (() => {
     };
   }
 
-  // A bin width (ms) with a sensible number of digits for the status line:
-  // 3 significant figures, printed without a fixed decimal count (so 6.15,
-  // 24.6, 393 and 1570 all read naturally, instead of a fixed
-  // `toFixed` giving "393.000" or "6.150000").
-  function _fmtBinMs(ms) {
-    return Number(ms.toPrecision(3)).toString();
-  }
-
   // The PNS part of the diagram's status line (plan section 4.5, item 2),
   // for one render's `lanesFor` result (`result`, the return of `lanesFor`
-  // above) and the model's own `onRaster` (`model.onRaster`, passed
-  // separately because a caller that skips a hidden PNS group never calls
-  // `lanesFor` and so never has a `result` to read it from otherwise).
+  // above). It reads `result.exact`, and for a result that is not exact
+  // also `result.binMs`, `result.onRaster` and `result.gap`.
   // "Exact" or the bin width, then at most one more sentence: when the file
   // is not on the gradient raster, that there is no exact view at any zoom
   // (this replaces the "zoom in" sentence, which would be misleading: no
@@ -5613,10 +5550,10 @@ const PnsLanes = (() => {
   // `result.gap` is set (even the stored level is coarser than half a
   // display bin, plan section 4.2), that zooming in to `EXACT_MAX_S` seconds
   // or less reaches the exact values.
-  function statusText(result, onRaster) {
+  function statusText(result) {
     if (result.exact) return "PNS: exact.";
-    let text = `PNS: minimum and maximum in bins of ${_fmtBinMs(result.binMs)} ms.`;
-    if (!onRaster) {
+    let text = `PNS: minimum and maximum in bins of ${ChartMath.sig3(result.binMs)} ms.`;
+    if (!result.onRaster) {
       text += " The file is not on the gradient raster, so there is no exact view.";
     } else if (result.gap) {
       text += ` Zoom in to ${EXACT_MAX_S} s or less for the exact values.`;
@@ -5634,13 +5571,8 @@ const PnsLanes = (() => {
     laneMeta,
     statusText,
     _internal: {
-      AXES,
-      applyBlockMap: _applyBlockMap,
-      runBlockSamples: _runBlockSamples,
       eventEntry: _eventEntry,
-      groupForSample: _groupForSample,
       sampleRangeFor,
-      _plainRecursion,
     },
   };
 })();
@@ -5662,7 +5594,7 @@ if (typeof module !== "undefined") module.exports = PnsLanes;
 // `lanesFor` turns that into the chart's minimum/maximum zigzag form (the only form this
 // lane ever uses, at every zoom: unlike a value lane's corner points, |G| is not linear
 // between two axes' corner points, so a polyline through the corner values would be
-// wrong -- see the module doc of `_tripleGeometry` below). `laneMeta` builds the lane
+// wrong -- see the paragraph on the quadratic below). `laneMeta` builds the lane
 // object without "segments", for the card script (assets/cards/diagram.js) to draw the
 // lane like the other lanes.
 //
@@ -5675,30 +5607,37 @@ if (typeof module !== "undefined") module.exports = PnsLanes;
 //
 // A block with no event on an axis reads as the constant 0 on that axis there (the
 // model of pns_lanes.js's module doc: the event's own polyline, 0 outside it, 0 for no
-// event), so every block always has a |G| range, never "no value".
+// event), so every block always has a |G| range, never "no value". The pieces are
+// linear between the union times, so after an event's last point the axis goes
+// linearly to 0 at the next union time. pypulseq's `add_block` refuses a gradient that
+// stops more than 1e-7 s before its block end at a value above
+// `max_slew * grad_raster_time`, so a ramp to 0 from such a value occurs only in a file
+// that pypulseq does not write.
 //
-// `decode`, `minMax` and `lanesFor` build (and cache, on the model `decode` returns) an
-// event-triple-level cache and a tree over groups of `GROUP_BLOCKS` blocks, the same
-// grouping technique as `seq_lanes.js`'s own (private) group tree, so that a whole-file
-// render touches only the O(bins) groups a bin's edges cut, never all N blocks.
+// `decode` builds, in one pass over all the blocks, an event-triple-level cache and a
+// tree over groups of `GROUP_BLOCKS` blocks (the same grouping technique as
+// `seq_lanes.js`'s own (private) group tree), and keeps them on the model it returns.
+// `minMax` and `lanesFor` only read them: by then the triple of every block is cached.
+// Thus a whole-file render touches only the O(bins) groups a bin's edges cut, never
+// all N blocks.
 "use strict";
 
 // In Node, `require` this file's sibling `seq_lanes.js` (`minMax`'s `_binEdges` needs
-// its public `blockAt`/`blockStart`) and make it available as the bare global
-// `SeqLanes`, exactly as the browser already has it: page.py loads seq_lanes.js in its
-// own <script> element before this one, and top-level `const` declarations of one
+// its public `blockAt`/`blockStart`) and `chart_math.js` (`segTree`, `minMaxSegments` and
+// `sig3`), and make them available as the bare globals `SeqLanes` and `ChartMath`, exactly
+// as the browser already has them: page.py loads chart_math.js and seq_lanes.js each in
+// its own <script> element before this one, and top-level `const` declarations of one
 // classic <script> are visible as bare identifiers to a later one on the same page, so
-// `SeqLanes` is already in scope there with no import. `typeof require` (not `typeof
-// module`) is the guard, so that a mistaken load order in the browser fails loudly on
-// the first use of `SeqLanes` instead of silently reading `undefined`.
+// `SeqLanes` and `ChartMath` are already in scope there with no import.
 if (typeof require === "function") {
+  global.ChartMath = require("./chart_math.js");
   global.SeqLanes = require("./seq_lanes.js");
 }
 
 const GLanes = (() => {
   // 64 blocks in each group: the same order of magnitude as seq_lanes.js's own
-  // (private) grouping, so that a render at 10^7 blocks and 812 bins touches only a
-  // couple of hundred groups for each bin, far fewer than the blocks in it.
+  // (private) grouping. A bin touches at most two partial groups (scanned block by
+  // block) and O(log G) nodes of the tree over the G groups.
   const GROUP_BLOCKS = 64;
   // Two times closer than this (s) are one breakpoint at a block edge (`_tripleTimes`).
   const EDGE_EPS = 1e-9;
@@ -5725,39 +5664,6 @@ const GLanes = (() => {
       if (arr[mid] <= x) lo = mid + 1; else hi = mid;
     }
     return lo;
-  }
-
-  // An iterative segment tree over group minima or maxima, the same layout as
-  // seq_lanes.js's (private) `_segTree`: leaves at [n, 2n), node j the extreme of its
-  // two children, `query(lo, hi)` in O(log n). Not imported (that function is private
-  // to seq_lanes.js): a small, deliberate duplicate of the same well-understood
-  // layout, not a divergent copy of its logic (the same choice the prototype made).
-  function _segTree(values, n, isMin) {
-    const id = isMin ? Infinity : -Infinity;
-    const tree = new Float64Array(2 * n).fill(id);
-    for (let j = 0; j < n; j++) tree[n + j] = values[j];
-    for (let j = n - 1; j >= 1; j--) {
-      const a = tree[2 * j], b = tree[2 * j + 1];
-      tree[j] = isMin ? (a < b ? a : b) : (a > b ? a : b);
-    }
-    return {
-      tree, n, isMin,
-      query(lo, hi) {
-        let acc = id;
-        if (isMin) {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v < acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v < acc) acc = v; }
-          }
-        } else {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v > acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v > acc) acc = v; }
-          }
-        }
-        return acc;
-      },
-    };
   }
 
   // The bin edges e_k = t0 + (t1 - t0) * k / bins (k = 0 ... bins), and the block that
@@ -5814,7 +5720,13 @@ const GLanes = (() => {
   // events). At exactly the first or last point, the event's own recorded value
   // there (which need not be 0: `_tripleTimes` below relies on this for a "not zero
   // at a block border" event). Interior points interpolate linearly between the
-  // event's own breakpoints, as before.
+  // event's own breakpoints.
+  //
+  // The pieces of `_tripleGeometry` are linear between the union times
+  // (`_tripleTimes`), so after an event's last point the axis goes linearly to 0 at
+  // the next union time. pypulseq's `add_block` refuses a gradient that stops more
+  // than 1e-7 s before its block end at a value above `max_slew * grad_raster_time`,
+  // so a ramp to 0 from such a value occurs only in a file that pypulseq does not write.
   function _axisValueAt(tb, k, cache, t) {
     if (k === 0) return 0;
     const { times, values } = _eventGeometry(tb, k, cache);
@@ -5832,18 +5744,18 @@ const GLanes = (() => {
   // ---- |G| geometry -------------------------------------------------------------
 
   // The extrema of a convex quadratic f(tau) = A*tau^2 + B*tau + C (A >= 0) over
-  // tau in [ta, tb] (0 <= ta <= tb <= 1): the maximum is always at one of the two
+  // tau in [ta, tEnd] (0 <= ta <= tEnd <= 1): the maximum is always at one of the two
   // ends (a convex function's maximum on an interval is at an endpoint); the minimum
-  // is at the vertex tau* = -B / (2A) when A > 0 and tau* falls inside [ta, tb], else
+  // is at the vertex tau* = -B / (2A) when A > 0 and tau* falls inside [ta, tEnd], else
   // also at an endpoint. Returns [min, max] of f itself (not yet square-rooted).
-  function _quadRangeExtrema(A, B, C, ta, tb) {
+  function _quadRangeExtrema(A, B, C, ta, tEnd) {
     const fa = (A * ta + B) * ta + C;
-    const fb = (A * tb + B) * tb + C;
+    const fb = (A * tEnd + B) * tEnd + C;
     let lo = fa < fb ? fa : fb;
     const hi = fa > fb ? fa : fb;
     if (A > 0) {
       const tv = -B / (2 * A);
-      if (tv > ta && tv < tb) {
+      if (tv > ta && tv < tEnd) {
         const fv = C - (B * B) / (4 * A);
         if (fv < lo) lo = fv;
       }
@@ -5898,32 +5810,31 @@ const GLanes = (() => {
   // the prototype's own `slew_g.js` style would give, because that single key stops
   // being an exact integer past 2^53 at about 1.2 * 10^5 gradient events; the two
   // keys above need only `M * M` and `M * D` to stay exact integers (`decode`'s
-  // check), which raises the limit to about 9.5 * 10^7 events. The caller
-  // (`_tripleKeyOf`) computes both keys once and passes them in as
-  // `outerKey`/`innerKey`, so a block makes no extra object on the hot path. Keyed by
-  // duration as well as triple (not by triple alone, as the prototype's own
-  // `slew_g.js` is) because the padding this function adds depends on the block's own
-  // duration, which the same triple can play at more than one length (for example a
-  // spoiler gradient shared by blocks with different trailing delays); a file's own
-  // durations are pooled to a small number of distinct values
-  // (`diagram_data.diagram_tables`), so this does not multiply the number of distinct
-  // cache entries by the number of blocks.
-  function _tripleGeometry(tb, kx, ky, kz, dur, evCache, outerKey, innerKey) {
-    let inner = evCache.triple.get(outerKey);
+  // check), which raises the limit to about 9.5 * 10^7 events. `t` is the object of
+  // `_tripleKeyOf` for the block: the triple `kx`, `ky`, `kz`, the duration `dur`, and
+  // both keys (`outerKey`, `innerKey`). Keyed by duration as well as triple (not by
+  // triple alone, as the prototype's own `slew_g.js` is) because the padding this
+  // function adds depends on the block's own duration, which the same triple can play
+  // at more than one length (for example a spoiler gradient shared by blocks with
+  // different trailing delays); a file's own durations are pooled to a small number of
+  // distinct values (`diagram_data.diagram_tables`), so this does not multiply the
+  // number of distinct cache entries by the number of blocks.
+  function _tripleGeometry(tb, t, evCache) {
+    let inner = evCache.triple.get(t.outerKey);
     if (inner === undefined) {
       inner = new Map();
-      evCache.triple.set(outerKey, inner);
+      evCache.triple.set(t.outerKey, inner);
     }
-    let g = inner.get(innerKey);
+    let g = inner.get(t.innerKey);
     if (g !== undefined) return g;
 
-    const times = _tripleTimes(tb, kx, ky, kz, dur, evCache.geom);
+    const times = _tripleTimes(tb, t.kx, t.ky, t.kz, t.dur, evCache.geom);
     const n = times.length;
     const vx = new Float64Array(n), vy = new Float64Array(n), vz = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      vx[i] = _axisValueAt(tb, kx, evCache.geom, times[i]);
-      vy[i] = _axisValueAt(tb, ky, evCache.geom, times[i]);
-      vz[i] = _axisValueAt(tb, kz, evCache.geom, times[i]);
+      vx[i] = _axisValueAt(tb, t.kx, evCache.geom, times[i]);
+      vy[i] = _axisValueAt(tb, t.ky, evCache.geom, times[i]);
+      vz[i] = _axisValueAt(tb, t.kz, evCache.geom, times[i]);
     }
     const pieceA = new Float64Array(Math.max(0, n - 1));
     const pieceB = new Float64Array(Math.max(0, n - 1));
@@ -5952,7 +5863,7 @@ const GLanes = (() => {
       blockMax = 0;
     }
     g = { times, pieceA, pieceB, pieceC, blockMin, blockMax };
-    inner.set(innerKey, g);
+    inner.set(t.innerKey, g);
     return g;
   }
 
@@ -5972,9 +5883,10 @@ const GLanes = (() => {
   // or before/after every one of its events, whatever the block's duration), unlike
   // a value lane's own minimum/maximum in seq_lanes.js, which a block with no event
   // contributes nothing to.
-  function _blockGRange(tb, i, evCache, M, D) {
-    const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
+  function _blockGRange(model, i) {
+    const tb = model.tables;
+    const t = _tripleKeyOf(tb, i, model.M, model.D);
+    const g = _tripleGeometry(tb, t, model.evCache);
     return [g.blockMin, g.blockMax];
   }
 
@@ -5984,15 +5896,16 @@ const GLanes = (() => {
   // (binary search on the triple's own union times, now padded to the block's own
   // start and end, so a clip range entirely before the first event or after the last
   // still finds the padding piece there, at the value 0).
-  function _exactBlockGRange(seqModel, tb, i, evCache, M, D, loAbs, hiAbs) {
-    const bStart = SeqLanes.blockStart(seqModel, i);
+  function _exactBlockGRange(model, i, loAbs, hiAbs) {
+    const tb = model.tables;
+    const bStart = SeqLanes.blockStart(model.seqModel, i);
     const bDur = tb.durations[tb.duration_index[i]];
     const overlapLo = Math.max(bStart, loAbs);
     const overlapHi = Math.min(bStart + bDur, hiAbs);
     if (overlapHi <= overlapLo) return null;
 
-    const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
+    const t = _tripleKeyOf(tb, i, model.M, model.D);
+    const g = _tripleGeometry(tb, t, model.evCache);
     const n = g.times.length;
     // Defensive, not reached in practice: `n < 2` only when `dur === 0` (the times
     // are `{0, dur}`, collapsed), and a 0-duration block's `[bStart, bStart]` can
@@ -6020,14 +5933,15 @@ const GLanes = (() => {
   // at a time, and the groups strictly between come from the tree, exactly like
   // seq_lanes.js's (private) `_rangeMinMax`. Every block has a range (never null, see
   // `_blockGRange`), so this always returns a pair, or null for an empty range.
-  function _rangeGMinMax(tb, evCache, M, D, tree, from, to, N) {
+  function _rangeGMinMax(model, from, to) {
+    const tree = model.gTree;
     from = Math.max(0, from);
-    to = Math.min(N - 1, to);
+    to = Math.min(model.numBlocks - 1, to);
     if (to < from) return null;
     let lo = Infinity, hi = -Infinity;
     const scan = (a, b) => {
       for (let i = a; i <= b; i++) {
-        const range = _blockGRange(tb, i, evCache, M, D);
+        const range = _blockGRange(model, i);
         if (range[0] < lo) lo = range[0];
         if (range[1] > hi) hi = range[1];
       }
@@ -6053,8 +5967,8 @@ const GLanes = (() => {
   // `Math.ceil(N / GROUP_BLOCKS) || 1` keeps a well-formed (length >= 1) tree for an
   // empty file too, with both its entries at their identity value (Infinity,
   // -Infinity): an empty range, not a zero range.
-  function _buildGGroups(seqModel, tb, evCache, M, D) {
-    const N = seqModel.numBlocks;
+  function _buildGGroups(model) {
+    const N = model.numBlocks;
     const G = Math.ceil(N / GROUP_BLOCKS) || 1;
     const gMin = new Float64Array(G).fill(Infinity);
     const gMax = new Float64Array(G).fill(-Infinity);
@@ -6062,14 +5976,14 @@ const GLanes = (() => {
       const from = g * GROUP_BLOCKS, to = Math.min(N, from + GROUP_BLOCKS);
       let lo = Infinity, hi = -Infinity;
       for (let i = from; i < to; i++) {
-        const range = _blockGRange(tb, i, evCache, M, D);
+        const range = _blockGRange(model, i);
         if (range[0] < lo) lo = range[0];
         if (range[1] > hi) hi = range[1];
       }
       gMin[g] = lo;
       gMax[g] = hi;
     }
-    return { min: _segTree(gMin, G, true), max: _segTree(gMax, G, false) };
+    return { min: ChartMath.segTree(gMin, G, true), max: ChartMath.segTree(gMax, G, false) };
   }
 
   // ---- decode -------------------------------------------------------------------
@@ -6077,8 +5991,9 @@ const GLanes = (() => {
   // `seqModel`: a model from `SeqLanes.decode` (its tables, `numBlocks`, and
   // `blockStart`/`blockAt` through the `SeqLanes` global/require above). Builds the
   // per-(triple, duration) geometry cache and the group tree one time, and the
-  // whole-file peak |G| that `laneMeta` needs (the tree's own root range, so no extra
-  // pass over the blocks). Returns a model for `minMax`/`lanesFor`/`laneMeta`.
+  // whole-file peak |G| that `laneMeta` needs (the maximum of the tree over all its
+  // groups, so no extra pass over the blocks). Returns a model for
+  // `minMax`/`lanesFor`/`laneMeta`.
   //
   // `D`, the number of distinct block durations (`tb.durations.length`, at least 1 so
   // an empty file's unused key space is still well-formed), is part of the two-level
@@ -6096,11 +6011,13 @@ const GLanes = (() => {
         "GLanes.decode: the per-(triple, duration) cache key of this file would exceed 2^53");
     }
     const N = seqModel.numBlocks;
-    const evCache = { geom: new Map(), triple: new Map() };
-    const gTree = _buildGGroups(seqModel, tb, evCache, M, D);
-    const whole = N > 0 ? _rangeGMinMax(tb, evCache, M, D, gTree, 0, N - 1, N) : null;
-    const wholeFileMax = whole === null ? 0 : whole[1];
-    return { seqModel, tables: tb, evCache, gTree, M, D, numBlocks: N, wholeFileMax };
+    const model = {
+      seqModel, tables: tb, evCache: { geom: new Map(), triple: new Map() }, M, D, numBlocks: N,
+      gTree: null, wholeFileMax: 0,
+    };
+    model.gTree = _buildGGroups(model);
+    model.wholeFileMax = N > 0 ? model.gTree.max.query(0, model.gTree.max.n) : 0;
+    return model;
   }
 
   // ---- minMax ---------------------------------------------------------------------
@@ -6115,17 +6032,10 @@ const GLanes = (() => {
   //
   // Returns `{edges (Float64Array, bins + 1, s), min, max (Float64Array, bins)}`.
   function minMax(model, t0, t1, bins) {
-    const seqModel = model.seqModel;
-    const tb = model.tables;
-    const evCache = model.evCache;
-    const tree = model.gTree;
-    const M = model.M;
-    const D = model.D;
-    const N = model.numBlocks;
-    const { edges, edgeBlock } = _binEdges(seqModel, t0, t1, bins);
+    const { edges, edgeBlock } = _binEdges(model.seqModel, t0, t1, bins);
     const outMin = new Float64Array(bins).fill(Infinity);
     const outMax = new Float64Array(bins).fill(-Infinity);
-    if (N === 0) {
+    if (model.numBlocks === 0) {
       return { edges, min: outMin, max: outMax };
     }
 
@@ -6137,12 +6047,12 @@ const GLanes = (() => {
         if (pair[1] > hi) hi = pair[1];
       };
       const loAbs = edges[k], hiAbs = edges[k + 1];
-      take(_exactBlockGRange(seqModel, tb, edgeBlock[k], evCache, M, D, loAbs, hiAbs));
+      take(_exactBlockGRange(model, edgeBlock[k], loAbs, hiAbs));
       if (edgeBlock[k + 1] !== edgeBlock[k]) {
-        take(_exactBlockGRange(seqModel, tb, edgeBlock[k + 1], evCache, M, D, loAbs, hiAbs));
+        take(_exactBlockGRange(model, edgeBlock[k + 1], loAbs, hiAbs));
       }
       if (edgeBlock[k + 1] - edgeBlock[k] > 1) {
-        take(_rangeGMinMax(tb, evCache, M, D, tree, edgeBlock[k] + 1, edgeBlock[k + 1] - 1, N));
+        take(_rangeGMinMax(model, edgeBlock[k] + 1, edgeBlock[k + 1] - 1));
       }
       outMin[k] = lo;
       outMax[k] = hi;
@@ -6170,49 +6080,33 @@ const GLanes = (() => {
   function lanesFor(model, meta, viewMs, bins) {
     const t0 = viewMs[0] / 1000, t1 = viewMs[1] / 1000;
     const view = minMax(model, t0, t1, bins);
-    const segments = [];
-    let current = null;
-    for (let k = 0; k < bins; k++) {
-      if (view.max[k] === -Infinity) {
-        if (current !== null) { segments.push(current); current = null; }
-        continue;
-      }
-      if (current === null) current = [];
-      const centre = view.edges[k] + (view.edges[k + 1] - view.edges[k]) / 2;
-      current.push([view.edges[k] * 1000, view.min[k]], [centre * 1000, view.max[k]]);
-    }
-    if (current !== null) segments.push(current);
+    const segments = ChartMath.minMaxSegments(view.edges, bins, k => (
+      view.max[k] === -Infinity ? null : [view.min[k], view.max[k]]));
     return { ...meta, segments, minmax: true };
   }
 
   // ---- laneMeta ---------------------------------------------------------------------
-
-  // 3 significant figures, without a fixed decimal count (so 6.15, 24.6 and 393 all
-  // read naturally), the same convention `assets/chart_math.js`'s `fmt` and
-  // `pns_lanes.js`'s own `_fmtBinMs` use for a lane's own numbers. |G| is never
-  // negative, so there is no sign to turn into "−".
-  function _fmt(v) {
-    return Number(v.toPrecision(3)).toString();
-  }
 
   // The |G| lane object without "segments" (the `lane_meta` form of
   // `diagram_data.py`, so `laneChart` draws it like the other lanes): "gmag", "|G|",
   // "mT/m", a color token of report.css that is not one of gx/gy/gz ("ink": a solid,
   // neutral color for a combined trace, distinct from the PNS lane's own "ink-2" so
   // the two are never the same color when both are visible at once), "line", the
-  // domain/ticks/tick_labels of the whole-file peak (`model.wholeFileMax`, the same
-  // style `diagram_data.lane_meta` gives the gx/gy/gz lanes for a peak that is not
-  // symmetric about 0: `[0, 1.1 * peak]`, ticks at 0 and the peak -- except that,
-  // unlike those lanes, a file with no gradient at all (`peak === 0`) still gets the
-  // one-sided domain `[0, 1]`, never `[-1, 1]`: |G| can never be negative), `empty`
-  // (true only when the file has no gradient event on any axis, as `gx`/`gy`/`gz`'s
-  // own `empty` is) and `fill` (the tooltip's fallback value outside every segment).
+  // domain/ticks/tick_labels of the whole-file peak (`model.wholeFileMax`): the domain
+  // `[0, 1.1 * peak]` and the ticks at 0 and the peak are the style of the RF |B1|
+  // lane (`_value_domain(..., symmetric=False)` in `waveforms.py`), while the gx, gy
+  // and gz lanes are symmetric about 0. Unlike the RF |B1| lane, a peak of 0 still
+  // gets the one-sided domain `[0, 1]`, never `[-1, 1]`: |G| can never be negative.
+  // `empty` is true when the whole-file peak is 0, which includes a file whose
+  // gradient events are all 0, and `fill` is the tooltip's fallback value outside
+  // every segment.
   function laneMeta(model) {
     const peak = model.wholeFileMax;
     const hasGradient = peak > 0;
     const domain = hasGradient ? [0, 1.1 * peak] : [0, 1];
     const ticks = hasGradient ? [0, peak] : [0];
-    const tickLabels = hasGradient ? ["0", _fmt(peak)] : ["0"];
+    // |G| is never negative, so its label has no sign to turn into "−" (`ChartMath.fmt`).
+    const tickLabels = hasGradient ? ["0", ChartMath.sig3(peak)] : ["0"];
     return {
       id: "gmag",
       title: "|G|",
@@ -6236,7 +6130,7 @@ if (typeof module !== "undefined") module.exports = GLanes;
 // Sequence diagram card: one lane chart with a button for each time window that
 // cards/diagram.py gives, and lane-group toggle buttons (RF, ADC, Gradients, and PNS
 // when at least one file has PNS data, docs/plans/diagram-lanes.md section 4.5, item
-// 3). Unlike the old card, there are no lane sets and no point budget: cards/diagram.py
+// 3). There are no lane sets and no point budget: cards/diagram.py
 // sends the compressed block and event tables of each file that at least one window
 // uses (diagram_data.diagram_tables), and this script decodes them (base64 -> gzip ->
 // typed arrays -> SeqLanes.decode) into a model for each file, once, on first use. A
@@ -6291,24 +6185,22 @@ PulseqReport.registerCard("diagram", async (section, data) => {
 
   // `pnsResult` is the return of `PnsLanes.lanesFor` when the PNS lane was drawn this
   // render, else null (the PNS group is hidden, or the current file has no PNS data):
-  // then the status line is the SeqLanes sentence alone, as it was before this lane
-  // existed. `onRaster` is `current.pns.model.onRaster`, read by the caller so this
-  // function itself never reads `current`. `gError` is `current.g.error` when the
-  // Gradients group is visible and `buildGLane` (below) caught a `GLanes.decode`
+  // then the status line is the SeqLanes sentence alone. `gError` is `current.g.error`
+  // when the Gradients group is visible and `buildGLane` (below) caught a `GLanes.decode`
   // failure for the current file, else null: then the sentence "The |G| lane is not
   // drawn: <message>" (decision 13 of docs/plans/review-bugs.md) is added, so the
   // card explains why the chart has one fewer lane instead of leaving it unsaid.
-  function showStatus(exact, bins, pnsResult, onRaster, gError) {
+  function showStatus(exact, bins, pnsResult, gError) {
     let text = exact
       ? "Exact waveform."
       : `Minimum and maximum in each of ${bins} time bins. Zoom in to see the exact waveform.`;
     if (gError) text += ` The |G| lane is not drawn: ${gError.message || String(gError)}`;
-    if (pnsResult) text += ` ${PnsLanes.statusText(pnsResult, onRaster)}`;
+    if (pnsResult) text += ` ${PnsLanes.statusText(pnsResult)}`;
     statusEl.textContent = text;
   }
 
   // The decoded model of file `fileIndex`, from the cache when it is already there:
-  // `{seq, pns, g, view}`, `seq` the SeqLanes model (as before), `pns` either null
+  // `{seq, pns, g, view}`, `seq` the SeqLanes model, `pns` either null
   // (the file has no "pns" key) or `{model, laneMeta}`, the PnsLanes model and its
   // lane object without segments (PnsLanes.laneMeta(file.pns.summary), built once
   // here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta,
@@ -6404,21 +6296,6 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   ];
   if (hasPns) groups.push({ id: "pns", label: "PNS", laneIds: ["pns"], visible: true });
 
-  // Only its length (the number of lanes) matters here: lane_chart.js reads it for
-  // the SVG height before the first render, which then replaces it with the
-  // provider's own lanes. But `laneChart` also reads each lane's own `id` for this
-  // very first count, through `groups`/`visibleLanes` (chart_math.js), before that
-  // first render ever runs -- so the |G| placeholder needs a real `id`, "gmag", not
-  // an empty object or null. `current.seq.lanesMeta`, plus that placeholder (always
-  // drawn on the first render: the Gradients group is visible by default, and
-  // `lanesFor` below builds `current.g` the moment that render asks for it) and the
-  // PNS lane meta when the first file has one, already has the right count, so
-  // building it needs no GLanes.decode, SeqLanes.lanesFor or PnsLanes.lanesFor call.
-  const initialLanes = current.seq.lanesMeta.concat(
-    [{ id: "gmag" }],
-    current.pns ? [current.pns.laneMeta] : []
-  );
-
   // Publishes `view` (plan section 4.1) for the chart's current time window.
   // `laneChart`'s own `setView`/`setWindow` do not call `onViewChange` (lane_chart.js),
   // so every place below that calls them also calls this explicitly; `onViewChange`
@@ -6501,7 +6378,8 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     svg: document.getElementById(`${section.id}-diagram`),
     chart: document.getElementById(`${section.id}-chart`),
     tip: document.getElementById(`${section.id}-tip`),
-    lanes: initialLanes,
+    // `lanesFor` and `groups` are given, so `laneChart` never draws `lanes` (lane_chart.js).
+    lanes: [],
     groups,
     groupControls,
     lanesFor: (view, bins, visibleGroupIds) => {
@@ -6522,9 +6400,7 @@ PulseqReport.registerCard("diagram", async (section, data) => {
         pnsResult = PnsLanes.lanesFor(current.pns.model, current.pns.laneMeta, view, bins);
         lanes = lanes.concat([pnsResult.lane]);
       }
-      showStatus(
-        r.exact, bins, pnsResult, current.pns ? current.pns.model.onRaster : null, gError
-      );
+      showStatus(r.exact, bins, pnsResult, gError);
       return lanes;
     },
     xDomain: windows[0].view_ms,
@@ -6582,17 +6458,8 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     press(i);
     current = model;
     currentFileIndex = w.file;
-    // As for the first render, only the number of lanes is read before the render
-    // replaces them with the provider's lanes (a `{id: "gmag"}` placeholder for the
-    // |G| lane, as `initialLanes` above has, for the same reason). A file without
-    // PNS data draws no PNS lane even with the PNS group on (`current.pns` is
-    // null, so `lanesFor` above never appends one), whatever file was shown before
-    // it.
     chart.setWindow({
-      lanes: current.seq.lanesMeta.concat(
-        [{ id: "gmag" }],
-        current.pns ? [current.pns.laneMeta] : []
-      ),
+      lanes: [],
       xDomain: w.view_ms,
       extent: [0, current.seq.durationS * 1000],
     });

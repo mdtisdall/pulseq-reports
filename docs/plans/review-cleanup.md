@@ -3,8 +3,9 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: ready. The plan was written on 2026-09-29. The user answered the
-questions of section 7 on the same day (decisions 12 to 20 of section 2.2).
+Status: complete (2026-09-29). The results are in section 8. The plan was
+written on 2026-09-29. The user answered the questions of section 7 on the
+same day (decisions 12 to 20 of section 2.2).
 
 ## 1. Goal
 
@@ -1239,7 +1240,144 @@ None. The user answered the nine questions on 2026-09-29:
 
 ## 8. Results
 
-Not started.
+All phases were done on 2026-09-29.
+
+### 8.1 Pull requests
+
+| Phase | Findings | PR | Merge commit |
+|---|---|---|---|
+| Plan | | #77 | `ad9d61e` |
+| 1 | D14, D15, D17, S1, S6, S8, S18, C13 to C16, C25 | #78 | `33035d6` |
+| 2 | D18, D19, D21, S3, S4, P1 to P4, C18, C19 | #79 | `62949d3` |
+| 3 | D11 to D13, D16, S5, S10, C17, C22, C25 | #80 | `faf16c1` |
+| 4 | D7 to D10, S9, S13, P5, C24, C26, C27 | #81 | `15b5b73` |
+| 5 | S11, C20, C23, C25 to C27 | #82 | `9d46aaf` |
+| 6 | S12 | #83 | `8211f9d` |
+| 7 | D4, D6, D20, S14 to S16, C26, C27 | #84 | `e8ed751` |
+| 8 | results, P6 | this PR | |
+
+### 8.2 Decisions made during the work
+
+1. **S11 stays** (the user). The helpers of `g_lanes.js` take the model, and
+   the whole-file peak is the root of the tree. `GLanes.decode` at 10^7
+   blocks became about 30 ms slower (225 ms to 260 ms): the helpers read the
+   model's fields. This is inside the budget of section 2.4.
+2. **Phases 1 to 5 ran at the same time, then phases 6 and 7** (decision
+   12). The PRs of a wave all edit `TESTS.md`, in different sections. GitHub
+   merged them in order with no conflict. After each merge, each PR's added
+   lines were checked on `main`.
+3. **The browser checks used JavaScript snapshots.** The Browser pane was
+   hidden, so each check compared the base page and the branch page by the
+   SVG markup and the text of the cards, for each window, zoom and theme.
+   The RF profile card draws with `requestAnimationFrame`, which does not
+   run in a hidden pane. Its check replaced `requestAnimationFrame` with
+   `setTimeout` and waited until the card did not change.
+4. **Phase 2:** after `Sequence.read`, `duration_s` is now a Python float,
+   not a `numpy.float64`, with the same value (P2). The Python dump was equal
+   when it did not record the types.
+5. **Phase 6:** a comment of `tests/js/test_g_lanes.js` and a line of
+   `TESTS.md` section 2.27 named the removed `_fmtBinMs`. The phase corrected
+   them, although section 3.4 does not give it these files (decision 1).
+6. **Phase 7:** `scripts/cards_scale.py` checks `--pns-lanes` in
+   `parse_args`, with the error "--pns-lanes needs --card diagram or --card
+   all" (exit 2).
+
+### 8.3 Measurements
+
+- **P1 to P4** (phase 2, section 2.4):
+  - The diagram card at 10^7 repeating blocks: 9.98 s to 6.64 s. The budget
+    is 120 s.
+  - The 370 s file (4 × 10^4 blocks): 0.044 s to 0.030 s.
+  - `time_py.py` at 2 × 10^5 blocks with no ADC: `first_adc_window` 1.48 s
+    and `peak_tr_window` 0.21 s to less than 1 ms each. The block cache: 200,000
+    blocks to 16. The peak RSS: 338 MB to 225 MB.
+  - `diagram_scale.py --case worst --blocks 100000`: `lane_meta_s` 0.047 s to
+    0.043 s (S4), `card_s` 5.14 s to 5.09 s.
+- **P5 and S9** (phase 4): `SeqLanes.decode` at 10^7 blocks: 1095 ms to
+  763 ms. The 95th percentile of `lanesFor` stayed at about 4 ms. The S9
+  check printed OK on the baseline and on the branch, and FAIL on the copy
+  with `start - prevDur`.
+- **S11** (phase 5): `GLanes.decode` at 10^7 blocks: about 225 ms to about
+  260 ms (item 1 of section 8.2).
+- **S12** (phase 6): `time_js.js` at 10^7 blocks, two runs each:
+  `SeqLanes.decode` 770 and 770 ms on the baseline, 777 and 796 ms on the
+  branch; `GLanes.decode` 259 and 259 ms, 260 and 266 ms. The difference is
+  noise.
+- **The example page** (task 8.1): the new `docs/examples/gre.html`, with
+  the changed scripts masked (`chart_math.js`, `lane_chart.js`,
+  `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, `cards/diagram.js`), differs
+  from the page of `4850c68` only in the `aria-label` of C13: "…, Gx, Gy,
+  Gz, |G| and PNS against time". In the browser, the nine cards draw, the
+  diagram draws its eight lanes, the status line is "PNS: exact.", and the
+  console has no error.
+
+### 8.4 P6: the budget of decision 14
+
+Node 24, `p6.js` (section 9.8), a fresh process for each size. The growth of
+the heap and the array buffers after garbage collection, and the time of each
+`decode`:
+
+| Distinct gradient events | `SeqLanes.decode` | `GLanes.decode` | `PnsLanes.decode` | \|G\| and PNS together |
+|---|---|---|---|---|
+| 10^5 | +2 MB, 17 ms | +186 MB, 250 ms | +116 MB, 192 ms | **+302 MB, 442 ms** |
+| 3 × 10^5 | +6 MB, 38 ms | +567 MB, 848 ms | +349 MB, 700 ms | +916 MB, 1.5 s |
+| 10^6 | +21 MB, 108 ms | +1,850 MB, 2,826 ms | +1,147 MB, 4,766 ms | +3.0 GB, 7.6 s |
+
+At 10^5 events, the two lanes add 302 MB and 0.44 s. The budget is 400 MB
+and 3 s, so P6 passes. The memory is the same as in the preliminary numbers
+of section 2.3, and the times differ by less than 10 %.
+
+The browser (item 3 of task 8.2). The page of item 3,
+`diagram_scale.build_worst(200000)` (10^6 blocks, 200,002 distinct gradient
+events), does not draw: the card stops with "TypeError: Failed to fetch"
+before it builds either lane. `build_worst` gives each TR a new RF event (a
+new `phase_offset`), and the diagram tables keep the phase samples of each
+distinct RF event, so the `rf_phase` table has 392,000,000 float64 values
+(3.1 GB). `decodeTable` cannot decode it (`Response.arrayBuffer` fails). This
+is a limit of the diagram card for a file with very many distinct RF events,
+not of the PNS and |G| lanes. The user chose a `TODO.md` item for it ("Draw
+the diagram of a file with very many distinct RF events").
+
+Thus the browser measurement used a different page, made by a scratch script:
+one RF pulse, one readout with an ADC, then 10^5 blocks of 1 ms, each with a
+trapezoid on x of a new amplitude (100,001 distinct gradient events, a 2 MB
+page), as `p6.js` models. Three pages, each with the timing probe of
+`diagram_scale.py --timing-probe`: `pns=True`; `pns=False`; and `pns=False`
+with an extra script that makes `GLanes.decode` throw, so the card draws
+neither lane. Three loads of each, in the hidden Browser pane:
+
+| Page | Time to the first chart | `usedJSHeapSize` at the first chart |
+|---|---|---|
+| PNS and \|G\| | 375, 704, 702 ms | 236, 274, 268 MB |
+| \|G\| only | 1142, 787, 777 ms | 126, 126, 126 MB |
+| Neither lane | 242, 171, 156 ms | 16, 263, 14 MB |
+
+The two lanes add at most about 550 ms and 260 MB. This agrees with Node,
+and it is inside the budget. The 263 MB of one load of the page with neither
+lane is memory of the page before it that the browser had not collected yet.
+The page with |G| only was slower than the page with both lanes in each load;
+the cause was not found. The script is in section 9.9.
+
+Python, `scripts/cards_scale.py --case worst --blocks 1000000` (2 × 10^5 TRs,
+2 × 10^5 distinct gradient events), a fresh process each:
+
+| Card | `card_s` | Added RSS |
+|---|---|---|
+| `pns` | 17.3 s | 0.15 GB |
+| `diagram` | 52.6 s | 10.69 GB |
+| `diagram --pns-lanes` | 66.9 s | 13.47 GB |
+
+The PNS lane adds 14.3 s and 2.8 GB to the diagram card here. This includes
+the PNS levels and the block-sample cache of `GradientSampler`, which keeps
+one array for each distinct (event, length); the run does not split the
+2.8 GB between them. The diagram card without PNS grows linearly in
+the worst case: 1.33 GB at 10^5 blocks, 4.01 GB at 3 × 10^5 and 10.69 GB at
+10^6, about 13 KB for each block. At 10^5 blocks, `diagram_data.diagram_tables`
+raises the peak RSS by about 1 GB and `encode_tables` by 0.35 GB. The
+`rf_phase` table above (3.1 GB at 10^6 blocks) is a large part of it. This
+was not measured before: `docs/plans/cards-at-scale.md` measured the worst case of
+the other cards only, and this plan measured its time only. It is not a part
+of decision 14 (the memory of the page).
 
 ## 9. Scripts
 
@@ -1904,4 +2042,84 @@ console.log(`events=${M}: SeqLanes +${MB(m1 - m0)} MB ${tSeq.toFixed(0)} ms; ` +
   `GLanes +${MB(m2 - m1)} MB ${tG.toFixed(0)} ms; PnsLanes +${MB(m3 - m2)} MB ` +
   `${tP.toFixed(0)} ms (tables ${MB(m0)} MB)`);
 if (!g || !p || !seq) throw new Error("unreachable");
+```
+
+### 9.9 `p6_pages.py`: the browser pages of P6
+
+The substitute of task 8.2, item 3 (section 8.4). Run it with
+`nix develop --command uv run python p6_pages.py . <dir> 100000` from the
+root of a worktree, then open the three pages with the
+`dev-workflow:browser-check-localhost` skill and read `window.__diagramProbe`.
+
+```python
+"""Task 8.2, item 3, substitute: 10^5 distinct gradient events with small RF tables.
+
+python p6_pages.py REPO OUT_DIR [NUM_EVENTS]
+diagram_scale.build_worst gives each TR a new RF event, so its rf_phase table at 10^6
+blocks is 3.1 GB and the page cannot decode it. This sequence has one RF pulse and one
+ADC, then NUM_EVENTS blocks of 1 ms, each with its own trapezoid on x (a new amplitude
+for each block), as p6.js models. Writes full.html (pns=True), nopns.html (pns=False)
+and none.html (pns=False, GLanes.decode made to throw), each with the timing probe.
+"""
+
+import importlib.util
+import sys
+import time
+from pathlib import Path
+
+repo, out = Path(sys.argv[1]), Path(sys.argv[2])
+num = int(sys.argv[3]) if len(sys.argv) > 3 else 100_000
+spec = importlib.util.spec_from_file_location(
+    "diagram_scale", repo / "scripts" / "diagram_scale.py"
+)
+ds = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ds)
+
+import pypulseq as pp  # noqa: E402
+
+from pulseq_reports.cards.diagram import diagram_card  # noqa: E402
+from pulseq_reports.page import render_page  # noqa: E402
+from pulseq_reports.seq_utils import NamedSequence  # noqa: E402
+from pulseq_reports.waveforms import first_adc_window, full_window  # noqa: E402
+
+S = ds.SYSTEM
+t = time.perf_counter()
+seq = pp.Sequence(S)
+seq.add_block(pp.make_block_pulse(flip_angle=0.2, duration=1e-3, delay=S.rf_dead_time, system=S))
+gx0 = pp.make_trapezoid(channel="x", flat_time=1.4e-3, flat_area=1000, system=S)
+adc = pp.make_adc(num_samples=128, duration=gx0.flat_time, delay=gx0.rise_time, system=S)
+seq.add_block(gx0, adc)
+top = 0.9 * S.max_grad
+for i in range(num):
+    amp = top * ((i * 7919) % num + 1) / num  # a new amplitude in each block
+    seq.add_block(
+        pp.make_trapezoid(
+            channel="x",
+            amplitude=amp,
+            flat_time=0.6e-3,
+            rise_time=0.2e-3,
+            fall_time=0.2e-3,
+            system=S,
+        )
+    )
+named = [NamedSequence(f"p6-events-{num}", seq)]
+windows = [first_adc_window(named), full_window(named)]
+print(f"built {len(seq.block_events)} blocks in {time.perf_counter() - t:.1f} s", flush=True)
+
+NO_G = 'GLanes.decode = () => { throw new Error("disabled for the P6 measurement"); };'
+out.mkdir(parents=True, exist_ok=True)
+for name, pns, extra in (("full", True, []), ("nopns", False, []), ("none", False, [NO_G])):
+    t = time.perf_counter()
+    card = diagram_card(named, windows, card_id="diagram", pns=pns)
+    probe = ds._timing_probe_script(card.id)
+    page = render_page(f"P6 {name}", "P6 measurement", [card], [probe, *extra])
+    (out / f"{name}.html").write_text(page, encoding="utf-8")
+    tables = card.data["files"][0]["tables"]
+    big = max(tables, key=lambda k: tables[k]["length"])
+    print(
+        f"{name}: {len(page.encode()) / 1e6:.1f} MB page, "
+        f"{tables['grad_delay']['length']} distinct gradient events, largest table {big} "
+        f"({tables[big]['length']}), {time.perf_counter() - t:.1f} s",
+        flush=True,
+    )
 ```

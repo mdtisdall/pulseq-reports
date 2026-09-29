@@ -35,7 +35,7 @@ comments), L (model details with a low reach).
 
 The findings were checked again against `main` at `4e17c66`, after #48 to
 #63 (the RF pulse profiles), and then updated for the pull requests below,
-up to `35531b9`. The line numbers in the sections below are still those of
+up to `e8ed751`. The line numbers in the sections below are still those of
 the review state.
 
 - **Fixed:**
@@ -58,17 +58,39 @@ the review state.
     | B5 | #73 |
     | B6 | #74, with no test: a test that only checks a fixed sentence tests no computation |
 
+  - The dead code, the simplifications, the speed-ups and the code comments
+    (sections 4 to 7, step 3 of section 10): the plan
+    `docs/plans/review-cleanup.md`. Its section 8 has the results. The
+    reports and the analysis results did not change, except the
+    `aria-label` of C13.
+
+    | Phase | Findings | Pull request |
+    |---|---|---|
+    | 1 | D14, D15, D17, S1, S6, S8, S18, C13, C15, C16, C25 | #78 |
+    | 2 | D18, D19, D21, S3, S4, P1 to P4, C18, C19 | #79 |
+    | 3 | D11, D12, D13, D16, S5, S10, C17, C22, C25 | #80 |
+    | 4 | D7 to D10, S9, S13, P5, C24, C26, C27 | #81 |
+    | 5 | S11, C20, C23, C25, C26, C27 | #82 |
+    | 6 | S12 | #83 |
+    | 7 | D4, D6, D20, S14, S15, S16, C26, C27 | #84 |
+
+    C25, C26 and C27 were fixed in the phase that edited each file, with the
+    parts that #71 and #74 fixed before.
+
 - **Partly fixed:**
-  - C25: #74 removed the history words of `grad_limits.py` (lines 19-23).
-    The others remain.
-  - C26: #71 removed "per the worker spec" from `g_lanes.js`. The others
-    remain.
+  - C14: #78 corrected the docstrings (the tie rule, and that the card does
+    not show where the limits happen). To show the blocks and times on the
+    card is a feature: an item of `TODO.md`.
+- **Measured, no change:** P6. At 10^5 distinct gradient events, the PNS
+  and |G| lanes add less than the budget of decision 14 of
+  `docs/plans/review-cleanup.md` (400 MB and 3 s). Section 8 of that plan
+  has the numbers, also at 10^6 events.
 - **No longer apply:** D5, S17 and C11, because #55 deleted
   `scripts/vb_parity.py`. The `vb_parity.py` parts of A8 no longer apply
   either.
-- **Open:** all the other findings: A1 to A8, F1 to F7, D3, D4, D6 to D21,
-  S1 to S16 and S18, P1 to P6, C3 to C8, C10, C12 to C20, C22 to C24, C27,
-  and L1 to L3.
+- **Open:** all the other findings: A1 to A8, F1 to F7, D3, S2, S7, C3 to
+  C8, C10, C12, and L1 to L3. D3, S2 and S7 go with the API decisions (A1,
+  A2 and A8).
 - **New cases of the same findings,** in the code of #48 to #63:
   - B3: the `goto` message (#53), which the "Show" buttons of the RF profile
     card send, also called `showWindow`. A `GLanes` error there also left
@@ -82,10 +104,12 @@ the review state.
     and the message bus are not in `v0.2.0rc1`.
   - C8: the RF profile card adds more `<h3>` and `<h4>` headings.
   - S14: `tests/test_rf_profile_card.py` copies helpers from
-    `tests/test_rf_profiles.py`.
+    `tests/test_rf_profiles.py`. Fixed with S14 (#84).
   - S16: `_run_rf_profile` is a fifth runner that does not use `pns_lanes`.
+    Fixed with S16 (#84).
   - C25: #53 added history words to `lane_chart.js` ("moved here from …",
-    "as it did before …") and kept "(as before)" in `diagram.js`.
+    "as it did before …") and kept "(as before)" in `diagram.js`. Fixed
+    with C25 (#80, #82).
 - **The new code follows A3 and B5:** `rf_profile_card` and the functions of
   `rf_profiles.py` take keyword-only options, and `cards/rf_profile.py`
   escapes every name.
