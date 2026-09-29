@@ -39,7 +39,7 @@ def test_block_pulse_train():
     assert e.peak_block == 1
     assert e.energy_ut2_s == pytest.approx(2 * PULSE_ENERGY, rel=1e-6)
     assert e.b1rms_ut == pytest.approx(math.sqrt(2 * PULSE_ENERGY / e.duration_s), rel=1e-6)
-    assert e.window_used_s == e.window_s
+    assert e.b1rms_window_used_s == e.b1rms_window_s
 
 
 @pytest.mark.parametrize(
@@ -52,8 +52,8 @@ def test_block_pulse_train():
 )
 def test_highest_window(gaps_s, pulses_in_window):
     e = rf_exposure.rf_exposure(_pulse_train(gaps_s))
-    assert e.window_s == 10
-    assert e.window_used_s == 10
+    assert e.b1rms_window_s == 10
+    assert e.b1rms_window_used_s == 10
     assert e.b1rms_window_ut == pytest.approx(
         math.sqrt(pulses_in_window * PULSE_ENERGY / 10), rel=1e-6
     )
@@ -78,7 +78,7 @@ def test_no_rf():
     assert e.energy_ut2_s == 0
     assert e.b1rms_ut == 0
     assert e.b1rms_window_ut == 0
-    assert e.window_used_s == e.window_s
+    assert e.b1rms_window_used_s == e.b1rms_window_s
 
 
 def test_periodic_false_does_not_wrap():
@@ -92,8 +92,8 @@ def test_periodic_false_does_not_wrap():
     assert e_periodic.b1rms_window_ut == pytest.approx(math.sqrt(2 * PULSE_ENERGY / 10), rel=1e-6)
 
     e = rf_exposure.rf_exposure(seq, periodic=False)
-    assert e.duration_s > e.window_s
-    assert e.window_used_s == e.window_s
+    assert e.duration_s > e.b1rms_window_s
+    assert e.b1rms_window_used_s == e.b1rms_window_s
     assert e.b1rms_window_ut == pytest.approx(math.sqrt(1 * PULSE_ENERGY / 10), rel=1e-6)
 
 
@@ -103,8 +103,8 @@ def test_periodic_false_window_is_whole_sequence_when_shorter_than_window():
     # B1+rms equals the plain (non-windowed) B1+rms, both from the sequence's one pulse.
     seq = _pulse_train([0.3])
     e = rf_exposure.rf_exposure(seq, periodic=False)
-    assert e.duration_s < e.window_s
-    assert e.window_used_s == pytest.approx(e.duration_s)
+    assert e.duration_s < e.b1rms_window_s
+    assert e.b1rms_window_used_s == pytest.approx(e.duration_s)
     assert e.b1rms_ut == pytest.approx(math.sqrt(PULSE_ENERGY / e.duration_s), rel=1e-6)
     assert e.b1rms_window_ut == pytest.approx(e.b1rms_ut, rel=1e-9)
 
@@ -113,7 +113,7 @@ def test_periodic_false_no_rf():
     e = rf_exposure.rf_exposure(empty_sequence(), periodic=False)
     assert e.num_pulses == 0
     assert e.b1rms_window_ut == 0
-    assert e.window_used_s == e.duration_s
+    assert e.b1rms_window_used_s == e.duration_s
 
 
 # ---- Comparisons with the oracle (task 3.5) ----
@@ -125,7 +125,7 @@ def test_periodic_false_no_rf():
 # additions run in a different order and can differ from the oracle's sums by float
 # rounding (section 3.5, item 2 of the plan). `_assert_matches_oracle` therefore requires
 # exact equality only for the fields both implementations compute the same way
-# (`num_pulses`, `peak_block`, `window_s`, `window_used_s`), and a relative difference of
+# (`num_pulses`, `peak_block`, `b1rms_window_s`, `b1rms_window_used_s`), and a relative difference of
 # at most 1e-12 for the summed float fields (`duration_s`, `peak_b1_ut`, `energy_ut2_s`,
 # `b1rms_ut`, `b1rms_window_ut`).
 
@@ -133,8 +133,8 @@ def test_periodic_false_no_rf():
 def _assert_matches_oracle(ours: rf_exposure.RfExposure, theirs: oracle.RfExposure) -> None:
     assert ours.num_pulses == theirs.num_pulses
     assert ours.peak_block == theirs.peak_block
-    assert ours.window_s == theirs.window_s
-    assert ours.window_used_s == theirs.window_used_s
+    assert ours.b1rms_window_s == theirs.window_s
+    assert ours.b1rms_window_used_s == theirs.window_used_s
     for field in ("duration_s", "peak_b1_ut", "energy_ut2_s", "b1rms_ut", "b1rms_window_ut"):
         a, b = getattr(ours, field), getattr(theirs, field)
         bound = max(abs(a), abs(b)) * 1e-12
@@ -153,7 +153,7 @@ def test_matches_oracle_on_synthetic_sequences(make_seq, periodic):
     lengths."""
     seq = make_seq()
     for window_s in (1e-3, 10.0, 100.0):
-        ours = rf_exposure.rf_exposure(seq, window_s=window_s, periodic=periodic)
+        ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
         theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
         _assert_matches_oracle(ours, theirs)
 
@@ -174,7 +174,7 @@ def test_matches_oracle_for_window_length_categories(window_s, periodic):
     than the whole sequence (about 20 s, from two 1 ms pulses and 3 s and 17 s gaps),
     for both `periodic` values."""
     seq = _pulse_train([3.0, 17.0])
-    ours = rf_exposure.rf_exposure(seq, window_s=window_s, periodic=periodic)
+    ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
     theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
     _assert_matches_oracle(ours, theirs)
 
@@ -216,7 +216,7 @@ def test_matches_oracle_on_random_pulse_trains(seed):
     )
     for window_s in windows:
         for periodic in (True, False):
-            ours = rf_exposure.rf_exposure(seq, window_s=window_s, periodic=periodic)
+            ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
             theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
             _assert_matches_oracle(ours, theirs)
 
@@ -255,9 +255,9 @@ def test_tie_at_window_end_matches_oracle_exactly():
     window_s = spacing  # a whole number (1) of the spacing
 
     for periodic in (True, False):
-        ours = rf_exposure.rf_exposure(seq, window_s=window_s, periodic=periodic)
+        ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
         theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
-        assert ours.window_used_s == theirs.window_used_s
+        assert ours.b1rms_window_used_s == theirs.window_used_s
         assert ours.b1rms_window_ut == theirs.b1rms_window_ut
 
 

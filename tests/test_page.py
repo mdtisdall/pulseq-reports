@@ -227,9 +227,13 @@ def test_write_page_matches_render_page(tmp_path):
     cards = [page.Card(id="a", title="A", body_html="<p>a</p>")]
     extra_scripts = ["// EXTRA_SCRIPT_MARKER"]
     extra_css = ["/* EXTRA_CSS_MARKER */"]
-    expected = page.render_page("Title", "Subtitle", cards, extra_scripts, extra_css=extra_css)
+    expected = page.render_page(
+        "Title", "Subtitle", cards, extra_scripts=extra_scripts, extra_css=extra_css
+    )
     out_path = tmp_path / "report.html"
-    page.write_page(out_path, "Title", "Subtitle", cards, extra_scripts, extra_css=extra_css)
+    page.write_page(
+        out_path, "Title", "Subtitle", cards, extra_scripts=extra_scripts, extra_css=extra_css
+    )
     assert out_path.read_text(encoding="utf-8") == expected
     assert "EXTRA_SCRIPT_MARKER" in expected
     assert "EXTRA_CSS_MARKER" in expected

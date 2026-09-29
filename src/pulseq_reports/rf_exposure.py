@@ -24,7 +24,7 @@ import pypulseq as pp
 from pulseq_reports.seq_index import rf_events, sequence_index
 from pulseq_reports.seq_utils import GAMMA, hold_samples
 
-WINDOW_S = 10.0  # averaging window (s) for the highest B1+rms
+B1RMS_WINDOW_S = 10.0  # averaging window (s) for the highest B1+rms
 
 # The number of candidate window starts that the highest-window search handles at one
 # time. It bounds the memory of the search.
@@ -39,9 +39,9 @@ class RfExposure:
     peak_block: int | None  # the first block with the peak B1
     energy_ut2_s: float  # integral of B1^2 over one period
     b1rms_ut: float  # sqrt(energy / duration): over the repeated sequence, or the one play
-    window_s: float
-    b1rms_window_ut: float  # the highest over any window (see window_used_s)
-    window_used_s: float  # the real length (s) of the window that b1rms_window_ut covers
+    b1rms_window_s: float
+    b1rms_window_ut: float  # the highest over any window (see b1rms_window_used_s)
+    b1rms_window_used_s: float  # the real length (s) of the window that b1rms_window_ut covers
 
 
 @dataclass(frozen=True)
@@ -263,15 +263,17 @@ def _exposure(train: _PulseTrain, duration: float, window_s: float, periodic: bo
         peak_block=peak_block,
         energy_ut2_s=total,
         b1rms_ut=math.sqrt(total / duration),
-        window_s=window_s,
+        b1rms_window_s=window_s,
         b1rms_window_ut=math.sqrt(window_energy / window_used) if window_used > 0 else 0.0,
-        window_used_s=window_used,
+        b1rms_window_used_s=window_used,
     )
 
 
-def rf_exposure(seq: pp.Sequence, window_s: float = WINDOW_S, periodic: bool = True) -> RfExposure:
+def rf_exposure(
+    seq: pp.Sequence, *, periodic: bool = True, b1rms_window_s: float = B1RMS_WINDOW_S
+) -> RfExposure:
     """Peak B1, ∫B1² dt and B1+rms of `seq`. With `periodic=True` (parity with vb-pulseq),
     `seq` is treated as one period that repeats. With `periodic=False`, `seq` plays once;
     see `_windowed_energy` for how that changes the highest-window search."""
     train, duration = _pulse_train(seq)
-    return _exposure(train, duration, window_s, periodic)
+    return _exposure(train, duration, b1rms_window_s, periodic)

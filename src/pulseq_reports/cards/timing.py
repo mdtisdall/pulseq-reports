@@ -6,7 +6,7 @@ from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
 
 
-def timing_errors(seq: pp.Sequence) -> list[dict]:
+def _timing_errors(seq: pp.Sequence) -> list[dict]:
     """Errors from `Sequence.check_timing`, one dict for each."""
     ok, report = seq.check_timing()
     errors = [dict(vars(r)) if hasattr(r, "__dict__") else {"message": str(r)} for r in report]
@@ -57,5 +57,5 @@ def timing_card(seq: pp.Sequence, *, card_id: str = "timing") -> Card:
     `body_html` is exactly the vb-pulseq timing check HTML: a status paragraph, and an
     error table when there are errors (parity).
     """
-    body = _timing_html(timing_errors(seq))
+    body = _timing_html(_timing_errors(seq))
     return Card(id=card_id, title="Timing check", body_html=body, data=None, script=None)

@@ -4,7 +4,7 @@ import pytest
 from synthetic import empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page
-from pulseq_reports.cards.rf_exposure import rf_exposure_card, rf_exposure_data
+from pulseq_reports.cards.rf_exposure import _rf_exposure_data, rf_exposure_card
 from pulseq_reports.seq_utils import GAMMA
 
 
@@ -27,7 +27,7 @@ def _refocusing_block_id(seq) -> int:
 
 
 def test_rf_exposure_data_for_spin_echo(default_seq):
-    data = rf_exposure_data(default_seq)
+    data = _rf_exposure_data(default_seq)
     b1_ex = _b1_ut(math.pi / 2, 1e-3)
     b1_ref = _b1_ut(math.pi, 1e-3)
 

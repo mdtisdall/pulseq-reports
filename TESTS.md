@@ -1399,7 +1399,7 @@ HTML as vb-pulseq's timing check (parity), and the card's `id`, `title`,
 
 **How:** The test builds a synthetic spin echo sequence (it passes the
 timing check), calls `timing_card` with it, and compares
-`body_html` to `timing._timing_html(timing.timing_errors(seq))` called
+`body_html` to `timing._timing_html(timing._timing_errors(seq))` called
 directly. It also checks `id == "timing"`, `title == "Timing check"`,
 "Timing check passed" is in the body, and `data` and `script` are both None.
 
@@ -1413,7 +1413,7 @@ sequence with a timing violation.
 
 **How:** The test builds a sequence with one RF block whose delay is set to
 0 after construction, below the RF dead time (as in vb-pulseq's own
-bad-sequence test), confirms that `timing_errors` reports an `RF_DEAD_TIME`
+bad-sequence test), confirms that `_timing_errors` reports an `RF_DEAD_TIME`
 error, then checks that `timing_card`'s body has "Timing check failed" and
 "RF_DEAD_TIME".
 
@@ -1618,7 +1618,8 @@ implementation from before phase 3 of `docs/plans/cards-at-scale.md`) on each of
 
 **How:** For each sequence, each `periodic` value and window lengths of 1 ms, 10 s and
 100 s, the test calls both `rf_exposure` and the oracle's, and compares `num_pulses`,
-`peak_block`, `window_s` and `window_used_s` exactly, and `duration_s`, `peak_b1_ut`,
+`peak_block`, `b1rms_window_s` (the oracle's `window_s`) and `b1rms_window_used_s` (the
+oracle's `window_used_s`) exactly, and `duration_s`, `peak_b1_ut`,
 `energy_ut2_s`, `b1rms_ut` and `b1rms_window_ut` within a relative 1e-12
 (`_assert_matches_oracle`).
 
@@ -1627,7 +1628,7 @@ implementation from before phase 3 of `docs/plans/cards-at-scale.md`) on each of
 - The new code sums the energy once for each unique RF event and once for each pulse in
   play order, not over every sample in play order like the oracle, so the summed float
   fields can differ from the oracle's by float rounding (section 3.5, item 2 of the
-  plan). `num_pulses`, `peak_block`, `window_s` and `window_used_s` do not depend on a
+  plan). `num_pulses`, `peak_block`, `b1rms_window_s` and `b1rms_window_used_s` do not depend on a
   sum over samples, so they must match exactly.
 
 #### `test_matches_oracle_for_window_length_categories`
@@ -1670,7 +1671,7 @@ angle, so the first pulse alone has the highest one-pulse energy and the search 
 without a further tie among equal candidates. The window length is set to the exact
 spacing between two pulse starts (read from the built sequence's own block durations), a
 whole number (1) of that spacing. For both `periodic` values, it checks that
-`window_used_s` and `b1rms_window_ut` equal the oracle's exactly (`==`).
+`b1rms_window_used_s` and `b1rms_window_ut` equal the oracle's exactly (`==`).
 
 **Assumptions:**
 
@@ -1708,11 +1709,11 @@ over the train's duration), within a relative 1e-12.
 
 ### 2.8 RF exposure card (`test_rf_exposure_card.py`)
 
-`test_rf_exposure_card.py` tests `cards/rf_exposure.py`. `rf_exposure_data`
+`test_rf_exposure_card.py` tests `cards/rf_exposure.py`. `_rf_exposure_data`
 gives `rf_exposure.rf_exposure` as a JSON-ready dict, in ms and µT, plus the
 highest window's real length and whether the sequence is periodic.
 `rf_exposure_card` builds the "RF exposure" `Card`: for one sequence, the
-body is `_rf_exposure_html(rf_exposure_data(seq))`, a six-row table and its
+body is `_rf_exposure_html(_rf_exposure_data(seq))`, a six-row table and its
 note. The card takes one sequence.
 
 The tests use `tests/synthetic.py`'s `spin_echo_sequence` and
@@ -1966,12 +1967,11 @@ does, with the tolerance `1e-12 * max(1, duration in s)` instead of 1e-12.
 
 ### 2.10 Gradient spectrum card (`test_spectrum_card.py`)
 
-`test_spectrum_card.py` tests `cards/spectrum.py`. `spectrum_data` gives the
-gradient spectrum of one sequence (`grad_spectrum.gradient_spectrum`) as
-JSON-ready data, in Hz and mT/m/√Hz; for the default resonances this is
-exactly the vb-pulseq `spectrum_data(seq)` data. `spectrum_card` builds the
-"Gradient spectrum" `Card`: for one sequence, the body is
-`_spectrum_html(spectrum_data(seq, resonances), scanner_label, card_id)` — the
+`test_spectrum_card.py` tests `cards/spectrum.py`. `_spectrum_data` turns the
+gradient spectrum of one sequence (`grad_spectrum.gradient_spectrum`) into
+JSON-ready data, in Hz and mT/m/√Hz. `spectrum_card` builds the
+"Gradient spectrum" `Card`: for one sequence and one `GradientCoil`, the body is
+`_spectrum_html(data, coil.label, card_id)` — the
 band table, the Linear/dB chart controls and the chart itself, or a note that
 there is no spectrum. `data` is always the JSON-ready spectrum dict and
 `script` is always `"spectrum"`.
@@ -2022,31 +2022,31 @@ gradients." exactly, and that the note is in a rendered page with no
 
 **Assumptions:** None.
 
-#### `test_custom_scanner_label_and_resonances_appear`
+#### `test_custom_coil_label_and_resonances_appear`
 
-**Checks:** A custom `scanner_label` and custom `resonances` change the
+**Checks:** A custom `GradientCoil` (its label and its resonances) changes the
 table header, the aria-label wording, the note's band text and gradient
 coil wording, and the data's resonances and bands, in place of the default
 Prisma wording and values.
 
-**How:** The test builds the card with one custom resonance (700 Hz, 40 Hz
-wide) and the label "Acme Scanner". It checks that the table header, the
+**How:** The test builds the card with a coil that has one custom resonance
+(700 Hz, 40 Hz wide) and the label "Acme Scanner". It checks that the table header, the
 aria-label phrase and the note's gradient-coil phrase all use "Acme
 Scanner", that the note states "700 ± 20 Hz", that the data's `resonances`
 list holds only the custom resonance, that the data's `bands` low/high
-values are 680–720 Hz, and that they equal `spectrum_data`'s own bands for
-the same sequence and resonances.
+values are 680–720 Hz, and that they equal the bands of `_spectrum_data` of
+`gradient_spectrum` for the same sequence and resonances.
 
 **Assumptions:** None.
 
-#### `test_scanner_label_is_escaped_in_the_note`
+#### `test_coil_label_is_escaped_in_the_note`
 
-**Checks:** The card escapes `scanner_label` in its note, as it already does
+**Checks:** The card escapes the coil's label in its note, as it already does
 in the table header and the `aria-label`. A label with `<`, `>` or `&` does
 not appear unescaped anywhere in the card's HTML (review finding B5).
 
-**How:** The test builds the card with `scanner_label="Coil <A&B>"` and the
-setup of `test_custom_scanner_label_and_resonances_appear`. It checks that
+**How:** The test builds the card with a coil labelled "Coil <A&B>" and the
+resonance of `test_custom_coil_label_and_resonances_appear`. It checks that
 `body_html` does not contain "Coil <A&B>", and that it contains the note's
 phrase "the acoustic resonances of the Coil &lt;A&amp;B&gt; gradient coil".
 
@@ -2820,8 +2820,8 @@ compares `whole_rms_mt_per_m` against a fresh whole-file oracle call.
 
 `test_gradient_limits_card.py` tests `cards/gradient_limits.py`: the "Gradient
 limits" table (Gx, Gy, Gz and |G| rows, with the peak, its percent of the
-limit, the max slew, its percent, and the RMS), and the extra RMS column when
-a window is given.
+limit, the max slew, its percent, and the RMS), one table for each `TimeWindow`
+(with the extra RMS column), and the limits in the note.
 Every expected numeric cell is computed by hand from the trapezoid the test
 builds, using the same formulas as `test_grad_limits.py`, and compared through
 `markup.html_table`, so a test also fixes the exact table that `html_table` would
@@ -2856,11 +2856,47 @@ and "RMS over whole file", and the peak and the slew columns are over the
 window.
 
 **How:** The test builds a sequence with an x trapezoid and a window equal to
-the rising ramp. It computes the expected peak, slew and window RMS from the
+the rising ramp, given as a `TimeWindow`. It computes the expected peak, slew and window RMS from the
 ramp alone (RMS from `amplitude^2 * rise_time / 3` divided by the window
 length), and the expected whole-file RMS as in the first test. It builds
 the expected table HTML with `markup.html_table` from these hand-computed rows,
-with both RMS columns, and checks that the card's body starts with it.
+with both RMS columns, and checks that the card's body starts with the `<h3>`
+of the window's label and this table.
+
+**Assumptions:** None.
+
+#### `test_two_windows_give_two_tables_with_the_values_of_each_range`
+
+**Checks:** Two windows give two tables, each under an `<h3>` of its window's
+label, with the values that `gradient_limits` gives for that window's range.
+
+**How:** The test builds a sequence with an x trapezoid and a y trapezoid of
+different amplitudes, and two windows, one half of the sequence each. For each
+window it builds the expected table with `markup.html_table` from the fields of
+`gradient_limits(seq, window=...)`, checks that the two tables differ, and
+checks that the card's body starts with the two `<h3>` and table pairs.
+
+**Assumptions:** None.
+
+#### `test_window_outside_the_sequence_raises_before_any_computation`
+
+**Checks:** A window outside the sequence raises `ValueError` with the window's
+label, and no analysis runs before it.
+
+**How:** The test replaces `grad_limits.sequence_index` with a recording
+function, calls `gradient_limits_card` with a window after the end of the
+sequence, and checks the error and that the function was not called.
+
+**Assumptions:** None.
+
+#### `test_note_gives_the_values_of_the_given_limits`
+
+**Checks:** The note of the card gives the values of the `limits` argument
+next to its label.
+
+**How:** The test builds a `HardwareLimits` with values that differ from
+`SYSTEM`, calls `gradient_limits_card` with it, and checks that the body has
+"Limits: " with the label and the two values formatted with `markup.fmt`.
 
 **Assumptions:** None.
 
@@ -7229,7 +7265,7 @@ check each rule on small hand-made cases, without Python.
 
 The tests load `rf_profiles.js` directly with Node's `require`, and use `node:test` and
 `node:assert/strict`, with no browser or DOM. Each test builds its sequence with the
-helper `newSeq`: RF rows (the columns of `cards.rf_profile.rf_table`, made by
+helper `newSeq`: RF rows (the columns of `cards.rf_profile._rf_table`, made by
 `rfTables`), gradient events in mT/m (as the diagram tables keep them, read back with
 `gradHzPerValue` 42576), ADC events and blocks. `build` returns a fake sequence view
 (`fakeView`: the methods of `SeqLanes.sequenceView` over those arrays) and the file
@@ -7249,7 +7285,7 @@ the common sequences. The whole file runs in about 0.2 s.
   makes the same points and calls the same simulation or the same float operations,
   so no float difference is possible.
 - The fake view has the methods and the units of `SeqLanes.sequenceView` (section 2.19
-  tests the real one); the fake RF table has the columns of `rf_table` (section 2.34
+  tests the real one); the fake RF table has the columns of `_rf_table` (section 2.34
   tests the real one).
 - Numbers written in a test from numpy (`linspace`, `unwrap`, the spectrum FWHM) come
   from numpy 2.5.3, with the numpy command in a comment next to them.
@@ -7562,7 +7598,7 @@ and refuses a file without use labels, a missing column, and a column of another
 length.
 
 **How:** The RF table of `spinEcho("gy")` with a hand-made entry (it has no `name`,
-as the entry of `rf_profile_data` has none); a copy without the `center` column; a copy
+as the entry of `_rf_profile_data` has none); a copy without the `center` column; a copy
 whose `dt` column has one value.
 
 **Assumptions:** None beyond the file's own.
@@ -7592,7 +7628,7 @@ distinct pulse and period (each view: `profile`, `z_df` and `2d`, with its
 widths and echo phase for `profile`), and the combined profile of the first
 echo. `tests/js/golden_rf_profiles.js` is the Node half: given a JSON file
 with one sequence's encoded diagram tables, its lane metadata, its RF
-profile card file entry (`cards.rf_profile.rf_profile_data`, with the RF
+profile card file entry (`cards.rf_profile._rf_profile_data`, with the RF
 table) and a list of `period`, `pulse`, `view` or `combined` queries, it
 decodes the tables, builds `SeqLanes.sequenceView` and `RfProfiles.fileData`,
 answers each query with `RfProfiles`, and writes the results as JSON. It is
@@ -7611,7 +7647,7 @@ section 3.5, item 2 of the plan and the reason each value can differ at all:
   and `freq_offset_hz` are exact because both languages read them straight
   from the RF table's `dt` and `freq_hz` columns, which `rf_profiles.py`
   itself computes with the same formula in the same order as
-  `cards.rf_profile.rf_table`, so the two Python computations already agree
+  `cards.rf_profile._rf_table`, so the two Python computations already agree
   bit for bit before either reaches JavaScript.
 - **The pulse key partition**: a Python key is a tuple and a JavaScript key
   is a string, so the test never compares them by value. Instead, every
@@ -7746,8 +7782,8 @@ tolerance; no comparison came close to its limit.
 ### 2.34 RF profile card (`test_rf_profile_card.py`)
 
 `test_rf_profile_card.py` tests `cards/rf_profile.py` (`docs/plans/rf-profiles.md`,
-section 4.5, items 1 and 2; task 5.3, items 1 to 7): `rf_table` (the RF table of the
-sequence, its pools and its label check), `rf_profile_data` (the file entry, labeled or
+section 4.5, items 1 and 2; task 5.3, items 1 to 7): `_rf_table` (the RF table of the
+sequence, its pools and its label check), `_rf_profile_data` (the file entry, labeled or
 not) and `rf_profile_card` (the options, the checks and the body). Each test builds its own
 sequences with pypulseq, with the same helpers as `test_rf_profiles.py`, from
 `tests/rf_sequences.py`. This card copies values from `rf_profiles` and `diagram_data`,
@@ -7756,7 +7792,7 @@ exact says why.
 
 #### `test_rf_table_matches_hold_samples_and_definitions`
 
-**Checks:** `rf_table`'s dtypes are those of its column table; after encoding and
+**Checks:** `_rf_table`'s dtypes are those of its column table; after encoding and
 decoding (`diagram_data.encode_tables`/`decode_tables`), each dense RF index's pool
 slice equals `hold_samples` of the RF event as pypulseq rebuilds it, and `dt`, `delay`,
 `shape_dur`, `center`, `use`, `freq_hz` and `phase_rad` equal their definitions;
@@ -7769,12 +7805,12 @@ sinc refocusing pulse, and a block pulse (`hold_samples` interpolates its shape)
 expected values are computed from `seq.get_block(...).rf`, the RF event as pypulseq
 stores and rebuilds it, not the object given to `add_block`: the rebuilt samples can
 differ from the given ones by float rounding. The rebuilt event is the same "rf" that
-`rf_table` itself reads, so the comparison is exact.
+`_rf_table` itself reads, so the comparison is exact.
 
 **Assumptions:**
 
 - `hold_samples` and `pp.calc_rf_center` are correct: `test_seq_utils.py` and pypulseq
-  itself test them. This test checks how `rf_table` reads and encodes their results.
+  itself test them. This test checks how `_rf_table` reads and encodes their results.
 
 #### `test_rf_table_shares_one_shape_for_an_rf_spoiled_gre`
 
@@ -7790,7 +7826,7 @@ slices (two frequency offsets) gives two `key` values and still one shape.
 
 #### `test_rf_table_of_a_sequence_without_rf_is_empty`
 
-**Checks:** A sequence without RF gives every `rf_table` column length 0.
+**Checks:** A sequence without RF gives every `_rf_table` column length 0.
 
 **How:** A sequence with one trapezoid and one delay block, no RF.
 
@@ -7798,7 +7834,7 @@ slices (two frequency offsets) gives two `key` values and still one shape.
 
 #### `test_rf_table_raises_without_labels`
 
-**Checks:** `rf_table` raises `ValueError` (matching "rf_uses_labeled") when an RF event
+**Checks:** `_rf_table` raises `ValueError` (matching "rf_uses_labeled") when an RF event
 has no use label, because `use` has no index for "undefined".
 
 **How:** A block pulse added without a `use` argument (the pypulseq default,
@@ -7808,7 +7844,7 @@ has no use label, because `use` has no index for "undefined".
 
 #### `test_pulse_list_and_file_entry_keys`
 
-**Checks:** `rf_profile_data`'s `pulses` equals `dataclasses.asdict` of
+**Checks:** `_rf_profile_data`'s `pulses` equals `dataclasses.asdict` of
 `rf_profiles.pulse_list(seq)`, and its other keys (`slice_thickness_m`, `fov_m`, `b0_t`,
 `gamma_hz_per_t`, `first_rf_block`) match their definitions, with and without an `FOV`
 definition. The card body has one "Show" button for each pulse, with its `data-block`.

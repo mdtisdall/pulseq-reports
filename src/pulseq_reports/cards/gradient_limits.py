@@ -3,13 +3,15 @@ on each axis, and as a three-axis vector."""
 
 import html
 import math
+from collections.abc import Sequence
 
 import pypulseq as pp
 
 from ..extensions import refuse_rotations
-from ..grad_limits import GradientLimits, gradient_limits
+from ..grad_limits import GradientLimits, HardwareLimits, _default_limits, gradient_limits
 from ..markup import fmt, html_table
 from ..page import Card
+from ..waveforms import TimeWindow, _check_windows
 
 _AXES = ("x", "y", "z")
 _AXIS_LABEL = {"x": "Gx", "y": "Gy", "z": "Gz"}
@@ -65,28 +67,9 @@ def _rows(windowed: GradientLimits) -> list[list]:
     return rows
 
 
-def gradient_limits_card(
-    seq: pp.Sequence,
-    *,
-    window: tuple[float, float] | None = None,
-    limits=None,
-    card_id: str = "gradient-limits",
-) -> Card:
-    """The "Gradient limits" card: one table with the peak amplitude, the peak slew rate
-    and the RMS amplitude of each logical axis (Gx, Gy, Gz) and of the three-axis vector
-    (|G|), each as a percent of `limits` where a limit applies (see
-    `grad_limits.gradient_limits`).
-
-    With `window` given, the peak and the slew columns are over `window`, and the RMS
-    column is split into "RMS over window" and "RMS over whole file". With
-    `window=None`, there is one RMS column, over the whole file.
-
-    No chart: `data=None` and `script=None`.
-
-    Raises `NotImplementedError` for a sequence with the rotation extension
-    (`extensions.refuse_rotations`).
-    """
-    refuse_rotations(seq)
+def _table(seq: pp.Sequence, window: tuple[float, float] | None, limits: HardwareLimits) -> str:
+    """The table of the card, and the reason note when there is no gradient event, for one
+    range (`window`, or the whole file)."""
     headers = [
         "Axis",
         "Peak (mT/m)",
@@ -104,11 +87,52 @@ def gradient_limits_card(
     # same pass over the index (GradientLimits.whole_rms_mt_per_m), instead of a second
     # call for it.
     windowed = gradient_limits(seq, window=window, limits=limits)
-    limits_label = windowed.limits.label
 
     body = html_table(headers, _rows(windowed))
     if windowed.reason is not None:
         body += f'<p class="muted">{html.escape(f"{windowed.reason}.")}</p>'
+    return body
+
+
+def gradient_limits_card(
+    seq: pp.Sequence,
+    *,
+    windows: Sequence[TimeWindow] | None = None,
+    limits: HardwareLimits | None = None,
+    card_id: str = "gradient-limits",
+) -> Card:
+    """The "Gradient limits" card: one table with the peak amplitude, the peak slew rate
+    and the RMS amplitude of each logical axis (Gx, Gy, Gz) and of the three-axis vector
+    (|G|), each as a percent of `limits` where a limit applies (see
+    `grad_limits.gradient_limits`).
+
+    With `windows` given, the card has one table for each window, headed by an `<h3>` with
+    the window's label. The peak and the slew columns are over the window, and the RMS
+    column is split into "RMS over window" and "RMS over whole file". With
+    `windows=None`, there is one table, with one RMS column, over the whole file.
+
+    The note at the end of the card gives the limits, with their label and their values.
+
+    No chart: `data=None` and `script=None`.
+
+    Raises `NotImplementedError` for a sequence with the rotation extension
+    (`extensions.refuse_rotations`). Raises `ValueError` for a window that is not inside
+    the sequence or that does not end after its start.
+    """
+    refuse_rotations(seq)
+    used = limits if limits is not None else _default_limits(seq)
+    if windows is None:
+        body = _table(seq, None, used)
+    else:
+        _check_windows(seq, windows)
+        body = "\n\n".join(
+            f"<h3>{html.escape(w.label)}</h3>\n{_table(seq, (w.start_s, w.end_s), used)}"
+            for w in windows
+        )
+    limits_text = (
+        f"{used.label or ''} ({fmt(used.max_grad_mt_per_m)} mT/m, "
+        f"{fmt(used.max_slew_t_per_m_per_s)} T/m/s)"
+    )
     body += (
         '<p class="muted">Peak is the largest gradient amplitude at any point of the '
         "waveform. Max slew is the largest rate of change between neighbouring points "
@@ -120,6 +144,6 @@ def gradient_limits_card(
         "the RMS of that magnitude. These are the logical "
         "sequence axes: the scanner rotates them onto the physical gradient axes, so on "
         "an oblique slice, one physical axis can reach up to the |G| row's peak even "
-        f"when no logical axis is near the limit. Limits: {html.escape(limits_label or '')}.</p>"
+        f"when no logical axis is near the limit. Limits: {html.escape(limits_text)}.</p>"
     )
     return Card(id=card_id, title="Gradient limits", body_html=body, data=None, script=None)

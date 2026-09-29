@@ -7,10 +7,10 @@ import pypulseq as pp
 
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.grad_spectrum import (
+    FFT_WINDOW_S,
     MAX_FREQUENCY_HZ,
-    PRISMA_AS82_RESONANCES,
-    WINDOW_S,
-    AcousticResonance,
+    PRISMA_AS82,
+    GradientCoil,
     GradientSpectrum,
     gradient_spectrum,
 )
@@ -82,15 +82,6 @@ def _spectrum_data(s: GradientSpectrum) -> dict:
     return out
 
 
-def spectrum_data(
-    seq: pp.Sequence, resonances: tuple[AcousticResonance, ...] = PRISMA_AS82_RESONANCES
-) -> dict:
-    """Gradient spectrum (`grad_spectrum.gradient_spectrum`) of one sequence, as
-    JSON-ready data, in Hz and mT/m/√Hz (`_spectrum_data` of the result). With the
-    default `resonances`, this is exactly the vb-pulseq `spectrum_data(seq)` data."""
-    return _spectrum_data(gradient_spectrum(seq, resonances=resonances))
-
-
 def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
     """The body of the "Gradient spectrum" card: the band table, the chart and its
     explanation, or a note that there is no spectrum. `card_id` is used to build the
@@ -136,7 +127,7 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
     band_text = " and ".join(
         f"{r['frequency_hz']:g} ± {r['bandwidth_hz'] / 2:g} Hz" for r in spectrum["resonances"]
     )
-    window_ms = WINDOW_S * 1e3
+    window_ms = FFT_WINDOW_S * 1e3
     note = (
         '<p class="muted">The spectra use the method of pypulseq '
         f"<code>calculate_gradient_spectrum</code> over the whole sequence: {window_ms:g} ms "
@@ -159,12 +150,12 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
 def spectrum_card(
     seq: pp.Sequence,
     *,
-    resonances: tuple[AcousticResonance, ...] = PRISMA_AS82_RESONANCES,
-    scanner_label: str = "MAGNETOM Prisma (AS82)",
+    coil: GradientCoil = PRISMA_AS82,
     card_id: str = "gradient-spectrum",
 ) -> Card:
-    """The "Gradient spectrum" card: the body is
-    `_spectrum_html(spectrum_data(seq, resonances), scanner_label, card_id)`.
+    """The "Gradient spectrum" card of one sequence against the resonances of `coil`: the
+    body is `_spectrum_html(data, coil.label, card_id)`, with `data` from `_spectrum_data`
+    of `grad_spectrum.gradient_spectrum(seq, resonances=coil.resonances)`.
 
     `data` is always the JSON-ready spectrum dict and `script` is always `"spectrum"`,
     even when there are no gradients, so the card script can still read `data.reason`.
@@ -173,6 +164,6 @@ def spectrum_card(
     (`extensions.refuse_rotations`).
     """
     refuse_rotations(seq)
-    data = spectrum_data(seq, resonances=resonances)
-    body = _spectrum_html(data, scanner_label, card_id)
+    data = _spectrum_data(gradient_spectrum(seq, resonances=coil.resonances))
+    body = _spectrum_html(data, coil.label, card_id)
     return Card(id=card_id, title="Gradient spectrum", body_html=body, data=data, script="spectrum")
