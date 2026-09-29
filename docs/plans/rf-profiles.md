@@ -3,14 +3,14 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: in progress. The plan was written on 2026-09-28 (PR #51) and revised on
-the same day with the user's answers (decisions 8 to 22 of section 2.2). On the
-same day the user replaced parity with vb-pulseq by external references
-(decision 5, phase 2b), split phase 5 into 5a and 5b around phase 3
-(decision 23), decided the tools and the SLR check of phase 2b (decision
-24), and, at the start of phase 5b, four changes to the modules of phases 1, 3
-and 4 that the card script needs, in a phase 5b-prep (decision 25). No question
-is open (section 7).
+Status: complete (2026-09-29). The results are in section 8. The plan was
+written on 2026-09-28 (PR #51) and revised on the same day with the user's
+answers (decisions 8 to 22 of section 2.2). On the same day the user replaced
+parity with vb-pulseq by external references (decision 5, phase 2b), split
+phase 5 into 5a and 5b around phase 3 (decision 23), decided the tools and the
+SLR check of phase 2b (decision 24), and, at the start of phase 5b, four
+changes to the modules of phases 1, 3 and 4 that the card script needs, in a
+phase 5b-prep (decision 25). No question is open (section 7).
 
 ## 1. Goal
 
@@ -1549,6 +1549,149 @@ decisions 8 to 12. The questions of this version were answered on 2026-09-28:
 11. **Parity with vb-pulseq.** Answered: dropped; external references
     instead (decision 5, phase 2b).
 
-## 8. Results
+## 8. Results (2026-09-29)
 
-Phase 6 writes this section.
+### 8.1 Pull requests
+
+| Phase | PR | Content |
+|---|---|---|
+| Plan | #51 | This plan |
+| 0 | #52 | `TESTS.md` sections 2.28 to 2.34 |
+| 1 | #53 | The message bus, `decodeTable`, `SeqLanes.sequenceView`, the diagram's messages and `goto` |
+| 4 | #54 | `PulseqReport.mapChart` and the color functions of `chart_math.js` |
+| 2 | #57 | `rf_sim.py`, `profile_metrics.py`, `rf_profiles.py`, the oracle, and their tests |
+| 5a | #58 | `cards/rf_profile.py`: the RF table, the file data, the card builder |
+| 2b | #59 | The external references: the `rf-references` shell, the scripts, 10 fixtures, `test_rf_references.py` |
+| 3 | #60 | `assets/rf_profiles.js` (`RfProfiles`) and the golden test |
+| 5b-prep | #61 | `mapChart().destroy()`, `goto` by `name`, `line_pulses`, the line cache |
+| 5b | #62 | `assets/cards/rf-profile.js`, `docs/usage.md`, the example report |
+| 6 | this PR | The scale check, `docs/usage.md`, the notes of `docs/plans/pulseq-reports.md`, this section |
+
+Changes outside the phases: #55 retired `scripts/vb_parity.py`, and #56 added
+decision 5 (external references) and phase 2b to this plan.
+
+### 8.2 Decisions made during the work
+
+Decisions 20 (revised), 23, 24 and 25 of section 2.2 were made during the
+work. Also:
+
+1. **The period rule** (phase 2, the user). A refocusing pulse never starts a
+   period, so a TSE is one period for each echo train (decision 20, revised).
+2. **Corrections of the plan text** (phase 2): `Sequence.read` does not guess
+   the use labels by default (fact 6 of section 2.3), and the "as played" test
+   of task 2.5, item 3 has the bound 1e-3 of the hold model, not 1e-9.
+3. **The rotation angle in JavaScript** (phase 3). `theta` is
+   `Math.sqrt(b1r * b1r + b1i * b1i + phi * phi)`, not `Math.hypot`: `hypot`
+   made the inner loop 38 ns for each point and RF sample, `sqrt` 14 ns, and
+   the budgets of section 2.4 need `sqrt`. The golden test holds the result to
+   the reference.
+4. **The 1D profiles at once** (phase 5b). The card computes the 1D profiles
+   of a period at once, in the order of the table, as section 4.5, item 5
+   says; the combined profile and the maps run in slices (14 ms of
+   simulation, then the drawing of what ended). With the 1D profiles in
+   slices, the first profile of the example GRE came after 56 ms (budget
+   50 ms).
+5. **The elements of a pulse are kept** (phase 5b). A pulse of the next
+   period with the same key keeps its lane chart and maps, so a move to the
+   next TR draws no chart again (a period from the cache: 0.7 to 4.3 ms). The
+   view specs, which need an RF spectrum for a pulse without W, are made in
+   the work, not in the render.
+6. **No `view` subscription** (phase 5b). The card follows `sequence`,
+   `cursor` and `anchor`; decision 13 says that no card of this plan
+   subscribes to `view`, and the card has no use for it.
+7. **Browser measurements** (phase 5b). A hidden Browser pane of the desktop
+   app slows the CPU 2 to 20 times and pauses animation frames. The budgets of
+   section 8.6 count only runs with the pane visible and a fixed JavaScript
+   loop at the speed of Node (about 20 ms).
+
+### 8.3 The Python reference (phase 2, task 2.6)
+
+Example GRE (a sinc of 3000 RF samples): `block_pulse` 1.1 ms, the "profile"
+view 65 ms, the "z_df" view 64 ms, `period` 0.4 ms. A spin echo: the combined
+profile 25 ms. 5 × 10^6 blocks (10^6 TRs of `build_repeating`): the index
+3.0 s, `pulse_list` 70 ms, `period` at most 1 ms, peak RSS +0.18 GB.
+
+### 8.4 External references (phase 2b, task 2b.4)
+
+| Comparison | Measured | Tolerance |
+|---|---|---|
+| `mr.simRf` on the RF that it resamples itself (the same rotation) | ≤ 1.2e-14 | 1e-12 |
+| `mr.simRf` on the pulse as played: block pulse, SLR | 1.8e-14, 4.2e-14 | 1e-12 |
+| `mr.simRf` on the pulse as played: sinc excitation, sinc refocusing, sinc with offsets, fat saturation, hyperbolic secant (the effect of its resampling to steps of 10 µs) | 6.3e-5, 7.5e-5, 2.4e-4, 7.0e-5, 5.2e-5 | 2e-4, 3e-4, 8e-4, 3e-4, 2e-4 (3 times the measurement) |
+| sigpy `abrm_nd`: `a`, `b` (slice select, ramps, oblique, turning gradient) | ≤ 1.6e-13 | 1e-12 |
+| sigpy `abrm` of the SLR design as the `.seq` file stores it | ≤ 1.8e-14 | 1e-12 |
+| Hyperbolic secant, 10 ms: Mz where the analytic Mz ≤ −0.99 | ≤ −0.9926 | ≤ −0.9 |
+| Hyperbolic secant against Zhang et al. 2017, Eq. 23: 10, 20, 30 ms | 0.125, 3e-3, 5.9e-5 | —, 1e-2, 2e-4 |
+
+The design ripples of an SLR pulse are not a bound (decision 24): sigpy's own
+simulation of its "ls" design gives 1.5e-2 in the passband and 5.2e-2 in the
+stopband, against 0.01. A wrong sign of the frequency axis gave 0.99, and a
+ppm offset with the wrong B0 gave 0.76, so the tolerances find such errors.
+
+Facts found on the way (pypulseq and MATLAB Pulseq, 2026-09-28):
+
+1. pypulseq writes the RF shapes of a `.seq` file with about 7 significant
+   digits (7.5e-7 of the peak of the SLR design); in memory it quantizes a
+   shape to 1e-7 when the compression is shorter.
+2. For an RF with a time shape, `shape_dur` is the time of the last sample,
+   in pypulseq and in MATLAB Pulseq.
+3. A `.seq` file does not store B0: a reader gets the default of its system.
+4. The frequency axis `F` of `mr.simRf` is this library's `+df`.
+
+### 8.5 The JavaScript reference (phase 3)
+
+Node 24, a Mac with 10 cores: 14 ns for each point and RF sample. For the
+example GRE: the 1D profile 17 ms (23 to 32 ms without W, with the RF
+spectrum), the z × Δf map 26 ms, a map of 128 × 128 0.70 s, of 201 × 201
+1.74 s, in slices of at most 20.05 ms. The golden test (1055 queries on 16
+sequences) finds at most 1.1e-14 for `a` and `b`, and equal widths
+(`TESTS.md`, section 2.33). With the line cache of phase 5b-prep, the combined
+profile of a spin echo with pulses of 3000 and 2000 RF samples takes 0.5 to
+2.6 ms after the profiles of its pulses (1 to 11 ms with the maps of "2d"),
+not 29 to 39 ms; its `line_pulses` agree with Python within 2.9e-15.
+
+### 8.6 The card in the browser (phase 5b, task 5.6)
+
+The browser pane of the Claude desktop app (Chrome 152), visible, with
+`performance.now`:
+
+| Budget (section 2.4) | Limit | Measured |
+|---|---|---|
+| All handlers of one cursor message | 1 ms | ≤ 0.1 ms |
+| A 1D profile of a pulse of 3000 RF samples, first time | 50 ms | 40 to 42 ms (example GRE); both pulses of a spin echo: 40 to 48 ms |
+| A z × Δf map, first time | 50 ms | 44.5 ms after the profile (example GRE, without W) |
+| A full map of 201 × 201, 3000 RF samples | 3 s, slices ≤ 20 ms | 2.22 s, 161 slices of at most 15.4 ms (a sinc on the ramps of its gradient) |
+| A result from the cache | 16 ms | 0.7 to 4.3 ms |
+| The combined profile, after the profiles of its pulses | 16 ms | 15.7 ms (column spin echo, "2d"); under 1 ms (one direction: no new simulation) |
+
+One slice is longer than the budget of a map slice: the first RF spectrum of
+a pulse of 8000 RF samples without W (the fat saturation of pypulseq's
+EPI-SE example) takes 27 ms the first time, in one step; `RfProfiles` cannot
+cut the spectrum into slices.
+
+### 8.7 Scale (phase 6, task 6.1)
+
+`scripts/cards_scale.py --card rf-profile`, one file, the card with its
+defaults, a Mac with 10 cores and 64 GB. Time of the card call, the added RSS
+(the peak during the card minus the RSS after the build) and the size of the
+card in the page (its body and data; the card script adds 38 KB to the page):
+
+| Sequence | Time | Added RSS | Card in the page |
+|---|---|---|---|
+| 370 s file (4 × 10^4 repeating blocks) | 0.03 s | 1 MB | 3 KB |
+| 10^6 repeating blocks | 0.63 s | 52 MB | 3 KB |
+| 10^5 worst-case blocks (a new RF phase offset in each TR: 2 × 10^4 RF events) | 1.8 s | 4 MB | 0.21 MB |
+| 10^7 repeating blocks | 6.5 s | 0.54 GB | 3 KB |
+
+Every Python budget of section 2.4 passes: at 10^7 blocks, 6.5 s (budget
+20 s), 0.54 GB (budget 1 GB) and 3 KB (budget 0.5 MB). Building the sequence of
+10^7 blocks in pypulseq takes about 90 s and 3.8 GB. The worst case is not in the
+budgets: its RF table has one row for each of its 2 × 10^4 RF events.
+
+The browser check of the 10^7-block page (the diagram card and this card,
+views "profile" and "z_df"; the page is 0.70 MB): the card follows the hover
+cursor over the whole file, a click pins its period, Escape releases it, and
+"Show" moves the diagram to block 0; no console error. Budgets there: a cursor
+message at most 0.1 ms, the first profile (a block pulse without a gradient,
+its Δf profile) 38.8 ms, a period far away with the same pulse from the cache
+5.1 to 5.3 ms.

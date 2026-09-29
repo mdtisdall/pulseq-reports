@@ -44,8 +44,9 @@ keeps a library of unit quaternions, with at most one rotation in each block.
 The gradient events in the library are logical: the scanner rotates the
 gradients of a block with its rotation. A radial or PROPELLER sequence can use
 a few gradient events and a different rotation in each block. The cards that
-use the gradients (diagram, gradient spectrum, PNS, gradient limits) show the
-logical events as they are stored, so they would be wrong for such a sequence.
+use the gradients (diagram, gradient spectrum, PNS, gradient limits, RF pulse
+profiles) show the logical events as they are stored, so they would be wrong
+for such a sequence.
 Until rotations are supported, these cards refuse a sequence with rotations:
 `extensions.refuse_rotations` raises `NotImplementedError` (phase 6 of
 `docs/plans/diagram-event-table.md`, PR #16).
@@ -197,5 +198,6 @@ Some docstrings and `TESTS.md` entries still say that a format is the same as
 vb-pulseq's ("parity"). They say where a format came from; replace them with the
 external reference when a card gets one.
 
-**When.** After phase 2b of `docs/plans/rf-profiles.md` shows the method. The user
+**When.** Now: phase 2b of `docs/plans/rf-profiles.md` (#59) shows the method, and
+the RF pulse profiles have their references (section 8.4 of that plan). The user
 decides the order of the cards.

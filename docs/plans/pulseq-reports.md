@@ -97,6 +97,13 @@ Do not open these decisions again. The user made them or approved them.
 7. **What stays in vb-pulseq:** the column cross-section, RF pulse profile and
    coherence pathway cards, `moments.py`, `column.py`, `rf_profiles.py`,
    `rf_sim.py`, `spin_echo.py` and all phantom and twix code.
+   Note (2026-09-29, `docs/plans/rf-profiles.md`, decision 1): the RF pulse
+   profiles moved to the library in a general form: `rf_sim.py`,
+   `rf_profiles.py`, `profile_metrics.py` and `cards.rf_profile.rf_profile_card`,
+   whose combined map (the `"2d"` view) generalizes the column cross-section.
+   vb-pulseq keeps its column card, `column.py`, the coherence pathway card,
+   `moments.py` and `spin_echo.py`; section 4.7 of that plan lists what
+   vb-pulseq can do.
 8. **What stays in ex-vivo-gre-pulseq:** `seq_analysis.py`, and the
    acquisition summary, echo and polarity map, spoiling and transient cards.
 9. **Charts are drawn in the browser** by the existing `laneChart` JavaScript
@@ -124,6 +131,12 @@ removed. The library must remove them.
    vb-pulseq diagram reads `DATA.pns.peak_tr_ms`. In the library, the caller
    gives the diagram a list of named time windows (phase 7). The PNS module
    gives a public function that returns the peak-TR window (phase 5).
+   Note (2026-09-29, `docs/plans/rf-profiles.md`, decision 11): the rule is
+   now that a card never reads the data or the DOM of another card. Cards
+   communicate only through the page's messages (`PulseqReport.publish` and
+   `subscribe`): the diagram card publishes `sequence`, `cursor`, `anchor`
+   and `view`, and moves to a block on `goto` (`docs/usage.md`, "Messages
+   between cards").
 3. **Size.** vb-pulseq sends every waveform point of the whole sequence to the
    page. ex-vivo has about 4 files, about 39,000 blocks in each file, about
    4,500 TRs in each file, and a TR of 80 ms (about 24 min in total). All the

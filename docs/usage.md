@@ -238,11 +238,12 @@ the next render.
 for a 370 s file, about 100 s at 10^7 blocks. The stored level added to the
 page is small after compression, even at that size.
 
-The diagram, PNS, RF exposure, gradient limits and gradient spectrum cards
-work for a file of up to 10^7 blocks. The time and the added memory of each,
-measured on 2026-09-28 (a Mac with 10 cores and 64 GB,
-`scripts/cards_scale.py`, synthetic repeating sequences; building the
-sequence of 10^7 blocks in pypulseq itself takes about 90 s and 3.8 GB):
+The diagram, PNS, RF exposure, gradient limits, gradient spectrum and RF
+profile cards work for a file of up to 10^7 blocks. The time and the added
+memory of each, measured on 2026-09-28 (the RF profile card on 2026-09-29; a
+Mac with 10 cores and 64 GB, `scripts/cards_scale.py`, synthetic repeating
+sequences; building the sequence of 10^7 blocks in pypulseq itself takes about
+90 s and 3.8 GB):
 
 | Card | 370 s file (4 × 10^4 blocks) | 10^7 blocks (3.3 h) |
 |---|---|---|
@@ -251,6 +252,7 @@ sequence of 10^7 blocks in pypulseq itself takes about 90 s and 3.8 GB):
 | RF exposure | 0.03 s, 2 MB | 6.7 s, 0.85 GB |
 | Gradient limits | 0.04 s, 5 MB | 7.6 s, 1.34 GB |
 | Gradient spectrum | 3.9 s, 0.16 GB | 131 s, 0.31 GB |
+| RF pulse profiles | 0.03 s, 1 MB | 6.5 s, 0.54 GB |
 
 The PNS computation is shared: the PNS card and the PNS lane of one sequence
 run it one time. The blocks card reads only the rows that it shows, and the
@@ -643,6 +645,27 @@ combined profile, and the card shows nothing for it.
 A map computes in slices while the page stays responsive, with a progress
 text; a move to another period stops it, and it goes on when you come back.
 The card keeps the profiles and maps of the last 64 distinct pulses.
+
+**Validation.** The simulation of the browser (`assets/rf_profiles.js`) gives
+the values of a Python reference (`rf_profiles.py`, `rf_sim.py`) within
+1e-12, and the reference is checked against external programs and theory
+(`tests/test_rf_references.py`):
+
+- MATLAB Pulseq's `mr.simRf` (GNU Octave, MATLAB Pulseq at a pinned commit)
+  on the pulse as played: the same rotation to float rounding on the RF that
+  `mr.simRf` resamples itself, and within the error of that resampling (at
+  most 2.4e-4) on the RF as the `.seq` file plays it;
+- sigpy's `abrm_nd` on slice-select gradients, gradients on their ramps, an
+  oblique gradient and a gradient that turns: `a` and `b` within 1e-12;
+- an SLR excitation designed by sigpy: the profile of the pulse as the
+  `.seq` file stores it equals sigpy's `abrm` of that design within 1e-12;
+- a hyperbolic secant inversion: Mz is at most −0.9 across the inversion band
+  of its analytic formula (Silver, Joseph and Hoult; Zhang, Garwood and Park,
+  Magn. Reson. Med. 77:1630, 2017).
+
+The fixtures are in `tests/fixtures/rf_references/`, so the tests need
+neither Octave nor sigpy; `scripts/rf_references.py` makes them again in the
+`rf-references` shell of `flake.nix`.
 
 **RF use labels.** The card must know which pulses excite and which refocus.
 `rf_profiles.rf_uses_labeled(seq)` returns `False` when an RF event of `seq`
