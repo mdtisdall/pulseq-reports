@@ -6,8 +6,9 @@ direction of travel, not a verified dictionary match.
 Status: in progress. The plan was written on 2026-09-28 (PR #51) and revised on
 the same day with the user's answers (decisions 8 to 22 of section 2.2). On the
 same day the user replaced parity with vb-pulseq by external references
-(decision 5, phase 2b), and split phase 5 into 5a and 5b around phase 3
-(decision 23). No question is open (section 7).
+(decision 5, phase 2b), split phase 5 into 5a and 5b around phase 3
+(decision 23), and decided the tools and the SLR check of phase 2b (decision
+24). No question is open (section 7).
 
 ## 1. Goal
 
@@ -233,6 +234,24 @@ Do not open these decisions again. The user made them or approved them.
     the card must be unique, because the card script matches the files of the
     diagram's `sequence` messages by name (the diagram's own file index can
     be in another order).
+24. **The tools and the SLR check of phase 2b** (the user, 2026-09-28, during
+    phase 2b).
+    - **Nix tooling for the references.** The `rf-references` shell of
+      `flake.nix` has GNU Octave (from the locked nixpkgs) and MATLAB Pulseq
+      pinned to commit `c7469123` by its hash (`fetchFromGitHub`, in
+      `MATLAB_PULSEQ`). sigpy is not in nixpkgs: it runs from a uv script with
+      inline metadata and a committed lock (`scripts/rf_references_sigpy.py`
+      and its `.lock` file), so sigpy, numba and numpy are pinned too. CI does
+      not use this shell: it only reads the fixtures.
+    - **The SLR check.** The design ripples of an SLR 90° excitation are not a
+      bound: sigpy's own simulation (`abrm`) of its own design exceeds them
+      (d1 = d2 = 0.01, tb 4: passband 1.5e-2 and stopband 5.2e-2 for ftype
+      "ls", 1.8e-2 and 1.3e-2 for "pm"), and this project's simulation gives
+      the same numbers. So the test compares the profile of the pulse, point
+      by point, with sigpy's `abrm` of the design, within 1e-12, and the
+      ripples are measured information, not a check. `abrm` gets the design as
+      the `.seq` file stores it: pypulseq writes RF shapes with about 7
+      significant digits (7.5e-7 of the peak for this design).
 
 ### 2.3 Facts (2026-09-28)
 
@@ -488,7 +507,7 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 | 0 | `TESTS.md` (only: placeholder sections 2.28 to 2.34, task 0.1) |
 | 1 | `assets/lane_chart.js` (the message functions, `decodeTable`, and the `laneChart` options `onCursor` and `onAnchor` and the method `setAnchor` only), `assets/seq_lanes.js` (only the new function `sequenceView`), `assets/cards/diagram.js`, `tests/js/test_messages.js` (new), `tests/js/test_seq_lanes.js` (new tests only), `docs/usage.md` (a new section "Messages between cards"), `TESTS.md` sections 2.19 (new entries only) and 2.28 |
 | 2 | `rf_sim.py` (new), `profile_metrics.py` (new), `rf_profiles.py` (new), `tests/oracles/rf_sim.py` (new), `tests/test_rf_sim.py` (new), `tests/test_profile_metrics.py` (new), `tests/test_rf_profiles.py` (new), `TESTS.md` sections 2.29, 2.30 and 2.31 |
-| 2b | `scripts/rf_references.py` (new), `tests/fixtures/rf_references/` (new), `tests/test_rf_references.py` (new), `TESTS.md` (a new section 2.35 at the end) |
+| 2b | `scripts/rf_references.py` (new), `scripts/rf_references_simrf.m` (new), `scripts/rf_references_sigpy.py` and its `.lock` file (new), `flake.nix` (the `rf-references` shell only, decision 24), `tests/fixtures/rf_references/` (new), `tests/test_rf_references.py` (new), `TESTS.md` (a new section 2.35 at the end), this plan file (decision 24 and phase 2b only) |
 | 3 | `assets/rf_profiles.js` (new), `page.py` (only the script order), `tests/js/test_rf_profiles.js` (new), `tests/test_rf_profiles_golden.py` (new), `tests/js/golden_rf_profiles.js` (new), `tests/test_page.py` (only `test_script_order`), `TESTS.md` sections 2.3 (that entry only), 2.32 and 2.33 |
 | 4 | `assets/map_chart.js` (new), `assets/chart_math.js` (new pure functions only), `assets/report.css` (new map chart rules only), `page.py` (only the script order), `tests/js/test_chart_math.js` (new tests only), `tests/test_page.py` (only `test_script_order`), `docs/usage.md` (a new subsection of section 4 only), `TESTS.md` sections 2.3 (that entry only) and 2.4 (new entries only) |
 | 5a | `cards/rf_profile.py` (new), `tests/test_rf_profile_card.py` (new), `TESTS.md` section 2.34, this plan file (decision 23, the order of the phases, and the notes on the RF table in section 4.5, item 2, and task 3.4 only) |
@@ -1197,19 +1216,18 @@ each fixture, the tool, its version or commit, the command and the inputs.
 It needs these tools only when it runs; none of them is a dependency of
 this project:
 
-1. **MATLAB Pulseq's `mr.simRf`** in GNU Octave (`nix shell --inputs-from .
-   nixpkgs#octave`), with MATLAB Pulseq (`github.com/pulseq/pulseq`) cloned
-   at a pinned commit into the session scratchpad; the script takes its
-   path. For each case, pypulseq writes the sequence to a `.seq` file,
+1. **MATLAB Pulseq's `mr.simRf`** in GNU Octave, with MATLAB Pulseq
+   (`github.com/pulseq/pulseq`) at a pinned commit: both in the
+   `rf-references` shell of `flake.nix` (decision 24). For each case, pypulseq writes the sequence to a `.seq` file,
    MATLAB Pulseq reads it (`mr.Sequence`, `read`, `getBlock`), and
    `mr.simRf(rf)` gives the frequency axis `F`, `Mz_z` and `Mz_xy` of the
    pulse as played. `mr.simRf` has no gradient: a slice-selective pulse is
    compared on its frequency axis (section 2.3, "z × Δf with a constant
    gradient is a 1D simulation"). \|β\|² is `(1 - Mz_z) / 2` for a
    rotation.
-2. **sigpy's `abrm_nd`** (sigpy 0.1.27, BSD-3, in a scratch environment:
-   `uv run --no-project --with sigpy==0.1.27`, never in the project
-   environment), for the cases with a gradient that changes during the RF,
+2. **sigpy's `abrm_nd`** (sigpy 0.1.27, BSD-3, in its own locked
+   environment, `uv run --locked --script scripts/rf_references_sigpy.py`,
+   never in the project environment; decision 24), for the cases with a gradient that changes during the RF,
    an oblique gradient, and positions in 2D: `a` and `b` on the spatial grid
    from the same hold samples and interval gradients.
 3. **sigpy's SLR design** (`sigpy.mri.rf.slr.dzrf`) for the SLR case: the
@@ -1245,10 +1263,12 @@ functions of phase 2 and compares:
    interpolates the RF linearly to a step of 1 to 10 µs). Set each tolerance
    from that measurement and write the reason in the test (section 3.5,
    item 4).
-2. With sigpy `abrm_nd`: `a` and `b` within 1e-10 (the same rotation, with
-   another order of float operations).
-3. SLR: the passband ripple and the stopband level of the simulated profile
-   are within the design ripples.
+2. With sigpy `abrm_nd`: `a` and `b` within 1e-12 (the same rotation, with
+   another order of float operations; the first text had 1e-10, and phase 2b
+   measured 1.6e-13).
+3. SLR: `a` and `b` of the simulated profile equal those of sigpy's `abrm` of
+   the design as the `.seq` file stores it, within 1e-12 (decision 24; the
+   first text checked the design ripples, which are not a bound).
 4. Hyperbolic secant: Mz is at most −0.9 across the inversion band of the
    analytic formula of this pulse type (write the formula and its source in
    the test), for the pulse's B1 above its adiabatic threshold.
