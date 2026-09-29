@@ -26,12 +26,14 @@ dev = [
     "ruff",
 ]
 
-# pypulseq upstream master (f2c582b) with two fork commits: the SAFE PNS filter as a
-# recursion, and calculate_pns in chunks (branch pns-chunked of the fork). See
-# docs/plans/diagram-lanes.md, section 2.6. A project that depends on pulseq-reports gets
-# pypulseq from PyPI unless it adds the same source.
+# pypulseq 1.5.0.post1 with four commits, from the fork (tag pulseq-reports-pin-1, branch
+# pulseq-reports-pin): the SAFE PNS filter as a recursion, calculate_pns in chunks, the
+# get_block fix for oversampled arbitrary gradients (upstream PR #424), and the read fix of
+# upstream #359. TODO.md ("Move from the pypulseq fork to a pypulseq release") lists them.
+# uv also applies this source for a project that depends on pulseq-reports by git URL; pip
+# does not (docs/usage.md, section 1).
 [tool.uv.sources]
-pypulseq = { git = "https://github.com/mdtisdall/pypulseq", rev = "20b9e5e996df93d7a46ef39e3a66b555d9a85915" }
+pypulseq = { git = "https://github.com/mdtisdall/pypulseq", rev = "a74ab06e51ca09707ff54837cf5ff652f6e69e94" }
 
 [tool.ruff]
 line-length = 100
