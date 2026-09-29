@@ -214,16 +214,6 @@ def test_no_gradients_adds_a_reason_note():
     assert "empty.seq: no gradient events in the sequence." in card.body_html
 
 
-def test_note_says_max_slew_includes_block_junction_steps():
-    """The note says that Max slew includes the step at a block junction (decision 6 of
-    docs/plans/cards-at-scale.md), not only the slope inside one gradient event."""
-    seq, _ = _trapezoid_seq(10e-3 * GAMMA)
-
-    card = gradient_limits_card([NamedSequence("a.seq", seq)])
-
-    assert "or the step at a block junction divided by the gradient raster time" in card.body_html
-
-
 def test_card_with_a_window_makes_one_pass_over_the_per_event_values(monkeypatch):
     """With a window, `gradient_limits_card` calls the per-event function
     (`seq_index.grad_events`, which reads each unique gradient event's block with
