@@ -170,6 +170,69 @@ def test_triangle_trapezoid_matches_pypulseq():
     _assert_matches_pypulseq(seq, t)
 
 
+def test_sample_matches_the_added_events_for_an_oversampled_arbitrary_gradient():
+    """B4 (docs/plans/review-bugs.md, section 4.4, test 2): `sample` for a file with an
+    oversampled arbitrary gradient (section 2.5 of the plan) against a reference built
+    from the added events (the objects that `make_*` returns, before `add_block`), not
+    from `get_block` and not from `seq.get_gradients()`: `get_gradients()` itself leaves
+    out the first and the last point of an oversampled gradient (draft 03 of
+    `github.com/mdtisdall/pypulseq-issues`).
+
+    Needs the fix of pypulseq PR #424, which the pinned fork has (`pulseq-reports-pin-1`):
+    with the old pin (`20b9e5e`), `get_block` gave this oversampled gradient's `shape_dur`
+    as twice the value `make_arbitrary_grad` set, and the sampler error was about 40 % of
+    the peak.
+
+    The sequence (section 9.4 of the plan): an oversampled ramp of 21 samples at 50 % of
+    `max_slew` over half a raster (`make_arbitrary_grad(oversampling=True)` checks the
+    slew rate 4 times too leniently, pypulseq issue #421, so the waveform is kept within
+    the real `max_slew` by itself), ending at a value that is not 0; an extended
+    trapezoid back down to 0; and an ordinary trapezoid.
+    """
+    dt = SYSTEM.grad_raster_time
+    step = 0.5 * SYSTEM.max_slew * dt / 2  # 50 % of the real max_slew over half a raster
+    n = 21
+    g_os = pp.make_arbitrary_grad(
+        "x",
+        step * np.arange(1, n + 1),
+        first=0.0,
+        last=step * (n + 1),
+        oversampling=True,
+        system=SYSTEM,
+    )
+    g_down = pp.make_extended_trapezoid(
+        "x", times=[0.0, 20 * dt], amplitudes=[step * (n + 1), 0.0], system=SYSTEM
+    )
+    g_trap = pp.make_trapezoid("x", amplitude=0.4 * SYSTEM.max_grad, duration=0.5e-3, system=SYSTEM)
+    seq = pp.Sequence(SYSTEM)
+    for g in (g_os, g_down, g_trap):
+        seq.add_block(g)
+
+    # The reference polyline, from the added events (not get_block, not get_gradients).
+    starts = np.concatenate([[0.0], np.cumsum([seq.block_durations[i] for i in (1, 2, 3)])])
+    ts, vs = [], []
+    for g, t0 in zip((g_os, g_down, g_trap), starts):
+        if g.type == "trap":
+            off = np.cumsum([0.0, g.rise_time, g.flat_time, g.fall_time])
+            amp = np.array([0.0, g.amplitude, g.amplitude, 0.0])
+        else:
+            off = np.concatenate([[0.0], g.tt, [g.shape_dur]])
+            amp = np.concatenate([[g.first], g.waveform, [g.last]])
+        ts.append(t0 + g.delay + off)
+        vs.append(amp)
+    tt, vv = np.concatenate(ts), np.concatenate(vs)
+    keep = np.concatenate([[True], tt[1:] > tt[:-1] + 1e-9])
+    tt, vv = tt[keep], vv[keep]
+
+    grid = np.linspace(0, starts[-1], 4001)[1:-1]
+    truth = np.interp(grid, tt, vv)
+    peak = np.abs(truth).max()
+
+    sampler = GradientSampler(seq, sequence_index(seq))
+    got = sampler.sample("gx", grid)
+    np.testing.assert_allclose(got, truth, rtol=0, atol=1e-12 * peak)
+
+
 def test_axis_without_events_is_zero():
     # spin_echo_sequence uses gx and gy only: gz has no event.
     seq = spin_echo_sequence()

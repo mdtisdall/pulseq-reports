@@ -5149,6 +5149,40 @@ whole file at the raster centres, and compares with `_assert_matches_pypulseq`.
 
 **Assumptions:** None.
 
+#### `test_sample_matches_the_added_events_for_an_oversampled_arbitrary_gradient`
+
+**Checks:** `sample` gives the correct waveform for a file with an oversampled
+arbitrary gradient (`make_arbitrary_grad(oversampling=True)`): B4 of
+`docs/reviews/2026-09-28-code-review.md` (pypulseq issue #423), fixed by the project's
+pypulseq pin (`pulseq-reports-pin-1`, the fix of pypulseq PR #424). The reference is not
+`seq.get_gradients()`: pypulseq's `waveforms()` leaves out the first and the last point
+of an oversampled gradient (a separate pypulseq bug, draft 03 of
+`github.com/mdtisdall/pypulseq-issues`), so `_assert_matches_pypulseq`'s own reference
+would be wrong for this event by construction, not only by the bug under test. The
+reference is instead the polyline of the added events (the objects `make_*` returns,
+before `add_block`), which does not depend on either pypulseq bug.
+
+**How:** Builds three blocks with `SYSTEM` of `synthetic.py`: an oversampled ramp
+(`make_arbitrary_grad("x", ..., oversampling=True)`, 21 samples at 50 % of `max_slew`
+over half a raster, ending at a value that is not 0), an extended trapezoid back down to
+0, and an ordinary trapezoid. The waveform is kept within the real `max_slew` by the
+test itself, because `make_arbitrary_grad(oversampling=True)` checks the slew rate 4
+times too leniently (pypulseq issue #421). The reference polyline is built from each
+added event's own corner or sample points (`[0, *g.tt, g.shape_dur]` and `[g.first,
+*g.waveform, g.last]` for the arbitrary and extended-trapezoid events, the rise/flat/fall
+corners for the trapezoid), offset by each block's start (`numpy.cumsum` of
+`seq.block_durations`) and the event's own delay, with a point dropped when it is not
+more than 1e-9 s after the point before it (the same join rule as `GradientSampler`).
+`GradientSampler.sample("gx", t)` is compared with `numpy.interp` on that polyline at
+3999 points evenly spaced over the file, within an absolute 1e-12 times the peak of the
+reference (`rtol=0`). Before the pin's fix, this test's own error is about 40 % of the
+peak (checked against a pypulseq checkout at the old pin, `20b9e5e`).
+
+**Assumptions:**
+
+- The pin (`pulseq-reports-pin-1`) has the fix of pypulseq PR #424. A pypulseq without
+  it fails this test: checked against a checkout of the old pin (`20b9e5e`).
+
 #### `test_axis_without_events_is_zero`
 
 **Checks:** An axis with no gradient event anywhere in the file (`get_gradients()`
@@ -6831,6 +6865,33 @@ give the kind "changing", with no select coordinate and no direction. The "profi
 two `pp.make_arbitrary_grad` events, with a 0.8 ms block pulse.
 
 **Assumptions:** None.
+
+#### `test_oversampled_gradient_that_ends_before_the_rf_is_not_a_gradient_of_the_pulse`
+
+**Checks:** B4 of `docs/reviews/2026-09-28-code-review.md` (pypulseq issue #423), fixed
+by the project's pypulseq pin (`pulseq-reports-pin-1`, the fix of pypulseq PR #424): an
+oversampled arbitrary gradient (`make_arbitrary_grad(oversampling=True)`) that ends well
+before an RF is not a gradient of that RF's pulse. The gradient kind is "none", every
+interval gradient is 0, and the gradient's id is 0 in each place of the pulse key.
+`_plays_during` reads the gradient's end from `pp.calc_duration(g)`, and `_pulse_key`
+uses `_plays_during`. The old pin gave that end twice as late as the real `shape_dur`,
+so the gradient looked like it was still playing when the RF started.
+
+**How:** Builds the block of section 9.6 of `docs/plans/review-bugs.md`: an oversampled
+triangle on z (`synthetic.SYSTEM`, not this file's own `SYSTEM`; 21 samples that start
+and end at 0, at 50 % of `max_slew` over half a raster, kept within the real `max_slew`
+by the test itself because `make_arbitrary_grad(oversampling=True)` checks the slew rate
+4 times too leniently, pypulseq issue #421), and a block pulse with `use="excitation"`
+whose delay is 50 µs after the added gradient event's own end (its delay plus its
+`shape_dur`), then an ADC block. `block_pulse(seq, 0).gradient_kind` must be "none",
+`grad_hz_per_m` all 0, and the third item of `key` (the gradient ids) `(0, 0, 0)`.
+Checked against a pypulseq checkout at the old pin (`20b9e5e`): there the kind is "one",
+with a z direction, and the gz event's id is in the key.
+
+**Assumptions:**
+
+- The pin (`pulseq-reports-pin-1`) has the fix of pypulseq PR #424. A pypulseq without
+  it fails this test: checked against a checkout of the old pin (`20b9e5e`).
 
 #### `test_interval_values_of_a_trapezoid_equal_the_hand_means`
 
