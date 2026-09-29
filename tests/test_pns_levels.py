@@ -12,8 +12,15 @@ from synthetic import (
     spin_echo_sequence,
 )
 
-from pulseq_reports import pns
-from pulseq_reports.pns_levels import PnsLevels, _cast_outward, bin_samples_for, pns_levels
+from pulseq_reports.asc import EXAMPLE_HARDWARE
+from pulseq_reports.pns_levels import (
+    NO_GRADIENTS,
+    PEAK_TOLERANCE,
+    PnsLevels,
+    _cast_outward,
+    bin_samples_for,
+    pns_levels,
+)
 
 _HW_FIELDS = ("tau1", "tau2", "tau3", "a1", "a2", "a3", "stim_limit", "g_scale")
 
@@ -71,7 +78,7 @@ def test_summary_matches_calculate_pns_within_the_fork_tolerance(build):
     hw = safe_example_hw()
     _, norm, comp, t = seq.calculate_pns(hw, do_plots=False)
     ref_peak = float(norm.max())
-    threshold = ref_peak * (1 - pns.PEAK_TOLERANCE)
+    threshold = ref_peak * (1 - PEAK_TOLERANCE)
     ref_peak_time = float(t[int(np.flatnonzero(norm >= threshold)[0])])
     ref_axis_peaks = {axis: float(comp[:, i].max()) for i, axis in enumerate("xyz")}
 
@@ -79,7 +86,7 @@ def test_summary_matches_calculate_pns_within_the_fork_tolerance(build):
     tol = 1e-6 * ref_peak
 
     assert levels.reason is None
-    assert levels.hardware == pns.EXAMPLE_HARDWARE
+    assert levels.hardware == EXAMPLE_HARDWARE
     assert levels.asc_file is None
     assert levels.dt_s == seq.grad_raster_time
     assert levels.on_raster is True
@@ -187,11 +194,11 @@ def test_result_does_not_depend_on_chunk_samples(monkeypatch):
 
 
 def test_no_gradients():
-    """A sequence with no gradient event gives `reason=pns.NO_GRADIENTS`, no stored
+    """A sequence with no gradient event gives `reason=NO_GRADIENTS`, no stored
     bins, a peak of 0 and `peak_time_s` of None, but still the chosen hardware."""
     levels = pns_levels(empty_sequence())
-    assert levels.reason == pns.NO_GRADIENTS
-    assert levels.hardware == pns.EXAMPLE_HARDWARE
+    assert levels.reason == NO_GRADIENTS
+    assert levels.hardware == EXAMPLE_HARDWARE
     assert levels.asc_file is None
     assert levels.level_min.shape == (0,)
     assert levels.level_max.shape == (0,)
@@ -219,7 +226,7 @@ def test_off_raster_block_falls_back_to_sampling():
     # pns_levels covers the whole sequence; calculate_pns stops at the last gradient point.
     assert levels.num_samples >= norm.size
     assert levels.peak == pytest.approx(ref_peak, abs=tol)
-    threshold = ref_peak * (1 - pns.PEAK_TOLERANCE)
+    threshold = ref_peak * (1 - PEAK_TOLERANCE)
     ref_peak_time = float(t[int(np.flatnonzero(norm >= threshold)[0])])
     assert levels.peak_time_s == pytest.approx(ref_peak_time, abs=1e-9)
     for i, axis in enumerate("xyz"):
@@ -259,7 +266,7 @@ def test_asc_hardware_file_is_used_for_the_levels(write_gradient_asc):
     encodes the example hardware's own numbers."""
     seq = spin_echo_sequence()
     path = write_gradient_asc()
-    levels = pns_levels(seq, path)
+    levels = pns_levels(seq, gradient_asc=path)
     assert levels.hardware == "MP_GPA_TEST"
     assert levels.asc_file == path.name
     assert levels.hw == _hw_dict(safe_example_hw())

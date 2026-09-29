@@ -35,8 +35,9 @@
 // decoded; `cursor` while the pointer hovers the chart (at most one message
 // per animation frame); `anchor` when a click, the arrow keys or a `goto` message set
 // or clear the zoom marker; and `view` after every change of the chart's time window.
-// It also subscribes to `goto`, to move its own chart to a block that another card
-// names. `docs/usage.md`, section "Messages between cards", documents all of this.
+// It also subscribes to `goto`, to move its own chart to a block, or to a time range
+// with an anchor, that another card names. `docs/usage.md`, section "Messages between
+// cards", documents all of this.
 PulseqReport.registerCard("diagram", async (section, data) => {
   const buttons = section.querySelectorAll("[data-window]");
   const statusEl = document.getElementById(`${section.id}-mode`);
@@ -225,6 +226,9 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     }
   }
 
+  // The narrowest view of the chart, in ms (`minSpan` below); `gotoRange` keeps it too.
+  const MIN_SPAN_MS = 0.01;
+
   const chart = PulseqReport.laneChart({
     svg: document.getElementById(`${section.id}-diagram`),
     chart: document.getElementById(`${section.id}-chart`),
@@ -256,7 +260,7 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     },
     xDomain: windows[0].view_ms,
     extent: [0, current.seq.durationS * 1000],
-    minSpan: 0.01,
+    minSpan: MIN_SPAN_MS,
     xLabel: "Time (ms)",
     cursorText: v => `t = ${v.toFixed(3)} ms`,
     onCursor: scheduleCursorPublish,
@@ -293,15 +297,28 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     button.addEventListener("click", () => { showWindow(i); });
   }
 
-  // `goto` (plan section 4.1): another card asks this diagram to show one block. It
-  // shows the first window (exactly as a click on that window's button does, through
-  // the shared `showWindow`), then sets the view to that block with half its own
-  // duration as padding on each side (so the window is twice the block's duration),
-  // widened to at least 1 ms and moved inside the sequence if the padding would reach
-  // past an end (`ChartMath.clampView` does both: widen about the same centre, then
-  // shift to fit), then sets the anchor to the middle of the block (the `anchor`
-  // message itself comes from `onAnchor`, above), then publishes `view`.
-  // A `goto` for a block that the sequence does not have is ignored with a warning.
+  // `goto` (plan section 4.1): another card asks this diagram to show a place. The
+  // message has one of two forms: `{source, block}`, one block (`gotoBlock`), or
+  // `{source, t0S, t1S, anchorS}`, a time range with an anchor (`gotoRange`). Both show
+  // the first window (exactly as a click on that window's button does, through the
+  // shared `showWindow`), then set the view, then set the anchor (the `anchor` message
+  // itself comes from `onAnchor`, above), then publish `view`. That is `showView`.
+  function showView(viewS, anchorS) {
+    showWindow(0);
+    const newView = [viewS[0] * 1000, viewS[1] * 1000];
+    chart.setView(newView);
+    // A view that is not a window's view: no window button is pressed, as after a zoom.
+    for (const button of buttons) button.setAttribute("aria-pressed", "false");
+    chart.setAnchor(anchorS * 1000);
+    publishView(newView);
+  }
+
+  // A block: the view is that block with half its own duration as padding on each side
+  // (so the window is twice the block's duration), widened to at least 1 ms and moved
+  // inside the sequence if the padding would reach past an end (`ChartMath.clampView`
+  // does both: widen about the same centre, then shift to fit). The anchor is the middle
+  // of the block. A `goto` for a block that the sequence does not have is ignored with a
+  // warning.
   function gotoBlock(message) {
     const seqView = current.view;
     if (!Number.isInteger(message.block) || message.block < 0 ||
@@ -309,22 +326,44 @@ PulseqReport.registerCard("diagram", async (section, data) => {
       console.warn(`diagram card "${section.id}": goto ignored, no block ${message.block}`);
       return;
     }
-    showWindow(0);
     const startS = seqView.blockStart(message.block);
     const durS = seqView.blockDuration(message.block);
     const padS = durS / 2;
-    const [loS, hiS] = ChartMath.clampView(
+    const viewS = ChartMath.clampView(
       [startS - padS, startS + durS + padS], [0, seqView.durationS], 0.001
     );
-    const newView = [loS * 1000, hiS * 1000];
-    chart.setView(newView);
-    // A view that is not a window's view: no window button is pressed, as after a zoom.
-    for (const button of buttons) button.setAttribute("aria-pressed", "false");
-    chart.setAnchor((startS + durS / 2) * 1000);
-    publishView(newView);
+    showView(viewS, startS + durS / 2);
+  }
+
+  // A range: the view is `[t0S, t1S]`, moved inside the sequence if it reaches past an
+  // end (`ChartMath.clampView`, with the chart's own narrowest view), and the anchor is
+  // `anchorS`. A range that is not three finite numbers, or that has `t1S <= t0S`, is
+  // ignored with a warning.
+  function gotoRange(message) {
+    const {t0S, t1S, anchorS} = message;
+    if (![t0S, t1S, anchorS].every(Number.isFinite) || t1S <= t0S) {
+      console.warn(
+        `diagram card "${section.id}": goto ignored, no range ${t0S} to ${t1S}, anchor ${anchorS}`
+      );
+      return;
+    }
+    const viewS = ChartMath.clampView(
+      [t0S, t1S], [0, current.view.durationS], MIN_SPAN_MS / 1000
+    );
+    showView(viewS, anchorS);
+  }
+
+  function onGoto(message) {
+    if (message.block !== undefined) {
+      gotoBlock(message);
+    } else if (message.t0S !== undefined || message.t1S !== undefined) {
+      gotoRange(message);
+    } else {
+      console.warn(`diagram card "${section.id}": goto ignored, neither a block nor a range`);
+    }
   }
 
   // `replay: false`: a goto is a one-time action, not state a later subscriber
   // should be replayed into.
-  PulseqReport.subscribe("goto", gotoBlock, { replay: false });
+  PulseqReport.subscribe("goto", onGoto, { replay: false });
 });
