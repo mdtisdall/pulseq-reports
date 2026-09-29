@@ -339,6 +339,37 @@ function buildAdcCloseModel() {
   return {tables, model: SeqLanes.decode(1, tables, HAND_LANES_META)};
 }
 
+// `nBlocks` blocks of 1 ms, no RF and no gradient, and an ADC window of 0.5
+// ms at the start of each block in `adcBlocks` (every ADC block shares the
+// same event, delay 0). The form of `emptyTables` in section 9.2 of
+// `docs/plans/review-bugs.md`. Used for the B2 regression test below, whose
+// bin must have its first block as the first block of a 64-block group,
+// with that block's own ADC window ending before the bin starts: section
+// 2.3 of that plan reports that `buildRandomModel`'s ADC density never
+// reaches this placement.
+function buildSparseAdcModel(nBlocks, adcBlocks) {
+  const adc = new Uint8Array(nBlocks);
+  for (const i of adcBlocks) adc[i] = 1;
+  const checkpoints = new Float64Array(Math.ceil(nBlocks / 1024));
+  for (let c = 0; c < checkpoints.length; c++) checkpoints[c] = c * 1024 * 1e-3;
+  const f = () => new Float64Array(0), u = () => new Uint32Array(0);
+  const tables = {
+    duration_index: new Uint8Array(nBlocks), durations: Float64Array.from([1e-3]), checkpoints,
+    rf: new Uint8Array(nBlocks), gx: new Uint8Array(nBlocks), gy: new Uint8Array(nBlocks),
+    gz: new Uint8Array(nBlocks), adc,
+
+    rf_delay: f(), rf_mag_n: u(), rf_mag_offset_at: u(), rf_mag_at: u(),
+    rf_mag_offset: f(), rf_mag: f(), rf_phase_n: u(), rf_phase_offset_at: u(),
+    rf_phase_at: u(), rf_phase_offset: f(), rf_phase: f(),
+
+    grad_delay: f(), grad_n: u(), grad_offset_at: u(), grad_at: u(),
+    grad_offset: f(), grad_value: f(),
+
+    adc_delay: Float64Array.from([0]), adc_length: Float64Array.from([0.5e-3]),
+  };
+  return {tables, model: SeqLanes.decode(1, tables, HAND_LANES_META)};
+}
+
 // A model where every block contributes exactly the same, known number of
 // points to `pointsIn` (section 4.4, item 3): an RF pulse (3 magnitude
 // points + 1 phase point) and a gx event (4 points), on gy and gz and no
@@ -825,6 +856,26 @@ test("test_min_max_lanes_matches_brute_force_for_adc_windows", () => {
     const {model} = buildRandomModel(nBlocks, seed);
     const problems = adcLaneProblems(model, t0, t1, bins);
     assert.deepEqual(problems, [], `nBlocks=${nBlocks} seed=${seed} [${t0},${t1}] bins=${bins}`);
+  }
+});
+
+test("test_min_max_lanes_adc_off_after_a_window_in_the_first_block_of_a_group", () => {
+  // B2 (docs/plans/review-bugs.md, section 2.3): 400 blocks of 1 ms, one
+  // ADC window in block 64 (the first block of group 1), 64.0 to 64.5 ms.
+  // In the first two views, the first bin starts at 64.7 ms, inside block
+  // 64 but after its ADC window ends, and reaches at least two groups past
+  // group 0 with no other ADC: the bug's three conditions. Both failed
+  // before the fix. The third view has 40 bins of 10 ms over the whole
+  // file; it checks that the bin that holds the window is still on.
+  const {model} = buildSparseAdcModel(400, [64]);
+  const views = [
+    [0.0647, 0.2647, 1],
+    [0.0647, 0.2647, 3],
+    [0, 0.4, 40],
+  ];
+  for (const [t0, t1, bins] of views) {
+    const problems = adcLaneProblems(model, t0, t1, bins);
+    assert.deepEqual(problems, [], `[${t0},${t1}] bins=${bins}`);
   }
 });
 

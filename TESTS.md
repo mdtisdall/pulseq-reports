@@ -3941,9 +3941,14 @@ browser or DOM. Two kinds of model back the tests:
   out on paper. `buildPhaseGapModel` (3 blocks) and `buildAdcCloseModel` (4
   blocks) are further hand-built models for two `minMaxLanes` edge cases
   that the 5-block model does not have: an RF phase gap and two ADC windows
-  closer together than one bin. `buildPointBudgetModel` gives every block
-  the same, known number of points, so a view can be built that holds
-  exactly `EXACT_POINT_LIMIT` points.
+  closer together than one bin. `buildSparseAdcModel(nBlocks, adcBlocks)`
+  builds a model of any block count, no RF and no gradient, with a 0.5 ms
+  ADC window at the start of each block in `adcBlocks`: used for a
+  `minMaxLanes` ADC edge case (B2 of `docs/plans/review-bugs.md`, whose
+  section 2.3 reports that `buildRandomModel`'s ADC density never reaches
+  this placement). `buildPointBudgetModel` gives every block the same,
+  known number of points, so a view can be built that holds exactly
+  `EXACT_POINT_LIMIT` points.
 - `buildRandomModel`: a pseudo-random model of any block count (so it can be
   built larger than 1024 or 2048 blocks, to cross a checkpoint boundary),
   seeded for a deterministic sequence, used where the exact points are too
@@ -4272,6 +4277,24 @@ marks each bin "on" when a whole-file ADC window overlaps it, merges runs of
 equality (bin-edge times, not interpolated values), against `minMaxLanes`'s
 `windows`. It checks that the list of problems is empty for every model and
 view.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_min_max_lanes_adc_off_after_a_window_in_the_first_block_of_a_group`
+
+**Checks:** B2 of `docs/plans/review-bugs.md`: a bin is not wrongly marked
+"ADC on" when its first block is the first block of a 64-block group and
+that block's own ADC window ends before the bin starts.
+
+**How:** The test builds `buildSparseAdcModel(400, [64])` (400 blocks of 1
+ms, an ADC window of 0.5 ms at the start of block 64, the first block of
+group 1) and calls `adcLaneProblems` for the views `[0.0647, 0.2647, 1]`,
+`[0.0647, 0.2647, 3]` and `[0, 0.4, 40]`. In the first two views, the
+first bin starts at 64.7 ms, inside block 64 but after its ADC window
+ends, and reaches at least two groups past group 0 with no other ADC
+block; both views failed before the fix. The third view (40 bins of 10 ms
+over the whole file) also checks the bin that holds the window. The test
+checks that the list of problems is empty for every view.
 
 **Assumptions:** None beyond the file's assumptions.
 
