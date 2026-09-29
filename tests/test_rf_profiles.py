@@ -16,6 +16,7 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from pypulseq.event_lib import EventLibrary
+from synthetic import SYSTEM as _SYNTHETIC_SYSTEM
 
 from pulseq_reports import profile_metrics
 from pulseq_reports import rf_profiles as rp
@@ -240,6 +241,50 @@ def test_gradient_kind_changing_for_a_turning_gradient():
     assert pulse.select_kind is None and pulse.direction is None
     assert rp.view_spec(pulse, "profile") == (None, rp.DIRECTION_CHANGES)
     assert rp.view_spec(pulse, "z_df") == (None, rp.DIRECTION_CHANGES)
+
+
+def test_oversampled_gradient_that_ends_before_the_rf_is_not_a_gradient_of_the_pulse():
+    """B4 (docs/plans/review-bugs.md, section 4.4, test 3): an oversampled arbitrary
+    gradient (section 2.5 of the plan) that ends well before an RF must not count as a
+    gradient of that RF's pulse: the gradient kind is "none", every interval gradient is
+    0, and the gradient's id is 0 in each place of the pulse key.
+
+    Needs the fix of pypulseq PR #424, which the pinned fork has
+    (`pulseq-reports-pin-1`): `_plays_during` reads the gradient's end from
+    `pp.calc_duration(g)` (and `_pulse_key` uses `_plays_during`), which the old pin
+    (`20b9e5e`) gave twice as late as the real `shape_dur`, so the gradient looked like
+    it was still playing when the RF started; there the gradient kind was "one", with a
+    z direction, and the gz event's id was in the key.
+
+    Uses `synthetic.SYSTEM` (as the repro of section 9.6 does), not this file's own
+    `SYSTEM`, and keeps the oversampled waveform inside the real `max_slew` itself (50 %
+    of `max_slew` over half a raster): `make_arbitrary_grad(oversampling=True)` checks
+    the slew rate 4 times too leniently (pypulseq issue #421).
+    """
+    dt = _SYNTHETIC_SYSTEM.grad_raster_time
+    step = 0.5 * _SYNTHETIC_SYSTEM.max_slew * dt / 2
+    n = 21
+    k = np.arange(1, n + 1)
+    wave = step * np.minimum(k, n + 1 - k)  # a triangle that starts and ends at 0
+    g_os = pp.make_arbitrary_grad(
+        "z", wave, first=0.0, last=0.0, oversampling=True, system=_SYNTHETIC_SYSTEM
+    )
+    g_end = g_os.delay + g_os.shape_dur  # the added event's own end: delay + shape_dur
+    rf = pp.make_block_pulse(
+        math.pi / 2,
+        duration=0.2e-3,
+        delay=g_end + 50e-6,
+        system=_SYNTHETIC_SYSTEM,
+        use="excitation",
+    )
+    adc = pp.make_adc(10, dwell=10e-6, system=_SYNTHETIC_SYSTEM)
+    seq = pp.Sequence(_SYNTHETIC_SYSTEM)
+    seq.add_block(rf, g_os)
+    seq.add_block(adc)
+    pulse = rp.block_pulse(seq, 0)
+    assert pulse.gradient_kind == "none"
+    np.testing.assert_array_equal(pulse.grad_hz_per_m, 0.0)
+    assert pulse.key[2] == (0, 0, 0)
 
 
 # ---- 2. Interval values ----
