@@ -15,6 +15,12 @@ const SeqLanes = (() => {
   const EXACT_POINT_LIMIT = 20000;
   const CHECKPOINT_BLOCKS = 1024; // section 4.2: one checkpoint for each 1024 blocks
 
+  // 64 blocks in each group. A zoomed-out render must find the minimum and
+  // the maximum of millions of blocks in each of about 800 bins, so it can
+  // not walk the blocks. It reads whole groups from a tree instead, and
+  // touches single blocks only in the two groups that a bin's edges cut.
+  const GROUP_BLOCKS = 64;
+
   // The factor from the diagram's gradient values (mT/m, computed by
   // diagram_data.diagram_tables as Hz/m / seq_utils.GAMMA * 1e3, with the
   // proton gamma GAMMA = 42.576e6 Hz/T) back to Hz/m: GAMMA * 1e-3, which is
@@ -92,9 +98,14 @@ const SeqLanes = (() => {
   // objects of section 4.1 ("lanes"), without "segments" and "windows".
   // Returns a model: the block-table columns kept as the given typed arrays
   // (never expanded to a start-time array of length N), plus the values
-  // this module computes once at decode time (the end of the file, the
-  // last block with a duration above zero, and the per-event minimum,
-  // maximum and point count of section 4.5).
+  // this module computes once at decode time: `durationS` (the end of the
+  // file), `lastNonZeroBlock` (the last block with a duration above zero),
+  // `groupStart` (the start of each group of GROUP_BLOCKS blocks), the
+  // minimum and the maximum of each event (`rf`, `grad`, section 4.5), and
+  // `groups` (the group summaries and the trees over them, `_buildGroups`).
+  // The point count of each event is its `*_n` table, as given. `pyramids`
+  // starts empty and gets a pool's pyramid on the first render that needs
+  // it (`_poolMinMax`).
   function decode(format, tables, lanesMeta) {
     if (format !== 1) {
       throw new Error(`SeqLanes.decode: unsupported format ${format} (only format 1 is known)`);
@@ -171,33 +182,8 @@ const SeqLanes = (() => {
 
   // ---- The groups and the tree over them (section 4.5) ----
 
-  // 64 blocks in each group. A zoomed-out render must find the minimum and
-  // the maximum of millions of blocks in each of about 800 bins, so it can
-  // not walk the blocks. It reads whole groups from a tree instead, and
-  // touches single blocks only in the two groups that a bin's edges cut.
-  const GROUP_BLOCKS = 64;
-
   // The lanes that carry values (the ADC gate is counted separately).
   const VALUE_LANES = ["rf_mag", "rf_phase", "gx", "gy", "gz"];
-
-  // The minimum and the maximum of one block on one value lane, or null
-  // when the block has no event on that lane. Both come from the per-event
-  // values that `decode` computed, so this never expands a point.
-  function _blockRange(model, i, laneId) {
-    const tb = model.tables;
-    if (laneId === "rf_mag" || laneId === "rf_phase") {
-      const k = tb.rf[i];
-      if (k === 0) return null;
-      const n = laneId === "rf_mag" ? tb.rf_mag_n[k - 1] : tb.rf_phase_n[k - 1];
-      if (n === 0) return null;
-      return laneId === "rf_mag"
-        ? [model.rf.magMin[k - 1], model.rf.magMax[k - 1]]
-        : [model.rf.phaseMin[k - 1], model.rf.phaseMax[k - 1]];
-    }
-    const k = tb[laneId][i];
-    if (k === 0 || tb.grad_n[k - 1] === 0) return null;
-    return [model.grad.min[k - 1], model.grad.max[k - 1]];
-  }
 
   // The number of points that block `i` contributes to `pointsIn`.
   function _blockPoints(model, i) {
@@ -205,10 +191,10 @@ const SeqLanes = (() => {
     let count = 0;
     const rfK = tb.rf[i];
     if (rfK !== 0) count += tb.rf_mag_n[rfK - 1] + tb.rf_phase_n[rfK - 1];
-    for (const axis of ["gx", "gy", "gz"]) {
-      const gK = tb[axis][i];
-      if (gK !== 0) count += tb.grad_n[gK - 1];
-    }
+    const gxK = tb.gx[i], gyK = tb.gy[i], gzK = tb.gz[i];
+    if (gxK !== 0) count += tb.grad_n[gxK - 1];
+    if (gyK !== 0) count += tb.grad_n[gyK - 1];
+    if (gzK !== 0) count += tb.grad_n[gzK - 1];
     if (tb.adc[i] !== 0) count += 2;
     return count;
   }
@@ -454,32 +440,39 @@ const SeqLanes = (() => {
     });
   }
 
-  // Calls `fn(i, start, duration)` for each block `i` whose closed interval
-  // [start, start + duration] overlaps [lo, hi] (both ends inclusive, so a
-  // point exactly at lo or at hi is never missed), in play order. Starts
-  // from `blockAt(model, lo)` and first walks back over any earlier blocks
-  // that also overlap: the block before it when lo is exactly the start of
-  // the block that `blockAt` gives (that earlier block's last point can be
-  // exactly at lo), and any blocks of zero duration at the same instant.
-  // Then it scans forward until a block starts after hi.
-  function _forEachBlockInRange(model, lo, hi, fn) {
-    const N = model.numBlocks;
-    if (N === 0) return;
+  // The first block whose closed interval [start, start + duration] overlaps
+  // [lo, hi], and its start: `_blockAtStart(model, lo)`, then a walk back over
+  // the earlier blocks that also overlap (the block before, when lo is exactly
+  // its end, and blocks of zero duration at the same instant). Each earlier
+  // start comes from `blockStart` (a forward sum from its group start), never
+  // from `start - duration`: the subtraction is a different sequence of
+  // float64 operations from the forward sum that section 4.3 requires, and
+  // the two differ often enough to move an emitted point (a short block
+  // before a long one loses the short block's start almost entirely). The
+  // model must have a block.
+  function _firstOverlapping(model, lo, hi) {
     const tb = model.tables;
-    let i = Math.min(Math.max(blockAt(model, lo), 0), N - 1);
-    let start = blockStart(model, i);
+    let [i, start] = _blockAtStart(model, lo);
     while (i > 0) {
       const prevDur = tb.durations[tb.duration_index[i - 1]];
-      // The earlier block's start comes from `blockStart`, never from
-      // `start - prevDur`: subtraction is a different sequence of float64
-      // operations from the forward sum that section 4.3 requires, and the
-      // two differ often enough to move an emitted point (a short block
-      // before a long one loses the short block's start almost entirely).
       const prevStart = blockStart(model, i - 1);
       if (prevStart + prevDur < lo || prevStart > hi) break;
       i--;
       start = prevStart;
     }
+    return [i, start];
+  }
+
+  // Calls `fn(i, start, duration)` for each block `i` whose closed interval
+  // [start, start + duration] overlaps [lo, hi] (both ends inclusive, so a
+  // point exactly at lo or at hi is never missed), in play order. Starts
+  // from `_firstOverlapping(model, lo, hi)`, then scans forward until a
+  // block starts after hi.
+  function _forEachBlockInRange(model, lo, hi, fn) {
+    const N = model.numBlocks;
+    if (N === 0) return;
+    const tb = model.tables;
+    let [i, start] = _firstOverlapping(model, lo, hi);
     for (; i < N; i++) {
       const duration = tb.durations[tb.duration_index[i]];
       if (start > hi) break;
@@ -597,15 +590,15 @@ const SeqLanes = (() => {
     if (0 >= t0 && 0 <= t1) {
       pts.unshift([0, 0]);
     } else if (N > 0) {
-      const a = Math.min(Math.max(blockAt(model, t0), 0), N - 1);
-      const before = _prevLinePoint(model, laneId, a, blockStart(model, a), t0);
+      const [a, aStart] = _blockAtStart(model, t0);
+      const before = _prevLinePoint(model, laneId, a, aStart, t0);
       pts.unshift(before || [0, 0]);
     }
     if (durationS >= t0 && durationS <= t1) {
       pts.push([durationS, 0]);
     } else if (N > 0) {
-      const a = Math.min(Math.max(blockAt(model, t1), 0), N - 1);
-      const after = _nextLinePoint(model, laneId, a, blockStart(model, a), t1);
+      const [a, aStart] = _blockAtStart(model, t1);
+      const after = _nextLinePoint(model, laneId, a, aStart, t1);
       pts.push(after || [durationS, 0]);
     }
     return pts;
@@ -652,21 +645,20 @@ const SeqLanes = (() => {
   // [from, to] (both inclusive), without expanding a point: whole groups
   // come from the tree, and the blocks of the two partial groups at the
   // ends come one at a time from their event's own minimum and maximum.
-  // Returns null when no block in the range has an event on the lane.
-  function _rangeMinMax(model, laneId, from, to, lane) {
+  // `cols` is the lane's `_laneArrays`. Returns null when no block in the
+  // range has an event on the lane.
+  function _rangeMinMax(model, laneId, from, to, cols) {
     const N = model.numBlocks;
     if (to < from || N === 0) return null;
     from = Math.max(0, from);
     to = Math.min(N - 1, to);
-    const cols = lane || _laneArrays(model, laneId);
     const col = cols.col, cn = cols.n, emin = cols.min, emax = cols.max;
     const gFrom = Math.floor(from / GROUP_BLOCKS);
     const gTo = Math.floor(to / GROUP_BLOCKS);
     let lo = Infinity, hi = -Infinity;
 
-    const scanFrom = gFrom === gTo ? from : from;
     const scanTo = gFrom === gTo ? to : (gFrom + 1) * GROUP_BLOCKS - 1;
-    for (let i = scanFrom; i <= scanTo; i++) {
+    for (let i = from; i <= scanTo; i++) {
       const k = col[i];
       if (k === 0) continue;
       const idx = k - 1;
@@ -956,22 +948,13 @@ const SeqLanes = (() => {
   }
 
   // The first and the last block whose closed interval overlaps [lo, hi],
-  // without walking the blocks between them.
+  // without walking the blocks between them. The model must have a block.
   function _blockSpan(model, lo, hi) {
     const N = model.numBlocks;
     const tb = model.tables;
-    let first = Math.min(Math.max(blockAt(model, lo), 0), N - 1);
-    let start = blockStart(model, first);
-    while (first > 0) {
-      const prevDur = tb.durations[tb.duration_index[first - 1]];
-      const prevStart = blockStart(model, first - 1);
-      if (prevStart + prevDur < lo || prevStart > hi) break;
-      first--;
-      start = prevStart;
-    }
-    let last = Math.min(Math.max(blockAt(model, hi), 0), N - 1);
+    const [first] = _firstOverlapping(model, lo, hi);
+    let [last, lastStart] = _blockAtStart(model, hi);
     // Blocks of zero duration at the same instant as `hi` still overlap it.
-    let lastStart = blockStart(model, last);
     while (last + 1 < N) {
       const nextStart = lastStart + tb.durations[tb.duration_index[last]];
       if (nextStart > hi) break;
@@ -1085,9 +1068,6 @@ const SeqLanes = (() => {
       edgeBlock[k] = found[0];
       edgeStart[k] = found[1];
     }
-    const inBin = (time, k) =>
-      k === bins - 1 ? time >= edges[k] && time <= edges[k + 1]
-                     : time >= edges[k] && time < edges[k + 1];
 
     return model.lanesMeta.map(meta => {
       if (meta.id === "adc") {
@@ -1135,6 +1115,7 @@ const SeqLanes = (() => {
       const segments = [];
       let current = null;
       const out = [Infinity, -Infinity];
+      const take = v => { if (v < out[0]) out[0] = v; if (v > out[1]) out[1] = v; };
       // The points of the event of edge `j` that are in bin `k`: a
       // contiguous index range, found by binary search with the same rule as
       // a point test (e_k <= t < e_(k+1), or <= e_(k+1) in the last bin).
@@ -1157,7 +1138,6 @@ const SeqLanes = (() => {
       for (let k = 0; k < bins; k++) {
         out[0] = Infinity;
         out[1] = -Infinity;
-        const take = v => { if (v < out[0]) out[0] = v; if (v > out[1]) out[1] = v; };
         // The two blocks the bin's edges cut: only their points inside the
         // bin count.
         takeEdgeEvent(k, k);

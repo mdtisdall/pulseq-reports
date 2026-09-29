@@ -79,10 +79,7 @@ function buildHandModel() {
 // A larger pseudo-random model of `nBlocks` blocks, for a block count that
 // can be picked to cross the 1024-block checkpoint boundary, and for the
 // brute-force `minMaxLanes` comparisons below (where the exact points are
-// too many to derive by hand). `seed` makes it deterministic. The generator,
-// the table shapes and the lane list are the validated ones of the
-// scratchpad's `validate_minmax.js`/`validate_phase_adc.js`, copied here so
-// this file reads nothing from the scratchpad at run time.
+// too many to derive by hand). `seed` makes it deterministic.
 function buildRandomModel(nBlocks, seed) {
   let s = seed;
   const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
@@ -379,7 +376,7 @@ function buildSparseAdcModel(nBlocks, adcBlocks) {
 // exactly the limit.
 const POINTS_PER_BLOCK = 8;
 
-function buildPointBudgetModel(nBlocks) {
+function buildEightPointModel(nBlocks) {
   const duration_index = new Uint16Array(nBlocks); // all 0
   const durations = Float64Array.from([0.001]);
   const nCp = Math.ceil(nBlocks / 1024);
@@ -630,9 +627,7 @@ test("test_exact_lanes_range_that_cuts_a_block", () => {
 //
 // These recompute each bin the slow way, straight from the exact whole-file
 // points that `exactLanes` gives, and compare against `minMaxLanes`'s
-// output. Ported from the scratchpad's `validate_minmax.js` (line lanes)
-// and `validate_phase_adc.js` (RF phase and ADC), which already validated
-// this approach against `seq_lanes.js`.
+// output.
 
 // `numpy.interp`'s formula (section 4.4, item 2): the value of `pts` (an
 // array of [x, y] pairs sorted by x) at `x`, clamped at the ends.
@@ -808,8 +803,7 @@ test("test_exact_lanes_range_with_no_event_still_returns_neighbour_points", () =
 // ---- minMaxLanes: brute-force comparisons ----------------------------------
 
 test("test_min_max_lanes_matches_brute_force_for_line_lanes_over_several_views", () => {
-  // The same models and views as the scratchpad's `validate_minmax.js`,
-  // which already found 0 mismatches for these: a whole-ish view and a
+  // Several model sizes and views: a whole-ish view and a
   // zoomed-in view of a 300-block model, a whole-file and a zoomed-in view
   // of a 3000-block model (crossing the first checkpoint boundary once,
   // since 3000 > 1024), and an odd bin count over 2500 blocks (crossing the
@@ -1052,7 +1046,7 @@ test("test_min_max_lanes_adc_windows_closer_than_one_bin_merge_into_one_window",
 // ---- lanesFor: the exact/min-max switch ------------------------------------
 
 test("test_lanes_for_switches_from_exact_to_min_max_at_the_point_limit", () => {
-  // `buildPointBudgetModel` gives every block exactly 8 points, so
+  // `buildEightPointModel` gives every block exactly 8 points, so
   // `EXACT_POINT_LIMIT` (20000) is an exact multiple: 2500 blocks. A view
   // ending at the midpoint of block 2499 (the 2500th block, 0-based) holds
   // blocks 0..2499, exactly 20000 points; one more block (ending at the
@@ -1060,7 +1054,7 @@ test("test_lanes_for_switches_from_exact_to_min_max_at_the_point_limit", () => {
   assert.equal(SeqLanes.EXACT_POINT_LIMIT, 20000);
   assert.equal(POINTS_PER_BLOCK * 2500, SeqLanes.EXACT_POINT_LIMIT);
 
-  const {model} = buildPointBudgetModel(2600);
+  const {model} = buildEightPointModel(2600);
   const half = model.tables.durations[0] / 2;
   const tAtLimit = SeqLanes.blockStart(model, 2499) + half;
   const tOverLimit = SeqLanes.blockStart(model, 2500) + half;
