@@ -43,6 +43,13 @@
 // (section 4.3 of the plan; the prototype's loop read `model.hw[axis]` and
 // closed over an `emit` callback for each sample, which this module does
 // not do).
+
+// In Node, `require` chart_math.js and make it available as the bare global `ChartMath`,
+// as the browser already has it: page.py loads chart_math.js in its own <script> element
+// before this one, and a top-level `const` of one classic <script> is visible as a bare
+// identifier to a later one on the same page.
+if (typeof require === "function") global.ChartMath = require("./chart_math.js");
+
 const PnsLanes = (() => {
   const AXES = ["x", "y", "z"];
   const GROUP_BLOCKS = 64; // blocks between two checkpoints
@@ -515,30 +522,6 @@ const PnsLanes = (() => {
 
   // ---- lanesFor ----
 
-  // The zigzag segments of a minimum/maximum lane ([edge, min], [centre,
-  // max] for each bin that has a value; a bin with no value ends the
-  // current segment), reading a bin's [min, max] from `binAt(k)` (null when
-  // the bin has no value). Used by both branches of `lanesFor` (the exact
-  // "bins" kind and the pyramid). The layout is the one of
-  // `SeqLanes.minMaxLanes`, so `laneChart` draws both alike. The points
-  // are percent (`* 100`) and milliseconds (`* 1000`), not rounded here.
-  function _zigzag(edges, bins, binAt) {
-    const segments = [];
-    let current = null;
-    for (let k = 0; k < bins; k++) {
-      const range = binAt(k);
-      if (range === null) {
-        if (current !== null) { segments.push(current); current = null; }
-        continue;
-      }
-      if (current === null) current = [];
-      const centre = edges[k] + (edges[k + 1] - edges[k]) / 2;
-      current.push([edges[k] * 1000, range[0] * 100], [centre * 1000, range[1] * 100]);
-    }
-    if (current !== null) segments.push(current);
-    return segments;
-  }
-
   // The PNS lane for the view `viewMs` (ms) with `bins` plot columns
   // (plan section 4.5, item 1). `meta` is the lane object
   // without "segments" (id, title, unit, color, kind, domain, ticks,
@@ -568,9 +551,10 @@ const PnsLanes = (() => {
           onRaster: model.onRaster,
         };
       }
-      const segments = _zigzag(view.edges, bins, k => {
+      // The lane's values are percent, so `binAt` scales them by 100.
+      const segments = ChartMath.minMaxSegments(view.edges, bins, k => {
         const hi = view.max[k];
-        return hi === -Infinity ? null : [view.min[k], hi];
+        return hi === -Infinity ? null : [view.min[k] * 100, hi * 100];
       });
       return {
         lane: { ...meta, segments, minmax: true }, exact: true, binMs: null, gap: false,
@@ -601,7 +585,7 @@ const PnsLanes = (() => {
     const edges = new Float64Array(bins + 1);
     for (let k = 0; k <= bins; k++) edges[k] = t0 + (span * k) / bins;
 
-    const segments = _zigzag(edges, bins, k => {
+    const segments = ChartMath.minMaxSegments(edges, bins, k => {
       let lo = Math.floor(edges[k] / B_L);
       let hi = Math.ceil(edges[k + 1] / B_L) - 1;
       if (lo < 0) lo = 0;
@@ -612,7 +596,7 @@ const PnsLanes = (() => {
         if (level.min[m] < mn) mn = level.min[m];
         if (level.max[m] > mx) mx = level.max[m];
       }
-      return mx === -Infinity ? null : [mn, mx];
+      return mx === -Infinity ? null : [mn * 100, mx * 100];
     });
 
     return {
@@ -653,14 +637,6 @@ const PnsLanes = (() => {
     };
   }
 
-  // A bin width (ms) with a sensible number of digits for the status line:
-  // 3 significant figures, printed without a fixed decimal count (so 6.15,
-  // 24.6, 393 and 1570 all read naturally, instead of a fixed
-  // `toFixed` giving "393.000" or "6.150000").
-  function _fmtBinMs(ms) {
-    return Number(ms.toPrecision(3)).toString();
-  }
-
   // The PNS part of the diagram's status line (plan section 4.5, item 2),
   // for one render's `lanesFor` result (`result`, the return of `lanesFor`
   // above). It reads `result.exact`, and for a result that is not exact
@@ -674,7 +650,7 @@ const PnsLanes = (() => {
   // or less reaches the exact values.
   function statusText(result) {
     if (result.exact) return "PNS: exact.";
-    let text = `PNS: minimum and maximum in bins of ${_fmtBinMs(result.binMs)} ms.`;
+    let text = `PNS: minimum and maximum in bins of ${ChartMath.sig3(result.binMs)} ms.`;
     if (!result.onRaster) {
       text += " The file is not on the gradient raster, so there is no exact view.";
     } else if (result.gap) {

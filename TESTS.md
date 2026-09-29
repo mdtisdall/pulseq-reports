@@ -6203,8 +6203,8 @@ own style for a lane whose value is never negative.
 **How:** The test builds a 60-block pseudo-random model with a nonzero peak |G|,
 calls `GLanes.laneMeta`, and checks each fixed field and the domain/ticks/label
 against `model.wholeFileMax` and the same 3-significant-figure formula
-(`Number(peak.toPrecision(3)).toString()`) `assets/chart_math.js`'s `fmt` and
-`pns_lanes.js`'s `_fmtBinMs` use.
+(`Number(peak.toPrecision(3)).toString()`) that `ChartMath.sig3` computes, which
+`ChartMath.fmt`, `GLanes.laneMeta` and `PnsLanes.statusText` share.
 
 **Assumptions:** None.
 

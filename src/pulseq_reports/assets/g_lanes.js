@@ -41,12 +41,14 @@
 "use strict";
 
 // In Node, `require` this file's sibling `seq_lanes.js` (`minMax`'s `_binEdges` needs
-// its public `blockAt`/`blockStart`) and make it available as the bare global
-// `SeqLanes`, exactly as the browser already has it: page.py loads seq_lanes.js in its
-// own <script> element before this one, and top-level `const` declarations of one
+// its public `blockAt`/`blockStart`) and `chart_math.js` (`segTree`, `minMaxSegments` and
+// `sig3`), and make them available as the bare globals `SeqLanes` and `ChartMath`, exactly
+// as the browser already has them: page.py loads chart_math.js and seq_lanes.js each in
+// its own <script> element before this one, and top-level `const` declarations of one
 // classic <script> are visible as bare identifiers to a later one on the same page, so
-// `SeqLanes` is already in scope there with no import.
+// `SeqLanes` and `ChartMath` are already in scope there with no import.
 if (typeof require === "function") {
+  global.ChartMath = require("./chart_math.js");
   global.SeqLanes = require("./seq_lanes.js");
 }
 
@@ -80,39 +82,6 @@ const GLanes = (() => {
       if (arr[mid] <= x) lo = mid + 1; else hi = mid;
     }
     return lo;
-  }
-
-  // An iterative segment tree over group minima or maxima, the same layout as
-  // seq_lanes.js's (private) `_segTree`: leaves at [n, 2n), node j the extreme of its
-  // two children, `query(lo, hi)` in O(log n). Not imported (that function is private
-  // to seq_lanes.js): a small, deliberate duplicate of the same well-understood
-  // layout, not a divergent copy of its logic (the same choice the prototype made).
-  function _segTree(values, n, isMin) {
-    const id = isMin ? Infinity : -Infinity;
-    const tree = new Float64Array(2 * n).fill(id);
-    for (let j = 0; j < n; j++) tree[n + j] = values[j];
-    for (let j = n - 1; j >= 1; j--) {
-      const a = tree[2 * j], b = tree[2 * j + 1];
-      tree[j] = isMin ? (a < b ? a : b) : (a > b ? a : b);
-    }
-    return {
-      tree, n, isMin,
-      query(lo, hi) {
-        let acc = id;
-        if (isMin) {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v < acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v < acc) acc = v; }
-          }
-        } else {
-          for (let l = lo + n, r = hi + n; l < r; l >>= 1, r >>= 1) {
-            if (l & 1) { const v = tree[l++]; if (v > acc) acc = v; }
-            if (r & 1) { const v = tree[--r]; if (v > acc) acc = v; }
-          }
-        }
-        return acc;
-      },
-    };
   }
 
   // The bin edges e_k = t0 + (t1 - t0) * k / bins (k = 0 ... bins), and the block that
@@ -432,7 +401,7 @@ const GLanes = (() => {
       gMin[g] = lo;
       gMax[g] = hi;
     }
-    return { min: _segTree(gMin, G, true), max: _segTree(gMax, G, false) };
+    return { min: ChartMath.segTree(gMin, G, true), max: ChartMath.segTree(gMax, G, false) };
   }
 
   // ---- decode -------------------------------------------------------------------
@@ -529,30 +498,12 @@ const GLanes = (() => {
   function lanesFor(model, meta, viewMs, bins) {
     const t0 = viewMs[0] / 1000, t1 = viewMs[1] / 1000;
     const view = minMax(model, t0, t1, bins);
-    const segments = [];
-    let current = null;
-    for (let k = 0; k < bins; k++) {
-      if (view.max[k] === -Infinity) {
-        if (current !== null) { segments.push(current); current = null; }
-        continue;
-      }
-      if (current === null) current = [];
-      const centre = view.edges[k] + (view.edges[k + 1] - view.edges[k]) / 2;
-      current.push([view.edges[k] * 1000, view.min[k]], [centre * 1000, view.max[k]]);
-    }
-    if (current !== null) segments.push(current);
+    const segments = ChartMath.minMaxSegments(view.edges, bins, k => (
+      view.max[k] === -Infinity ? null : [view.min[k], view.max[k]]));
     return { ...meta, segments, minmax: true };
   }
 
   // ---- laneMeta ---------------------------------------------------------------------
-
-  // 3 significant figures, without a fixed decimal count (so 6.15, 24.6 and 393 all
-  // read naturally), the same convention `assets/chart_math.js`'s `fmt` and
-  // `pns_lanes.js`'s own `_fmtBinMs` use for a lane's own numbers. |G| is never
-  // negative, so there is no sign to turn into "−".
-  function _fmt(v) {
-    return Number(v.toPrecision(3)).toString();
-  }
 
   // The |G| lane object without "segments" (the `lane_meta` form of
   // `diagram_data.py`, so `laneChart` draws it like the other lanes): "gmag", "|G|",
@@ -572,7 +523,8 @@ const GLanes = (() => {
     const hasGradient = peak > 0;
     const domain = hasGradient ? [0, 1.1 * peak] : [0, 1];
     const ticks = hasGradient ? [0, peak] : [0];
-    const tickLabels = hasGradient ? ["0", _fmt(peak)] : ["0"];
+    // |G| is never negative, so its label has no sign to turn into "−" (`ChartMath.fmt`).
+    const tickLabels = hasGradient ? ["0", ChartMath.sig3(peak)] : ["0"];
     return {
       id: "gmag",
       title: "|G|",
