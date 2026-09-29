@@ -3930,17 +3930,13 @@ browser or DOM. Two kinds of model back the tests:
   ADC window at the start of each block in `adcBlocks`: used for a
   `minMaxLanes` ADC edge case (B2 of `docs/plans/review-bugs.md`, whose
   section 2.3 reports that `buildRandomModel`'s ADC density never reaches
-  this placement). `buildPointBudgetModel` gives every block the same,
+  this placement). `buildEightPointModel` gives every block the same,
   known number of points, so a view can be built that holds exactly
   `EXACT_POINT_LIMIT` points.
 - `buildRandomModel`: a pseudo-random model of any block count (so it can be
   built larger than 1024 or 2048 blocks, to cross a checkpoint boundary),
   seeded for a deterministic sequence, used where the exact points are too
-  many to check by hand. It is the model builder of the scratchpad scripts
-  `validate_minmax.js` and `validate_phase_adc.js`, which the task that
-  wrote this file used to work out `minMaxLanes`'s behavior before writing
-  the tests, copied here so the test file reads nothing from the scratchpad
-  at run time.
+  many to check by hand.
 
 For `minMaxLanes`, most tests compare its output against a brute-force
 computation over `exactLanes`'s whole-file points, written out in the test
@@ -3970,12 +3966,9 @@ formula the Python reference of the golden test of section 2.20 uses).
   itself uses, or plain integer counts.
 - `test_min_max_lanes_matches_brute_force_for_line_lanes_over_several_views`,
   `test_min_max_lanes_matches_brute_force_for_the_rf_phase_lane` and
-  `test_min_max_lanes_matches_brute_force_for_adc_windows` reuse the model
-  sizes, seeds and views of the scratchpad's `validate_minmax.js` and
-  `validate_phase_adc.js`, which already ran them against `seq_lanes.js`
-  with 0 mismatches. This file's tests do not depend on that scratchpad run
-  for their own result: each one recomputes the brute-force comparison
-  itself.
+  `test_min_max_lanes_matches_brute_force_for_adc_windows` compute the
+  expected bins by brute force from the exact whole-file points, and compare
+  `minMaxLanes`'s output with them.
 
 #### `test_decode_throws_for_an_unsupported_format`
 
@@ -4410,7 +4403,7 @@ merged window (and the rest of the bins) matches the brute force.
 view whose point count is at `EXACT_POINT_LIMIT`, and `minMaxLanes`'s lanes
 with `exact: false` for a view just over the limit.
 
-**How:** The test builds `buildPointBudgetModel(2600)`, where every block
+**How:** The test builds `buildEightPointModel(2600)`, where every block
 has exactly 8 points (an RF pulse's 3 magnitude and 1 phase point, plus a gx
 event's 4 points), so 2500 blocks give exactly `EXACT_POINT_LIMIT` (20000)
 points. It finds `tAtLimit`, the midpoint of block 2499 (so the view [0,
