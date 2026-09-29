@@ -171,11 +171,7 @@ def diagram_card(
         for i, w in enumerate(data["windows"])
     )
     svg_id = f"{card_id}-diagram"
-    # The group-controls container (assets/cards/diagram.js: RF, ADC, Gradients, and
-    # PNS when `has_pns`, docs/plans/diagram-lanes.md section 4.5, item 3) is always
-    # present, above the chart and after the window buttons, so that the RF, ADC and
-    # gradient groups can be hidden even when the file has no PNS data. It is empty
-    # here: the card script fills it with one toggle button for each group.
+    lanes_after_adc = "Gx, Gy, Gz, |G| and PNS" if has_pns else "Gx, Gy, Gz and |G|"
     g_note = (
         " The |G| lane shows the magnitude of the gradient vector (the root-sum-of-squares "
         "of Gx, Gy and Gz), as the exact minimum and maximum in each time bin."
@@ -193,8 +189,8 @@ def diagram_card(
         f'<div class="controls" role="group" aria-label="Lanes" id="{card_id}-groups">'
         "</div>\n" + zoom_controls(svg_id) + f'\n<div class="chart" id="{card_id}-chart">\n'
         f'<svg id="{svg_id}" tabindex="0" role="img"\n'
-        '  aria-label="Sequence diagram: RF magnitude and phase, ADC, Gx, Gy and Gz against '
-        'time"></svg>\n'
+        f'  aria-label="Sequence diagram: RF magnitude and phase, ADC, {lanes_after_adc} '
+        'against time"></svg>\n'
         f'<div class="tip" id="{card_id}-tip" hidden></div>\n'
         "</div>\n"
         f'<p class="muted" id="{card_id}-mode" aria-live="polite">Loading…</p>\n'

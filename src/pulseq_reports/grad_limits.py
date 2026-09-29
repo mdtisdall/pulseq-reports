@@ -57,6 +57,9 @@ class AxisResult:
     docstring), otherwise the block whose event has the segment. `rms_mt_per_m` is the RMS
     amplitude over the range that `GradientLimits.range_s` gives, not over the whole sequence
     when a window is used.
+
+    The gradient limits card does not show `peak_block`, `slew_block`, `peak_time_s` or
+    `GradientLimits.vector_peak_time_s` yet.
     """
 
     peak_mt_per_m: float
@@ -73,9 +76,10 @@ class GradientLimits:
 
     `reason` is None when the range has at least one gradient event on some axis. Otherwise it
     is a short human-readable string, for example "no gradient events in the sequence", and
-    every numeric field is its zero value: 0.0 for an amplitude, slew or RMS field, and 0.0 for
-    `vector_peak_time_s`; every block field (`AxisResult.peak_block`, `AxisResult.slew_block`)
-    is None. `range_s` still holds the range that was used.
+    every numeric field is its zero value, except `whole_rms_mt_per_m`, which is the RMS of the
+    whole file when `window` is given. The zero value is 0.0 for an amplitude, slew or RMS
+    field, and 0.0 for `vector_peak_time_s`; every block field (`AxisResult.peak_block`,
+    `AxisResult.slew_block`) is None. `range_s` still holds the range that was used.
 
     `vector_peak_mt_per_m` is the largest magnitude of the three-axis gradient vector over the
     range. There is no vector slew field. The RMS of the vector magnitude is the square root of
@@ -294,11 +298,16 @@ def _range_result(
     Blocks fully inside the range use the per-event values (`_axis_slice_stats`,
     `_triple_vector_peak`), over the contiguous play-index range that
     `seq_index.SequenceIndex.start_s` gives (blocks are in time order, so the "fully inside"
-    blocks are one contiguous run). The few blocks that a range edge cuts (at most two, plus a
-    block of zero duration at an edge) are read with `get_block` and clipped exactly as the
-    implementation before phase 4 of `docs/plans/cards-at-scale.md` did for every block. Passing
-    `lo=0.0, hi=index.end_s` (`window=None`) makes every block "fully inside", so this same code
-    computes the whole-file result too.
+    blocks are one contiguous run). The few blocks that a range edge cuts (at most two: a
+    block of zero duration at a range edge is skipped) are read with `get_block` and clipped
+    exactly as the oracle (`tests/oracles/grad_limits.py`) clips every block. Passing
+    `lo=0.0, hi=index.end_s` (`window=None`) makes every block of non-zero duration fully
+    inside (a block of zero duration at 0 or at the end is skipped, and it has no gradient), so
+    this same code computes the whole-file result too.
+
+    On an exact tie between a block of the slice and a block that the range start cuts, the
+    block of the slice gets the credit, not the earlier block. The oracle credits the earlier
+    block (finding L3 of the review).
     """
     n = index.num_blocks
     start_s = index.start_s
@@ -334,7 +343,7 @@ def _range_result(
                 state[axis].update(stats)
                 state[axis]["has_event"] = True
 
-    # The blocks a range edge cuts: read individually and clipped, as the pre-phase-4 code did.
+    # The blocks a range edge cuts: read individually and clipped, as the oracle does.
     edge_positions = np.flatnonzero(processed & ~fully_inside)
     axis_points_by_play: dict[int, dict[str, tuple[np.ndarray, np.ndarray]]] = {}
     if edge_positions.size:
@@ -376,7 +385,7 @@ def _range_result(
 
     # The vector peak of |G|: the distinct triples of the "fully inside" range, one
     # _triple_vector_peak call for each (section 4.6, item 3), plus the edge blocks' own
-    # clipped points, exactly as the pre-phase-4 code computed them.
+    # clipped points, exactly as the oracle computes them.
     vector_peak_hz, vector_peak_time = 0.0, 0.0
     k = ev.peak.size
     if i1 > i0 and k:
@@ -435,7 +444,7 @@ def _range_result(
             # Only a strictly positive step is a real junction, matching the segment
             # search below (which starts its running max at 0.0 too): a step of
             # exactly 0.0 everywhere (for example an axis with no event at all) must
-            # stay uncredited (slew_block None), like the pre-phase-4 code.
+            # stay uncredited (slew_block None).
             if candidate > junction_max:
                 junction_max, junction_play = candidate, j
 
@@ -535,17 +544,15 @@ def gradient_limits(
         seq, index, ev, lo, hi, grad_raster
     )
 
-    if not has_event:
-        reason = (
-            "no gradient events in the window"
-            if window is not None
-            else "no gradient events in the sequence"
-        )
-        zero_axes = {axis: AxisResult(0.0, 0.0, None, 0.0, None, 0.0) for axis in _AXES}
-        return GradientLimits(reason, range_s, zero_axes, 0.0, 0.0, limits, whole_rms_mt_per_m)
+    if has_event:
+        reason = None
+    elif window is not None:
+        reason = "no gradient events in the window"
+    else:
+        reason = "no gradient events in the sequence"
 
     return GradientLimits(
-        reason=None,
+        reason=reason,
         range_s=range_s,
         axes=axes,
         vector_peak_mt_per_m=vector_peak_mt_per_m,

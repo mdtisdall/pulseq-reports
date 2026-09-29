@@ -32,9 +32,11 @@ from .sampling import GradientSampler, raster_block_lengths
 from .seq_index import sequence_index
 
 # The longest exact view of the browser (`PnsLanes.EXACT_MAX_S`), in s. The finest stored
-# bin is at most half a display bin at this view (section 4.2, decision 13).
+# bin is at most half a display bin at this view (section 4.2, decision 13). Keep the two
+# equal.
 EXACT_MAX_S = 10.0
-# The number of display bins of the diagram chart.
+# The number of display bins of the diagram chart: `PLOT_W` of `assets/lane_chart.js`
+# (960 - 128 - 20). Keep the two equal.
 DISPLAY_BINS = 812
 # The largest number of stored bins for one file (section 4.2).
 MAX_BINS = 2_000_000
@@ -71,12 +73,7 @@ def bin_samples_for(num_samples: int, dt: float) -> int:
     return max(finest, coarsest_for_size, 1)
 
 
-def pns_levels(
-    seq: pp.Sequence,
-    asc_path: str | Path | None = None,
-    *,
-    chunk_samples: int | None = None,
-) -> PnsLevels:
+def pns_levels(seq: pp.Sequence, asc_path: str | Path | None = None) -> PnsLevels:
     """The stored level and the summary of the SAFE PNS total of `seq`, with the hardware
     of the gradient .asc file `asc_path`, or pypulseq's example hardware when it is None
     (as `pns.pns_prediction` chooses them, with `pns.read_gradient_asc`,
@@ -91,10 +88,10 @@ def pns_levels(
        samples, with `k = 0 .. ceil((end - 1e-10) / dt) - 1` and `end` the end of the
        last block (`calc_pns` stops at the last gradient point instead; the samples
        after it are the decay of the filters).
-    2. The samples go through `_safe_gwf_to_pns_chunk` in chunks of `chunk_samples`
-       samples (default: the whole number of bins nearest at or above
-       `CHUNK_SAMPLES`; a keyword for the tests, and it must be a whole number of
-       bins), with `state=None` for the first chunk and the returned state after.
+    2. The samples go through `_safe_gwf_to_pns_chunk` in chunks of
+       `bin_samples * ceil(CHUNK_SAMPLES / bin_samples)` samples (the whole number of
+       bins nearest at or above `CHUNK_SAMPLES`), with `state=None` for the first chunk
+       and the returned state after.
     3. The axis values are `0.01 *` the returned percent, and the total of a sample is
        `sqrt(x^2 + y^2 + z^2)` of them, with the numpy operations of `calc_pns`
        (`np.sqrt((comp ** 2).sum(axis=1))`).
@@ -110,13 +107,14 @@ def pns_levels(
        (12 numbers) and the float64 maximum of each chunk, and runs again only the
        first chunk whose maximum reaches the threshold.
 
-    The result does not depend on `chunk_samples` (exact equality). A sequence without
+    The result does not depend on the chunk size (exact equality). A sequence without
     a gradient event gives `reason=pns.NO_GRADIENTS`, no bins, peak 0 and
     `peak_time_s` None. Memory: the chunk, the longest block, the stored level and a
     few numbers for each chunk.
 
     Raises NotImplementedError for a sequence with the rotation extension
-    (`extensions.refuse_rotations`), as the other gradient cards do.
+    (`extensions.refuse_rotations`), as the gradient cards and the functions of
+    `rf_profiles.py` do.
     """
     refuse_rotations(seq)
     dt = seq.grad_raster_time
@@ -153,9 +151,10 @@ def pns_levels(
     sampler = GradientSampler(seq, index)
     gamma = seq.system.gamma
 
+    # After `_has_gradients`, `num_samples >= 1`, and each chunk has one sample or more.
     if on_raster:
         cumulative = np.cumsum(block_lengths)
-        num_samples = int(cumulative[-1]) if cumulative.size else 0
+        num_samples = int(cumulative[-1])
 
         def read_range(s0: int, s1: int) -> np.ndarray:
             return _read_block_range(sampler, dt, gamma, cumulative, s0, s1)
@@ -168,19 +167,13 @@ def pns_levels(
             return _read_sampled_range(sampler, dt, gamma, s0, s1)
 
     bin_samples = bin_samples_for(num_samples, dt)
-    if chunk_samples is None:
-        chunk_samples = bin_samples * math.ceil(CHUNK_SAMPLES / bin_samples)
-    elif chunk_samples <= 0 or chunk_samples % bin_samples != 0:
-        raise ValueError(
-            f"chunk_samples must be a positive whole number of bins ({bin_samples}): "
-            f"{chunk_samples!r}"
-        )
+    chunk_samples = bin_samples * math.ceil(CHUNK_SAMPLES / bin_samples)
 
-    num_bins = math.ceil(num_samples / bin_samples) if num_samples else 0
+    num_bins = math.ceil(num_samples / bin_samples)
     level_min = np.empty(num_bins, dtype=np.float32)
     level_max = np.empty(num_bins, dtype=np.float32)
 
-    num_chunks = math.ceil(num_samples / chunk_samples) if num_samples else 0
+    num_chunks = math.ceil(num_samples / chunk_samples)
     state = None
     peak = 0.0
     axis_peak = np.zeros(3, dtype=np.float64)
@@ -196,25 +189,24 @@ def pns_levels(
         state_before = state
         total, axis_frac, state = _chunk_total(gwf, dt, hw_ns, state_before)
 
-        axis_peak = np.maximum(axis_peak, axis_frac.max(axis=0) if axis_frac.size else axis_peak)
-        chunk_max = float(total.max()) if total.size else 0.0
+        axis_peak = np.maximum(axis_peak, axis_frac.max(axis=0))
+        chunk_max = float(total.max())
         peak = max(peak, chunk_max)
         chunk_records.append((s0, state_before, chunk_max))
 
         bin_cursor = _store_bins(level_min, level_max, bin_cursor, total, bin_samples)
 
     peak_time_s = None
-    if chunk_records:
-        threshold = peak * (1 - pns.PEAK_TOLERANCE)
-        for s0, state_before, chunk_max in chunk_records:
-            if chunk_max < threshold:
-                continue
-            s1 = min(s0 + chunk_samples, num_samples)
-            gwf = read_range(s0, s1)
-            total, _, _ = _chunk_total(gwf, dt, hw_ns, state_before)
-            first = int(np.flatnonzero(total >= threshold)[0])
-            peak_time_s = (s0 + first + 0.5) * dt
-            break
+    threshold = peak * (1 - pns.PEAK_TOLERANCE)
+    for s0, state_before, chunk_max in chunk_records:
+        if chunk_max < threshold:
+            continue
+        s1 = min(s0 + chunk_samples, num_samples)
+        gwf = read_range(s0, s1)
+        total, _, _ = _chunk_total(gwf, dt, hw_ns, state_before)
+        first = int(np.flatnonzero(total >= threshold)[0])
+        peak_time_s = (s0 + first + 0.5) * dt
+        break
 
     return PnsLevels(
         reason=None,
