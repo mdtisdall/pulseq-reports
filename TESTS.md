@@ -7416,3 +7416,151 @@ card body says "No RF pulses." for that file.
 **How:** A sequence with one trapezoid and one delay block, no RF.
 
 **Assumptions:** None.
+
+### 2.35 RF profiles against external references (`test_rf_references.py`)
+
+`test_rf_references.py` holds the Python reference of RF pulse profiles (`rf_profiles`,
+`rf_sim`) to external references: phase 2b of `docs/plans/rf-profiles.md` (decision 5,
+section 3.5, item 4). The fixtures in `tests/fixtures/rf_references/` (one JSON file
+for each case, at most 200 KB) come from `scripts/rf_references.py`, which runs MATLAB
+Pulseq's `mr.simRf` in GNU Octave (MATLAB Pulseq pinned to one commit in the
+`rf-references` shell of `flake.nix`) and sigpy 0.1.27 (in its own locked environment,
+`scripts/rf_references_sigpy.py`). Each fixture holds its provenance, the `.seq` file of
+its case (gzip and base64) with the system values that a `.seq` file does not store
+(B0, gamma, the rasters), a fingerprint of the pulse as `block_pulse` reads it, and the
+reference outputs. The test needs neither Octave nor sigpy: it reads each `.seq` file
+with pypulseq and computes the profiles with the reference functions. Each tolerance
+is measured (2026-09-28), with its reason in the test.
+
+#### `test_fixtures_have_provenance_and_are_small`
+
+**Checks:** The fixture directory has exactly one JSON file for each case; each is at
+most 200 KB (the plan's limit) and records its generator, the pypulseq version, the
+MATLAB Pulseq commit and the Octave version (MATLAB cases), and the sigpy version
+(sigpy cases).
+
+**How:** Reads each fixture.
+
+**Assumptions:** None.
+
+#### `test_pulse_matches_the_fixture_fingerprint`
+
+**Checks:** For each case, the pulse that `rf_profiles.block_pulse` reads from the
+fixture's `.seq` file matches the fingerprint that the fixture recorded when the
+references were computed: the number of samples, the gradient kind, `dt`, the sums of
+the real and imaginary parts of the RF, its peak, and the sum and peak of each gradient
+axis. So a failure of the other tests is a difference of the simulation, not of the
+input; a failure here means that the reader, the hold rule or the interval gradients
+changed, and the fixtures must be written again.
+
+**How:** Parametrized over the 10 cases. `dt` with a relative 1e-12; each sum and peak
+within 1e-12 times the sum of the magnitudes of its terms (the terms of a sinc or a
+bipolar gradient cancel), which allows only float rounding of another numpy or pypulseq
+version.
+
+**Assumptions:** pypulseq reads the `.seq` file the same way as when the fixture was
+written (the fingerprint checks it).
+
+#### `test_simrf_of_its_resampled_rf`
+
+**Checks:** `rf_sim.spin_domain`, on the RF that MATLAB Pulseq's `mr.simRf` simulates
+(after its own resampling), gives `mr.simRf`'s Mz, |Mxy| and |refocusing efficiency|
+(which equals |β|²) at its frequencies, within 1e-12. This checks the rotation itself
+(quaternions in `mr.simRf`, Cayley-Klein parameters here), and that the frequency of
+`mr.simRf` is the frequency offset `df` of this project, with the same sign.
+
+**How:** Parametrized over the 7 MATLAB cases (sinc excitation, sinc refocusing, block
+pulse, sinc with frequency and phase offsets, Gaussian fat saturation at −3.45 ppm,
+hyperbolic secant, SLR). The fixture has the resampled RF (rad/s, one value for each
+step of `mr.simRf`) and at most 601 points of its frequency axis. Measured: at most
+1.2e-14.
+
+**Assumptions:** The fixture's resampled RF is what `mr.simRf` simulates:
+`scripts/rf_references_simrf.m` computes it with a copy of the lines of `simRf.m`
+(the agreement to 1e-14 confirms the copy).
+
+#### `test_simrf_of_the_pulse_as_played`
+
+**Checks:** `rf_profiles.simulate` of the pulse as played (`block_pulse` of the same
+`.seq` file: the hold samples with the offsets, and B0 of the fixture for a ppm offset),
+on the frequency axis of `mr.simRf` at r = 0 (`mr.simRf` has no gradient), gives
+`mr.simRf`'s Mz, |Mxy| and |β|² within the tolerance of the case.
+
+**How:** Parametrized over the 7 MATLAB cases. The spec is a `df` axis over the
+fixture's frequencies (the grid must match them within 1e-9 Hz; numpy's and MATLAB's
+`linspace` differ by 7e-12 Hz at most). `mr.simRf` resamples the RF linearly to steps of
+10 µs (5, 2 or 1 µs for a wide bandwidth), and the reference holds each 1 µs sample; the
+test of the resampled RF shows that the rest agrees to float rounding, so the difference
+here is the resampling. Tolerances (the measured maximum of the three quantities, times
+3, rounded up): sinc excitation 2e-4 (6.3e-5), sinc refocusing 3e-4 (7.5e-5), sinc with
+offsets 8e-4 (2.4e-4), fat saturation 3e-4 (7.0e-5), hyperbolic secant 2e-4 (5.2e-5);
+1e-12 for the block pulse (1.8e-14: linear resampling does not change a constant pulse)
+and for the SLR pulse (4.2e-14: each design sample is held 10 µs, and `mr.simRf` takes
+one 10 µs step at the centre of each). A wrong frequency sign gave 0.99, and a ppm
+offset with the wrong B0 gave 0.76.
+
+**Assumptions:** None.
+
+#### `test_abrm_nd`
+
+**Checks:** `rf_profiles.simulate` of the pulse (its hold samples and interval
+gradients) at the points of the fixture's grid gives the `a` and `b` of sigpy's
+`abrm_nd`, within 1e-12: a sinc with its slice-select gradient (201 points on z), a sinc
+across the ramps of its gradient (201 points on z), a sinc with an oblique gradient
+(31 × 31 points on x-y), and a pulse whose gradient direction turns twice (31 × 31 points
+on x-y, kind "changing").
+
+**How:** Parametrized over the 4 sigpy cases. sigpy gets the reference's own hold
+samples and interval gradients (times 2π dt) and the points that `simulate` builds, so
+this checks the rotation in 1D and 2D, not the interval gradients (the analytic tests of
+`test_rf_profiles.py` check those). `abrm_nd` uses the same Cayley-Klein formulas with
+the operations in another order. Measured: at most 1.6e-13 (3000 samples).
+
+**Assumptions:** None.
+
+#### `test_slr_profile_equals_sigpy_abrm_of_the_design`
+
+**Checks:** An SLR 90° excitation designed by sigpy (`dzrf`: 256 samples,
+time-bandwidth product 4, ptype "ex", ftype "ls", d1 = d2 = 0.01), each design sample
+held 10 µs on the 1 µs RF raster: `rf_profiles.simulate` on 601 frequencies (±3 kHz)
+gives the `a` and `b` of sigpy's own 1D simulator of SLR design (`abrm`) at x = f ×
+duration (cycles per pulse), within 1e-12. First, one sample of each held group of the
+pulse read from the `.seq` file equals the stored design of the fixture, within 1e-12.
+
+**How:** `abrm` gets the design as the `.seq` file stores it: pypulseq writes RF shapes
+with about 7 significant digits, which moves the design by 7.5e-7 of its peak (the
+fixture records it), and moves `a` and `b` by 4.6e-7. Measured: at most 1.8e-14. The
+design ripples are not a check: they are not a bound for a 90° "ls" design, and sigpy's
+own simulation of its design exceeds them (passband 1.5e-2, stopband 5.2e-2, against
+0.01; decision 24 of the plan).
+
+**Assumptions:** None.
+
+#### `test_hyperbolic_secant_inverts_its_analytic_band`
+
+**Checks:** pypulseq's default hyperbolic secant inversion (`make_adiabatic_pulse`
+"hypsec": beta 800 rad/s, mu 4.9, 10 ms, adiabaticity 4, so w1_max = 2 sqrt(mu) beta)
+gives Mz ≤ −0.9 (the plan's bound) at each frequency where the analytic Mz of the
+untruncated pulse is at most −0.99 (|f| ≤ 405 Hz of the ±624 Hz sweep).
+
+**How:** 601 frequencies over ±1.5 kHz. The analytic Mz is the Silver, Joseph and Hoult
+solution (Phys. Rev. A 31, 2753, 1985), as Eq. [23] of Zhang, Garwood and Park (Magn.
+Reson. Med. 77, 1630, 2017), written out in the test. Measured: Mz ≤ −0.9926 in the
+band. The pulse is truncated at beta t = ±4, which moves its profile from the analytic
+one by up to 0.12 near the band edges, so the band is where the analytic inversion is
+deep.
+
+**Assumptions:** None.
+
+#### `test_hyperbolic_secant_approaches_the_analytic_profile`
+
+**Checks:** The same hyperbolic secant, longer (20 and 30 ms, so that sech(beta t) is
+truncated at 6.7e-4 and 1.2e-5), gives the analytic Mz at every frequency within 1e-2
+and 2e-4.
+
+**How:** Measured max |Mz − analytic|: 0.125 at 10 ms, 3.0e-3 at 20 ms, 5.9e-5 at
+30 ms. The difference is the truncation (the analytic solution is for an untruncated
+pulse), and it falls with it; the tolerances are the measured values times 3, rounded
+up. The two simulations take about 1.3 s.
+
+**Assumptions:** None.
