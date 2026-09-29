@@ -6,9 +6,11 @@ from synthetic import SYSTEM, block_pulse, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import pns
 from pulseq_reports import pns_levels as pns_levels_module
+from pulseq_reports.asc import EXAMPLE_HARDWARE, hardware_name, read_gradient_asc
 from pulseq_reports.cards.diagram import diagram_card
-from pulseq_reports.cards.pns import pns_data
+from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.pns import pns_levels_for
+from pulseq_reports.pns_levels import NO_GRADIENTS
 from pulseq_reports.waveforms import full_window
 
 
@@ -77,7 +79,7 @@ def test_example_hardware_for_spin_echo(example, default_seq):
     `PnsLevels`)."""
     ref = pns_levels_module.pns_levels(default_seq)
     assert example.reason is None
-    assert example.hardware == pns.EXAMPLE_HARDWARE
+    assert example.hardware == EXAMPLE_HARDWARE
     assert example.asc_file is None
     assert list(example.axis_peaks) == ["x", "y", "z"]
     assert 0 < example.peak < 1
@@ -89,7 +91,7 @@ def test_example_hardware_for_spin_echo(example, default_seq):
 
 def test_asc_file_with_the_example_parameters(default_seq, example, write_gradient_asc):
     path = write_gradient_asc()
-    p = pns.pns_prediction(default_seq, path)
+    p = pns.pns_prediction(default_seq, gradient_asc=path)
     assert p.reason is None
     assert p.hardware == "MP_GPA_TEST"
     assert p.asc_file == path.name
@@ -101,7 +103,7 @@ def test_asc_file_with_the_example_parameters(default_seq, example, write_gradie
 
 def test_asc_file_that_includes_the_pns_parameters(default_seq, example, write_gradient_asc):
     path = write_gradient_asc(split=True)
-    p = pns.pns_prediction(default_seq, path)
+    p = pns.pns_prediction(default_seq, gradient_asc=path)
     assert p.reason is None
     assert p.hardware == "MP_GPA_TEST"
     assert p.asc_file == path.name
@@ -116,32 +118,32 @@ def test_asc_file_with_a_missing_include(write_gradient_asc):
     safety = path.with_name(f"{path.stem}_GSWD_SAFETY.asc")
     safety.unlink()
     with pytest.raises(FileNotFoundError, match=f"{path.name} includes {safety.name}"):
-        pns.read_gradient_asc(path)
+        read_gradient_asc(path)
 
 
 def test_included_fields_replace_fields_with_the_same_name(tmp_path):
     (tmp_path / "inc.asc").write_text('a.b[1] = 3\nc = "new"\n')
     main = tmp_path / "main.asc"
     main.write_text('a.b[0] = 1\na.b[1] = 2\nc = "old"\n$INCLUDE inc.asc\n')
-    assert pns.read_gradient_asc(main) == {"a": {"b": {0: 1, 1: 3}}, "c": "new"}
+    assert read_gradient_asc(main) == {"a": {"b": {0: 1, 1: 3}}, "c": "new"}
 
 
 def test_hardware_name():
-    assert pns.hardware_name({"asCOMP": {0: {"tName": "GPAK2309"}}}) == "GPAK2309"
-    assert pns.hardware_name({"asCOMP": {"tName": "MP_GPA_TEST"}}) == "MP_GPA_TEST"
-    assert pns.hardware_name({}) == "unknown"
+    assert hardware_name({"asCOMP": {0: {"tName": "GPAK2309"}}}) == "GPAK2309"
+    assert hardware_name({"asCOMP": {"tName": "MP_GPA_TEST"}}) == "MP_GPA_TEST"
+    assert hardware_name({}) == "unknown"
 
 
 def test_prediction_scales_with_the_stimulation_limit(default_seq, example, write_gradient_asc):
-    p = pns.pns_prediction(default_seq, write_gradient_asc(limit_scale=0.1))
+    p = pns.pns_prediction(default_seq, gradient_asc=write_gradient_asc(limit_scale=0.1))
     assert p.peak == pytest.approx(10 * example.peak, rel=1e-9)
     assert p.peak > 1
 
 
 def test_no_gradients():
     p = pns.pns_prediction(empty_sequence())
-    assert p.reason == pns.NO_GRADIENTS
-    assert p.hardware == pns.EXAMPLE_HARDWARE
+    assert p.reason == NO_GRADIENTS
+    assert p.hardware == EXAMPLE_HARDWARE
     assert p.peak == 0
     assert p.peak_time_s is None
 
@@ -152,7 +154,7 @@ def test_no_gradients_with_rf_and_adc():
     seq.add_block(
         pp.make_adc(num_samples=64, dwell=20e-6, delay=SYSTEM.adc_dead_time, system=SYSTEM)
     )
-    assert pns.pns_prediction(seq).reason == pns.NO_GRADIENTS
+    assert pns.pns_prediction(seq).reason == NO_GRADIENTS
 
 
 @pytest.mark.parametrize("channel", ["x", "y", "z"])
@@ -259,55 +261,66 @@ def test_peak_tr_window_without_a_peak_time_is_none():
 
 
 def _count_pns_levels_calls(monkeypatch) -> list:
-    """Patches `pns_levels.pns_levels` (as `pns.pns_levels_for` imports it, one time for
-    each call) with a wrapper that records one entry for each call, and returns the
-    list. `pns.pns_levels_for` looks up the current module attribute on every call (a
-    local import inside the function, to avoid a circular import with `pns_levels.py`),
-    so patching the module attribute here reaches it."""
+    """Patches `pns.pns_levels` (the name that `pns.pns_levels_for` calls) with a wrapper
+    that records one entry for each call, and returns the list."""
     calls: list = []
-    original = pns_levels_module.pns_levels
+    original = pns.pns_levels
 
     def counted(*args, **kwargs):
         calls.append(1)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(pns_levels_module, "pns_levels", counted)
+    monkeypatch.setattr(pns, "pns_levels", counted)
     return calls
 
 
 def test_pns_levels_for_shares_one_computation_with_the_pns_card_and_the_diagram(
     monkeypatch,
 ):
-    """The PNS summary card (`cards.pns.pns_data`) and the diagram's PNS lane
-    (`cards.diagram.diagram_card(..., pns=True)`) both read `pns.pns_levels_for`, so
+    """The PNS summary card (`cards.pns.pns_card`) and the diagram's PNS lane
+    (`cards.diagram.diagram_card(..., pns_lane=True)`) both read `pns.pns_levels_for`, so
     for one sequence the SAFE model runs once, not twice (`docs/plans/diagram-lanes.md`,
     section 4.6). Adding a block changes the sequence, so the next call recomputes."""
     calls = _count_pns_levels_calls(monkeypatch)
     seq = spin_echo_sequence()
 
-    pns_data(seq)
-    diagram_card(seq, [full_window(seq)], pns=True)
+    pns_card(seq)
+    diagram_card(seq, [full_window(seq)], pns_lane=True)
     assert len(calls) == 1
 
     seq.add_block(pp.make_delay(1e-3))
-    pns_data(seq)
+    pns_card(seq)
     assert len(calls) == 2
 
 
-def test_pns_levels_for_recomputes_for_a_different_asc_path(monkeypatch, write_gradient_asc):
-    """`pns_levels_for` keeps one result for each (sequence, asc path): calling it again
-    for the same sequence with a different `.asc` file recomputes, and going back to the
-    first path recomputes again (the kept result is only the most recent one)."""
+def test_pns_levels_for_keeps_one_result_for_each_asc_file(monkeypatch, write_gradient_asc):
+    """`pns_levels_for` keeps one result for each (sequence, gradient .asc file): the same
+    file is cached, a different file computes once, and going back to the first file does
+    not compute again (a, a, b, a gives 2 calls)."""
     calls = _count_pns_levels_calls(monkeypatch)
     seq = spin_echo_sequence()
     path_a = write_gradient_asc(name="MP_GPA_A")
     path_b = write_gradient_asc(name="MP_GPA_B")
 
-    pns_levels_for(seq, path_a)
+    pns_levels_for(seq, gradient_asc=path_a)
     assert len(calls) == 1
-    pns_levels_for(seq, path_a)  # same sequence, same path: cached
+    pns_levels_for(seq, gradient_asc=path_a)  # same sequence, same file: cached
     assert len(calls) == 1
-    pns_levels_for(seq, path_b)  # a different path: recomputes
+    pns_levels_for(seq, gradient_asc=path_b)  # a different file: computes
     assert len(calls) == 2
-    pns_levels_for(seq, path_a)  # back to path_a: recomputes again (not a 2-entry cache)
-    assert len(calls) == 3
+    pns_levels_for(seq, gradient_asc=path_a)  # back to path_a: cached
+    assert len(calls) == 2
+
+
+def test_pns_levels_for_alternating_two_hardwares_runs_the_model_two_times(
+    monkeypatch, write_gradient_asc
+):
+    """Two keys alternated (a, b, a, b) run the model two times, not four: the example
+    hardware (key None) and a file are two hardwares of one sequence."""
+    calls = _count_pns_levels_calls(monkeypatch)
+    seq = spin_echo_sequence()
+    path = write_gradient_asc()
+
+    for gradient_asc in (None, path, None, path):
+        pns_levels_for(seq, gradient_asc=gradient_asc)
+    assert len(calls) == 2

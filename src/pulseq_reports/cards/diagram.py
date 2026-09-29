@@ -8,14 +8,14 @@ exact waveform when a view has few enough points, or the minimum and the maximum
 each lane in each of the plot's time bins otherwise, so the card works for a file of up
 to 10^7 blocks (`docs/plans/diagram-event-table.md`).
 
-With `pns` not False, a sequence that has a gradient event also gets a `"pns"` key in
+With `pns_lane`, a sequence that has a gradient event also gets a `"pns"` key in
 the card's `"file"` entry (`docs/plans/diagram-lanes.md`, section 4.4): the SAFE
 hardware, the gradient raster, the gyromagnetic-ratio scale and the stored minimum/maximum
-level of `pns.pns_levels_for` (the same `PnsLevels` that the PNS summary card uses, so a
-page with both computes the SAFE model once for one sequence). The browser
-(`assets/pns_lanes.js`) decodes it into the PNS lane. `pns` is False by default:
-computing it costs the SAFE model's own time (section 4.1 of that plan), which a caller
-opts into.
+level of `pns.pns_levels_for` (the same `PnsLevels` that the PNS summary card uses for the same
+`gradient_asc`, so a page with both computes the SAFE model once for one sequence). The
+browser (`assets/pns_lanes.js`) decodes it into the PNS lane. `pns_lane` is False by
+default: computing it costs the SAFE model's own time (section 4.1 of that plan), which
+a caller opts into.
 """
 
 import html
@@ -40,7 +40,7 @@ def _ms(t_s: float) -> float:
 
 def _pns_entry(seq: pp.Sequence, levels: PnsLevels) -> dict:
     """The `"pns"` key of the `"file"` entry (`docs/plans/diagram-lanes.md`, section 4.4),
-    from `levels` (`pns.pns_levels_for(seq, asc_path)`): the hardware, the SAFE
+    from `levels` (`pns.pns_levels_for(seq, gradient_asc=...)`): the hardware, the SAFE
     parameters, the gradient raster and the gyromagnetic-ratio scale (`seq_utils.GAMMA /
     seq.system.gamma`, decision 14 of that plan), the summary, and the stored level,
     encoded as `diagram_data.encode_tables` encodes a table."""
@@ -67,30 +67,32 @@ def _validate(seq: pp.Sequence, windows: Sequence[TimeWindow]) -> None:
     _check_windows(seq, windows)
 
 
-def _diagram_data(seq: pp.Sequence, windows: Sequence[TimeWindow], pns: bool | str | Path) -> dict:
+def _diagram_data(
+    seq: pp.Sequence,
+    windows: Sequence[TimeWindow],
+    pns_lane: bool,
+    gradient_asc: str | Path | None,
+) -> dict:
     """The card data (section 4.1 of `docs/plans/diagram-event-table.md`, plus the
     `"pns"` key of section 4.4 of `docs/plans/diagram-lanes.md`):
     `{"format": 2, "file": {...}, "windows": [...]}`.
 
     `file` has `duration_s`, `num_blocks`, `lanes` (`lane_meta`) and `tables`
     (`encode_tables(diagram_tables(seq))`). `diagram_tables(seq)` is built once and
-    passed to `lane_meta` so it is not built twice. When `pns` is not False and the
+    passed to `lane_meta` so it is not built twice. When `pns_lane` is true and the
     sequence has a gradient event, `file` also gets a `"pns"` key (`_pns_entry`); a
     sequence without gradients gets no `"pns"` key. `windows` has one entry for each of
     `windows`: `label` and `view_ms`.
     """
-    # None for the example hardware (pns is True); the given path for pns is a path.
-    # Unused when pns is False (guarded below), so its value there does not matter.
-    asc_path = None if pns is True else pns
     tables = diagram_tables(seq)
     file = {
         "duration_s": duration_s(seq),
         "num_blocks": len(seq.block_events),
-        "lanes": lane_meta(seq, tables),
+        "lanes": lane_meta(seq, tables=tables),
         "tables": encode_tables(tables),
     }
-    if pns is not False:
-        levels = pns_levels_for(seq, asc_path)
+    if pns_lane:
+        levels = pns_levels_for(seq, gradient_asc=gradient_asc)
         if levels.reason is None:
             file["pns"] = _pns_entry(seq, levels)
     out_windows = [{"label": w.label, "view_ms": [_ms(w.start_s), _ms(w.end_s)]} for w in windows]
@@ -101,7 +103,8 @@ def diagram_card(
     seq: pp.Sequence,
     windows: Sequence[TimeWindow],
     *,
-    pns: bool | str | Path = False,
+    pns_lane: bool = False,
+    gradient_asc: str | Path | None = None,
     card_id: str = "diagram",
 ) -> Card:
     """The "Sequence diagram" card: one button for each of `windows`, in the given
@@ -112,12 +115,13 @@ def diagram_card(
     under the chart (`{card_id}-mode`) says whether the current view is exact or a
     minimum/maximum of time bins.
 
-    `pns` (`docs/plans/diagram-lanes.md`, section 4.7) adds a PNS lane: `False` (the
-    default) computes no PNS and adds no `"pns"` key; `True` predicts with pypulseq's
-    example hardware; a string or `Path` predicts with the gradient `.asc` file at that
-    path. A sequence with no gradient event gets no `"pns"` key even when `pns` is not
-    False. The PNS prediction is `pns.pns_levels_for`, which a PNS summary card for the
-    same sequence (`cards.pns.pns_card`) shares, so the SAFE model runs once.
+    `pns_lane` (`docs/plans/diagram-lanes.md`, section 4.7) adds a PNS lane: `False` (the
+    default) computes no PNS and adds no `"pns"` key. `gradient_asc` is the gradient
+    `.asc` file of the scanner for the lane, or None for pypulseq's example hardware; it
+    needs `pns_lane=True`. A sequence with no gradient event gets no `"pns"` key even
+    when `pns_lane` is true. The PNS prediction is `pns.pns_levels_for`, which a PNS
+    summary card for the same sequence and the same `gradient_asc`
+    (`cards.pns.pns_card`) shares, so the SAFE model runs once.
 
     A group-controls container (`{card_id}-groups`) sits above the chart, after the
     window buttons: the card script (`assets/cards/diagram.js`) fills it with one
@@ -129,15 +133,21 @@ def diagram_card(
     function. The explanation paragraph under the chart always gets one sentence about
     the |G| lane, and one more about the PNS lane when the card has PNS data.
 
-    Raises `ValueError` when `windows` is empty, or a window is not inside the sequence
-    or does not end after its start (the message names the window's label). Raises
+    Raises `TypeError` when `pns_lane` is not a `bool`. Raises `ValueError` when
+    `gradient_asc` is given and `pns_lane` is False, when `windows` is empty, or when a
+    window is not inside the sequence or does not end after its start (the message names
+    the window's label). Raises
     `NotImplementedError` (`extensions.refuse_rotations`) for a sequence that uses the
     Pulseq rotation extension: this card shows unrotated gradient events, which would
     be wrong for such a sequence.
     """
+    if not isinstance(pns_lane, bool):
+        raise TypeError(f"pns_lane must be a bool, not {type(pns_lane).__name__}")
+    if gradient_asc is not None and not pns_lane:
+        raise ValueError("gradient_asc needs pns_lane=True")
     _validate(seq, windows)
     refuse_rotations(seq)
-    data = _diagram_data(seq, windows, pns)
+    data = _diagram_data(seq, windows, pns_lane, gradient_asc)
     has_pns = "pns" in data["file"]
     buttons = "".join(
         f'<button type="button" data-window="{i}" aria-pressed="{str(i == 0).lower()}">'
