@@ -193,6 +193,9 @@ class CombinedProfile:
     # (and the |Mxy| at r = 0, df = 0 of an excitation of kind "none"); NaN with a reason
     directions: tuple[str, ...]  # the select kind of each distinct direction
     line: tuple[np.ndarray, np.ndarray] | None  # (u, values): one direction only
+    # (block, values) of each pulse of the line's direction, in play order: the arrays
+    # whose product (times `factor`) is the line's values. Empty without a line.
+    line_pulses: tuple[tuple[int, np.ndarray], ...]
     maps: tuple[CombinedMap, ...]  # view "2d" only: 1 map for 2 directions, 3 for 3
     numbers: dict[str, float]
 
@@ -568,12 +571,16 @@ def combined_profile(
 
     - No direction (all pulses of kind "none"): only numbers["centre_signal"] = factor.
     - One direction: `line` = (u, values) on the grid of the "profile" view of the first
-      pulse of the direction. numbers: "fwhm_m" and "edge_width_m" of the line,
+      pulse of the direction, and `line_pulses` = (block, values) of each pulse of the
+      direction at those points (|Mxy| of the excitation, |beta|^2 of a refocusing
+      pulse), in play order; `line`'s values are their product times `factor`, in that
+      order. numbers: "fwhm_m" and "edge_width_m" of the line,
       "signal_kept" = trapezoid(values) / trapezoid(excitation |Mxy|) over the grid,
       "fraction_inside" (with W) = the sum of values over |u - c| <= W / 2 divided by
       the sum over the grid (sums, as vb-pulseq did), "centre_signal" = values
       interpolated at c; c is the slice centre of the first pulse of the direction.
-    - Two or three directions: `line` None. For each direction, the product of its
+    - Two or three directions: `line` None and `line_pulses` empty. For each
+      direction, the product of its
       pulses on the union of their "profile" ranges (n or NUM_POSITIONS points).
       numbers: "fraction_inside" (with W) = the product over directions of each
       direction's fraction inside |u - c| <= W / 2, "centre_signal" = the product over
@@ -631,11 +638,12 @@ def combined_profile(
 
     nominal = pulses[0].nominal_m
     line = None
+    line_pulses: tuple[tuple[int, np.ndarray], ...] = ()
     maps: tuple[CombinedMap, ...] = ()
     if not directions:
         numbers = {"centre_signal": factor}
     elif len(directions) == 1:
-        line, numbers = _one_direction(pulses[0], directions[0], factor, nominal, n)
+        line, line_pulses, numbers = _one_direction(pulses[0], directions[0], factor, nominal, n)
     else:
         numbers = _several_directions(directions, factor, nominal, n)
         if view == "2d":
@@ -647,6 +655,7 @@ def combined_profile(
         factor=factor,
         directions=tuple(d.kind for d in directions),
         line=line,
+        line_pulses=line_pulses,
         maps=maps,
         numbers=numbers,
     )
@@ -1399,6 +1408,7 @@ def _no_combined(reason: str) -> CombinedProfile:
         factor=math.nan,
         directions=(),
         line=None,
+        line_pulses=(),
         maps=(),
         numbers={},
     )
@@ -1471,8 +1481,10 @@ def _one_direction(
     positions = _direction_points(d, u)
     combined = np.ones(u.size)
     reference = None
+    line_pulses = []
     for p in d.pulses:
         values = _pulse_values(p, positions)
+        line_pulses.append((p.block, values))
         if p is excitation:
             reference = values
         combined = combined * values
@@ -1489,7 +1501,7 @@ def _one_direction(
     if nominal is not None:
         numbers["fraction_inside"] = _fraction_inside(u, combined, centre, nominal)
     numbers["centre_signal"] = float(np.interp(centre, u, combined))
-    return (u, combined), numbers
+    return (u, combined), tuple(line_pulses), numbers
 
 
 def _several_directions(

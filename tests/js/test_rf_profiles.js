@@ -703,8 +703,9 @@ function profileOf(pulse, n = null) {
 test("test_combined_profile_of_one_direction_is_the_product_of_the_profiles", () => {
   // A spin echo with the refocusing pulse on z, 1.5 times as wide: one direction; the
   // line is the excitation |Mxy| times the refocusing |beta|^2 of their "profile" views
-  // at the same points (exact: the same points and the same simulations), and less
-  // signal is kept than the excitation alone makes.
+  // at the same points (exact: the same points and the same simulations), `linePulses`
+  // holds each pulse's block and those same values (exact), and less signal is kept
+  // than the excitation alone makes.
   const {view, file} = spinEcho("gz", {refThickness: 1.5 * W});
   const work = R.combinedProfile(view, file, R.period(view, file, 0));
   assert.equal(work.done, false);
@@ -717,6 +718,9 @@ test("test_combined_profile_of_one_direction_is_the_product_of_the_profiles", ()
   assertSameArray(ref.grid[0], exc.grid[0], "the same grid");
   const mxy = R.quantity(exc, "mxy_abs"), beta = R.quantity(ref, "beta_sq");
   assertSameArray(combined.line.values, mxy.map((v, i) => v * beta[i]), "line");
+  assert.deepEqual(combined.linePulses.map(p => p.block), [0, 3]);
+  assertSameArray(combined.linePulses[0].values, mxy, "the excitation on the line");
+  assertSameArray(combined.linePulses[1].values, beta, "the refocusing pulse on the line");
   assert.ok(combined.numbers.signal_kept < 1);
   assert.deepEqual(Object.keys(combined.numbers),
     ["fwhm_m", "edge_width_m", "signal_kept", "fraction_inside", "centre_signal"]);
@@ -732,6 +736,7 @@ test("test_combined_profile_of_two_logical_directions_is_the_outer_product", () 
   work.step(Infinity);
   const combined = work.result();
   assert.equal(combined.line, null);
+  assert.deepEqual(combined.linePulses, []);
   assert.deepEqual(combined.directions, ["z", "y"]);
   assert.deepEqual(Object.keys(combined.numbers), ["centre_signal", "fraction_inside"]);
   const [map] = combined.maps;
@@ -742,6 +747,116 @@ test("test_combined_profile_of_two_logical_directions_is_the_outer_product", () 
   const outer = new Float64Array(21 * 21);
   for (let i = 0; i < 21; i++) for (let k = 0; k < 21; k++) outer[i * 21 + k] = beta[i] * mxy[k];
   assertSameArray(map.values, outer, "map");
+});
+
+test("test_line_cache_gives_the_same_results_and_reuses_the_profiles", () => {
+  // The line cache (module comment of rf_profiles.js): a combined profile with a cache
+  // that holds the "profile" views of the pulses gives the same line, pulses, maps and
+  // numbers as one without a cache (equal numbers: the same points and the same
+  // arithmetic; `===`, as the points along "select" can differ in the sign of a zero),
+  // for a column spin echo (two logical directions), a spin echo on one axis with a 1.5
+  // times thicker refocusing slice, with and without the SliceThickness definition W, a
+  // train of two refocusing pulses with the same key before the first ADC, and an
+  // oblique direction ("select"). The "profile" view of a pulse is c ± 2 W, so with W
+  // every line of a combined profile is the grid of a pulse's own view: the work adds
+  // no line, and it is done without a step. Without W, the view comes from the RF
+  // spectrum and |G|, so the refocusing pulse on the grid of the excitation is one new
+  // line. (For the oblique case the test checks only the results: whether the two
+  // directions are equal to the last bit decides if the refocusing pulse's own view is
+  // on the line.)
+  const twoPulses = (scale, thickness) => {
+    const seq = newSeq({thickness});
+    seq.pulse("excitation", Math.PI / 2, {scale});
+    seq.rephaser("gz", 1);
+    seq.pulse("refocusing", Math.PI, {scale, thickness: 1.5 * W, phase: Math.PI / 2});
+    seq.readout();
+    return seq.build();
+  };
+  const cases = [
+    ["column spin echo", spinEcho("gy"), 0, true],
+    ["one axis", spinEcho("gz", {refThickness: 1.5 * W}), 0, true],
+    ["one axis without W", twoPulses({gz: 1}, null), 1, false],
+    ["train", spinEcho("gy", {numRef: 2}), 0, true],
+    ["oblique", twoPulses({gx: 0.6, gz: 0.8}, W), null, null],
+  ];
+  const sameNumbers = (a, b, message) => {
+    assert.equal(a.length, b.length, message);
+    for (let i = 0; i < a.length; i++) {
+      if (!(a[i] === b[i] || (Number.isNaN(a[i]) && Number.isNaN(b[i])))) {
+        assert.fail(`${message}: index ${i}: ${a[i]} vs ${b[i]}`);
+      }
+    }
+  };
+  for (const [name, {view, file}, added, doneAtOnce] of cases) {
+    const per = R.period(view, file, 0);
+    for (const v of ["profile", "2d"]) {
+      const plain = R.combinedProfile(view, file, per, {view: v});
+      plain.step(Infinity);
+      const expected = plain.result();
+      const cache = new Map();
+      for (const pulse of per.pulses) {
+        const p = R.blockPulse(view, file, pulse.firstBlock);
+        R.simulate(p, R.viewSpec(p).spec, {cache});
+      }
+      const seeded = cache.size;
+      assert.equal(seeded, per.pulses.length, `${name}: one line for each distinct pulse`);
+      const work = R.combinedProfile(view, file, per, {view: v, cache});
+      if (v === "profile" && doneAtOnce !== null) {
+        assert.equal(work.done, doneAtOnce, `${name}: done without a step`);
+      }
+      work.step(Infinity);
+      const got = work.result();
+      if (v === "profile" && added !== null) {
+        assert.equal(cache.size, seeded + added, `${name}: the lines that the work added`);
+      }
+      assert.deepEqual([got.reason, got.excitationBlock, got.refocusingBlocks, got.factor,
+        got.directions], [expected.reason, expected.excitationBlock,
+        expected.refocusingBlocks, expected.factor, expected.directions], name);
+      assert.deepEqual(got.numbers, expected.numbers, `${name} ${v}: numbers`);
+      assert.equal(got.line === null, expected.line === null, `${name}: line`);
+      if (got.line !== null) {
+        sameNumbers(got.line.u, expected.line.u, `${name}: u`);
+        sameNumbers(got.line.values, expected.line.values, `${name}: line values`);
+      }
+      assert.deepEqual(got.linePulses.map(p => p.block), expected.linePulses.map(p => p.block));
+      got.linePulses.forEach((p, k) => {
+        sameNumbers(p.values, expected.linePulses[k].values, `${name}: pulse ${p.block}`);
+      });
+      assert.equal(got.maps.length, expected.maps.length, `${name}: maps`);
+      got.maps.forEach((m, k) => {
+        assert.deepEqual(m.axes, expected.maps[k].axes);
+        sameNumbers(m.values, expected.maps[k].values, `${name}: map ${k}`);
+      });
+    }
+  }
+});
+
+test("test_simulation_with_the_line_cache", () => {
+  // A 1D spatial line is done at once when it is in the cache, with the same arrays as
+  // the work that added it; a "df" line, a 2D grid and a spec with an `at` value are not
+  // lines of the cache and leave it unchanged.
+  const {view, file} = spinEcho("gy");
+  const exc = R.blockPulse(view, file, 0);
+  const cache = new Map();
+  const spec = R.viewSpec(exc).spec;
+  const first = R.simulation(exc, spec, {cache});
+  assert.equal(first.done, false);
+  first.step(Infinity);
+  assert.equal(cache.size, 1);
+  const again = R.simulation(exc, spec, {cache});
+  assert.equal(again.done, true);
+  assert.equal(again.step(0), 1);
+  for (const key of ["aRe", "aIm", "bRe", "bIm"]) {
+    assert.equal(again.result()[key], first.result()[key], key);
+  }
+  assertSameArray(again.result().grid[0], first.result().grid[0], "grid");
+  const others = [
+    {axes: [{kind: "df", lo: -1000, hi: 1000, n: 11}], at: {}},
+    R.viewSpec(exc, "z_df", {n: 11}).spec,
+    {axes: [{kind: "z", lo: -0.01, hi: 0.01, n: 11}], at: {df: 100}},
+  ];
+  for (const other of others) R.simulate(exc, other, {cache});
+  assert.equal(cache.size, 1);
 });
 
 // ---- 11. Sliced work ------------------------------------------------------------------------------

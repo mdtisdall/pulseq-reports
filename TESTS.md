@@ -7012,7 +7012,8 @@ with one more block pulse made without `use=`.
 
 **Checks:** A spin echo with the refocusing pulse on z, 1.5 times as wide as the
 excitation: one direction ("z"), and the combined line equals the excitation |Mxy| times
-the refocusing |β|² of the two "profile" views at the same points (exact). The numbers
+the refocusing |β|² of the two "profile" views at the same points (exact). `line_pulses`
+holds the blocks 0 and 3 with those two arrays (exact). The numbers
 follow the definitions of section 4.3, item 7: the signal kept (below 1), the FWHM and
 the edge width of the line, the fraction inside |u| ≤ W / 2 (sums), and the value at the
 slice centre.
@@ -7028,7 +7029,8 @@ slice centre.
 **Checks:** A column spin echo (excitation on z, refocusing on y, each over ±2W with 401
 points): `fraction_inside` is the product over the two directions of the sum of the
 profile inside |u| ≤ W / 2 over its sum on the grid, and `centre_signal` the product of
-the two profiles interpolated at 0 (section 4.3, item 7). With the "2d" view, the map
+the two profiles interpolated at 0 (section 4.3, item 7). There is no line, and
+`line_pulses` is empty. With the "2d" view, the map
 has the axes (y, z) with `MAP_POINTS` points, and its values are the outer product of
 the refocusing |β|² and the excitation |Mxy| on those axes (exact).
 
@@ -7070,7 +7072,8 @@ must equal the ends of the refocusing pulse's "profile" range (relative 1e-12).
 
 **Checks:** A hard refocusing pulse (kind "none") is a factor: its |β|² at r = 0,
 df = 0, which is 1 for a 180° pulse on resonance. The line is the excitation |Mxy| times
-that factor (exact).
+that factor (exact), and `line_pulses` has only the excitation (block 0, its |Mxy|,
+exact): a pulse of kind "none" is the factor, not a pulse on the line.
 
 **How:** `_spin_echo("y", hard_ref=True)`. The factor from `simulate` with a spec
 without axes, compared with 1 within 1e-12 (sin²(90°), only rounding).
@@ -7079,8 +7082,8 @@ without axes, compared with 1 within 1e-12 (sin²(90°), only rounding).
 
 #### `test_no_combined_profile_reasons`
 
-**Checks:** There is no combined profile, with the reason and empty fields (factor NaN),
-for: a GRE (no refocusing pulse), a period without an ADC (`NO_ADC`), a refocusing pulse
+**Checks:** There is no combined profile, with the reason and empty fields (factor NaN,
+no line, empty `line_pulses`), for: a GRE (no refocusing pulse), a period without an ADC (`NO_ADC`), a refocusing pulse
 of kind "changing" (`DIRECTION_CHANGES`), an inversion pulse between the excitation and
 the ADC (`OTHER_RF_BEFORE_ADC`), and a refocusing pulse without an excitation before the
 ADC.
@@ -7490,8 +7493,9 @@ default, blocks 0 to 31 with the ADC block 31.
 
 **Checks:** The combined profile of a spin echo with the refocusing pulse on z (1.5 W
 wide): one direction; its line is the excitation |Mxy| times the refocusing |β|² of
-their "profile" views at the same points, exactly; less signal is kept than the
-excitation alone makes; the numbers have the keys of the reference, in its order.
+their "profile" views at the same points, exactly; `linePulses` has the blocks 0 and 3
+with those two arrays, exactly; less signal is kept than the excitation alone makes;
+the numbers have the keys of the reference, in its order.
 
 **How:** `combinedProfile` of the period of block 0 (done only after `step`), against
 `simulate` of the two "profile" views and `quantity`. Exact: the same grid (both views
@@ -7502,13 +7506,52 @@ use c ± 2W) and the same simulations.
 #### `test_combined_profile_of_two_logical_directions_is_the_outer_product`
 
 **Checks:** The combined profile of an excitation on z and a refocusing pulse on y,
-view "2d": no line, the numbers `centre_signal` and `fraction_inside`, and one map on
+view "2d": no line and no `linePulses`, the numbers `centre_signal` and
+`fraction_inside`, and one map on
 the axes y and z (in the order x, y, z) whose values are the outer product of the
 refocusing |β|² on its y axis and the excitation |Mxy| on its z axis, exactly.
 
 **How:** `combinedProfile` with `n` 21, then `simulate` of each pulse on the map axis of
 its direction and `quantity`; the outer product is made in the test. Exact: the same
 points and simulations, times the factor 1.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_line_cache_gives_the_same_results_and_reuses_the_profiles`
+
+**Checks:** The line cache of `rf_profiles.js` (its module comment): a combined profile
+with a cache that already holds the "profile" view of each distinct pulse of the period
+gives the same reason, blocks, factor, directions, numbers, line, `linePulses` and maps
+as one without a cache, for both views ("profile" and "2d"), for five periods: a column
+spin echo (two logical directions), a spin echo with a 1.5 times thicker refocusing
+slice on the same axis, the same without the `SliceThickness` definition W, a train of
+two refocusing pulses with the same key before the first ADC, and an excitation and a
+refocusing pulse on one oblique direction ("select"). With the "profile" view, the work
+adds no line with W (every line of the combined profile is then the grid of a pulse's
+own view, c ± 2W), and it is done before its first `step`; without W it adds one line
+(the refocusing pulse on the excitation's grid) and needs a `step`.
+
+**How:** For each case, `simulate` with a new `Map` on the "profile" view of the first
+block of each distinct pulse of the period (one entry each), then `combinedProfile`
+with that cache, against `combinedProfile` without one. The arrays are compared value by
+value with `===` (or both NaN), not `Object.is`: along "select", a point of the cache
+and a point of the combined profile can differ in the sign of a zero (0 + x against
+x), which does not change a value. The oblique case checks only the results: whether
+the two pulses' directions are equal to the last bit (and so whether the refocusing
+pulse's own view is a line of the combined profile) depends on rounding.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_simulation_with_the_line_cache`
+
+**Checks:** A `simulation` with a cache adds its 1D line to the cache when its work is
+done; a second `simulation` of the same pulse and spec with that cache is done at once
+(`done` true, `step(0)` returns 1), with the same typed arrays and an equal grid. A
+"df" axis, a z × Δf spec and a spec with an `at` value are not lines of the cache: they
+leave it unchanged.
+
+**How:** The excitation of `spinEcho("gy")`, its "profile" view, and the three other
+specs with 11 points.
 
 **Assumptions:** None beyond the file's own.
 
@@ -7661,7 +7704,8 @@ section 3.5, item 2 of the plan and the reason each value can differ at all:
   `centre_phase_rad`) get the absolute 1e-9 rad rule.
 - **Maps and lines of the combined profile** (absolute 1e-12): a combined
   value is a product of `mxy_abs`/`beta_sq` values, the same reasoning as
-  `a` and `b`.
+  `a` and `b`; the values of each pulse on the line (`line_pulses`, whose blocks
+  must be equal) are `mxy_abs`/`beta_sq` values themselves.
 
 #### `test_rf_profiles_js_matches_python_reference`
 
@@ -7724,6 +7768,7 @@ gives the same numbers):
 |---|---|---|
 | `a`, `b` | 1.08e-14 (abs) | 1e-12 abs |
 | combined line/map values | 7.88e-15 (abs) | 1e-12 abs |
+| combined `line_pulses` values | 2.89e-15 (abs) | 1e-12 abs |
 | `signal_hz` | 2.14e-16 (rel) | 1e-12 rel |
 | `grad_hz_per_m` | 2.91e-16 (rel) | 1e-12 rel |
 | `direction`, `select_gradient_hz_per_m`, `slice_centre_m` | 0 (exact this run) | 1e-12 rel |

@@ -57,8 +57,11 @@
   // is the legend's label. `cursorText(x, y, v)` formats the tooltip text; without it,
   // the default shows the axis labels and the value, each formatted with fmt.
   // `outlines` is a list of [x0, x1, y0, y1] axis-unit rectangles, drawn dashed.
-  // Returns {setData({x, y, values, domain})}, which replaces the axes and the values
-  // and redraws, without making a new chart. No zoom.
+  // Returns {setData({x, y, values, domain}), destroy()}: setData replaces the axes and
+  // the values and redraws, without making a new chart. destroy() removes the two
+  // listeners that the chart adds outside its own elements (the theme change of the
+  // system and of the page, below); a caller that removes a chart from the page calls
+  // it, and does not use the chart after it. No zoom.
   function mapChart({canvas, svg, chart, tip, x, y, values, domain, scale = "sequential",
                      valueLabel = "Value", cursorText, outlines = []}) {
     const chartId = nextChartId++;
@@ -251,8 +254,10 @@
     // gradient is plain CSS and updates itself). vb's columnChart does the same, with
     // both a media-query listener (the OS/browser theme) and a MutationObserver on
     // the root element's data-theme attribute (the page's own theme switch, if any).
-    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCanvas);
-    new MutationObserver(drawCanvas).observe(document.documentElement, {
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    media.addEventListener("change", drawCanvas);
+    const themeObserver = new MutationObserver(drawCanvas);
+    themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
@@ -268,6 +273,12 @@
         DOMAIN = newDomain.slice();
         imageCache = {};
         redraw();
+      },
+      // Removes the theme listeners (they keep the chart and its images in memory for
+      // the life of the page otherwise), for a chart that the caller removes.
+      destroy() {
+        media.removeEventListener("change", drawCanvas);
+        themeObserver.disconnect();
       },
     };
   }

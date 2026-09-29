@@ -558,6 +558,16 @@ def _compare_combined(seq, query: dict, js: dict, where: str) -> None:
         _assert_abs(js["line"]["values"], values, _AB_TOL, "combined.line.values", where)
         main_profile = values
         lo, hi, n = float(u[0]), float(u[-1]), u.size
+    _assert_exact(
+        [p["block"] for p in js["linePulses"]],
+        [block for block, _ in c.line_pulses],
+        "combined.line_pulses blocks",
+        where,
+    )
+    for jp, (block, values) in zip(js["linePulses"], c.line_pulses, strict=True):
+        _assert_abs(
+            jp["values"], values, _AB_TOL, "combined.line_pulses.values", f"{where} block {block}"
+        )
 
     assert len(js["maps"]) == len(c.maps), (
         f"{where}: maps length: js={len(js['maps'])} py={len(c.maps)}"
