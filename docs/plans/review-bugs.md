@@ -5,22 +5,22 @@ direction of travel, not a verified dictionary match.
 
 Status: ready. The plan was written on 2026-09-29. The user answered the
 questions of section 7 on the same day (decisions 9 to 14 of section 2.2).
-B4 waits for an upstream fix (decision 9), so this plan fixes five bugs and
-records B4 in `TODO.md`.
+The same day, the user revised decision 9: a new pypulseq pin fixes B4, and
+phase 4 adds its regression tests.
 
 ## 1. Goal
 
 Fix the bugs of section 1 of `docs/reviews/2026-09-28-code-review.md` (the
 review). Each fix gets its own branch, its own pull request and a regression
-test (the review, section 10, item 2). B4 is the exception: it waits for
-pypulseq (decision 9), and its phase adds a `TODO.md` item.
+test (the review, section 10, item 2). B4 is the exception: the pypulseq pin
+fixes it (decision 9), so its phase adds only the regression tests.
 
 | Bug | What is wrong | Where (`main` at `4e17c66`) |
 |---|---|---|
 | B1 | Gradient limits with a window: the slew and `slew_block` can come from a block junction before the window. A window with no gradient then gets `reason=None` and a slew that is not 0. | `grad_limits.py:409-438`, `451-455` |
 | B2 | Sequence diagram, minimum/maximum view: a bin shows the ADC on when no ADC plays in it. | `assets/seq_lanes.js:1036-1052` |
 | B3 | The \|G\| lane stops the diagram card for a file with about 1.2 × 10^5 gradient events or more. | `assets/g_lanes.js:432-435`, `assets/cards/diagram.js:237-254`, `285-328`, `351-407` |
-| B4 | An oversampled arbitrary gradient gives wrong values in the gradient cards. Waits for pypulseq (decision 9). | `seq_utils.py:65-67`, `rf_profiles.py:844`, `1228` |
+| B4 | An oversampled arbitrary gradient gives wrong values in the gradient cards. Fixed by the pypulseq pin (decision 9). | `seq_utils.py:65-67`, `rf_profiles.py:844`, `1228` |
 | B5 | The spectrum card does not escape `scanner_label` in its note. | `cards/spectrum.py:150` |
 | B6 | The gradient limits card's note describes the old slew. | `cards/gradient_limits.py:126-128`, `grad_limits.py:19-23` |
 
@@ -31,8 +31,9 @@ These items are not in this plan:
   line. Do not fix it on the branch of this plan.
 - The release `0.2.0rc2`. In the review's order, these fixes come before it
   (section 10, items 2 and 3). The user asks for the release separately.
-- A fix of B4 in this library or in the fork. B4 waits for a pypulseq
-  release or an upstream fix (decision 9). Phase 4 records it in `TODO.md`.
+- A fix of B4 in the code of this library. The pin fixes it (decision 9).
+- The move of the pin. The branch `chore/pypulseq-pin-release-base` does it,
+  in its own PR.
 
 ## 2. Read this first (context for the executing agent)
 
@@ -58,9 +59,12 @@ These items are not in this plan:
   `TESTS.md`, `tests/test_page.py` and `docs/examples/gre.html`. It does not
   edit the lines that this plan changes. Phases 5 and 6 edit card files that
   import these helpers; they start from `origin/main`, which has #65.
-- The pypulseq pin is commit `20b9e5e` of the fork `mdtisdall/pypulseq`
-  (branch `pns-chunked`, on upstream `master` `f2c582b`). Only that fork
-  branch keeps the commit. A project that installs pulseq-reports with uv
+- The pypulseq pin was commit `20b9e5e` of the fork `mdtisdall/pypulseq`
+  (branch `pns-chunked`, on upstream `master` `f2c582b`) when this plan was
+  written. The facts of section 2.3 were measured with it. The branch
+  `chore/pypulseq-pin-release-base` moves the pin to the fork's tag
+  `pulseq-reports-pin-1` (`a74ab06`): the release 1.5.0.post1 with four
+  cherry-picks, one of them the fix of PR #424 (decision 9, `TODO.md`). A project that installs pulseq-reports with uv
   gets the fork too, because uv applies the `[tool.uv.sources]` of a git
   dependency (finding C9 of the review). A project that installs with pip
   gets stock pypulseq 1.5.0.post1 from PyPI. A project that pins its own
@@ -74,8 +78,8 @@ These items are not in this plan:
 Do not open these decisions again.
 
 1. **One branch, one pull request and one regression test for each bug**
-   (the review, section 10, item 2). B4 has no fix in this plan
-   (decision 9).
+   (the review, section 10, item 2). For B4, the pin is the fix, and phase
+   4 adds only the tests (decision 9).
 2. **The fixes of B1, B2, B3, B5 and B6 are the "Change" of the review**,
    with the details of section 4.
 3. **At most three PRs open at one time** (the user). A PR of another plan
@@ -97,13 +101,22 @@ Do not open these decisions again.
 7. **Upstream analyses stand alone.** A consequence for this library goes
    into `TODO.md` or into a plan of this project.
 8. **The release `0.2.0rc2` is made only when the user asks.**
-9. **B4 waits for a pypulseq release or an upstream fix** (the user,
-   2026-09-29, question 1: option D). The bug is pypulseq issue #423, with
-   the fix in PR #424 (draft 02 of `github.com/mdtisdall/pypulseq-issues`;
-   both open on 2026-09-29, no review yet). This library gets no work-around
-   (option B), no refusal (option A), and no new fork pin (option C). Phase 4
-   adds a `TODO.md` item that records the reach (section 2.3) and the tests to
-   add when the pin has the fix.
+9. **The pypulseq pin fixes B4** (the user, 2026-09-29). The bug is
+   pypulseq issue #423, with the fix in PR #424 (draft 02 of
+   `github.com/mdtisdall/pypulseq-issues`; both open on 2026-09-29, no review
+   yet).
+   - First answer to question 1: option D, wait for a pypulseq release or an
+     upstream fix.
+   - Revised the same day: a fork pin from the release, with the fix. The
+     fork's tag `pulseq-reports-pin-1` (branch `pulseq-reports-pin`, commit
+     `a74ab06`) is `v1.5.0.post1` with four cherry-picks: the two PNS commits
+     of the old pin, the fix of PR #424, and upstream #359. It is option C,
+     but on the release and not on upstream `master`, so a project that uses
+     uv also builds its sequences with the release (`TODO.md`, "Move from the
+     pypulseq fork to a pypulseq release").
+   - This library gets no work-around (option B) and no refusal (option A).
+   - Phase 4 adds tests 2 and 3 of section 4.4, after the pin PR
+     (`chore/pypulseq-pin-release-base`) is merged.
 10. **B5 and B6 are on separate branches** (question 2).
 11. **Order:** wave 1 is phases 1, 2 and 3; wave 2 is phases 4, 5 and 6;
     wave 3 is phase 7 (question 3, section 3.3).
@@ -237,6 +250,12 @@ durations come from `add_block` and are correct.
   - The 295 tests of `test_seq_utils.py`, `test_sampling.py`,
     `test_grad_limits.py`, `test_diagram_data.py` and `test_seq_index.py`
     pass.
+- With the new pin (`pulseq-reports-pin-1`, decision 9), and no change to
+  this library: section 9.4 prints a sampler error of 0.0 %, the RMS 8.3424
+  mT/m, and a last diagram offset of 0.11 ms. Section 9.6 prints
+  `_plays_during: False`, `gradient_kind: none`, 0 for each gradient id of
+  the key, and 0 Hz/m during the RF. The default `write()` and `read()` still
+  raise `KeyError` (draft 04 is not in the pin).
 
 **B5.** With `scanner_label="Coil <A&B>"`, the note has the raw label one
 time. The table header and the `aria-label` have the escaped label (section
@@ -320,7 +339,7 @@ section apply. Also:
 Phase 1 (B1) ──► Phase 6 (B6) ────┐
 Phase 2 (B2) ─────────────────────┤
 Phase 3 (B3) ─────────────────────┼─► Phase 7 (results)
-Phase 4 (B4, TODO item) ─────────┤
+Phase 4 (B4, tests) ─────────────┤
 Phase 5 (B5) ─────────────────────┘
 
 Wave 1: phases 1, 2 and 3. Wave 2: phases 4, 5 and 6, as PR slots become free.
@@ -332,7 +351,9 @@ Wave 1: phases 1, 2 and 3. Wave 2: phases 4, 5 and 6, as PR slots become free.
   B3 stops a card, and B1 and B2 show wrong values, so they come first.
 - Wave 2: phases 4, 5 and 6, each when a PR slot is free.
   - Phase 6 starts after phase 1 is merged. Both edit `grad_limits.py`.
-  - Phases 4 and 5 have no condition.
+  - Phase 4 starts after the pin PR (`chore/pypulseq-pin-release-base`) is
+    merged.
+  - Phase 5 has no condition.
 - Phase 7 starts after phases 1 to 6 are merged.
 - At most three PRs are open at one time, together with the PRs of other
   plans (decision 3).
@@ -346,7 +367,7 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 | 1 | `grad_limits.py` (`_range_result` only: the junction code and its two comments), `tests/test_grad_limits.py` (one new test), `TESTS.md` section 2.13 |
 | 2 | `assets/seq_lanes.js` (`_adcOverlaps` only), `tests/js/test_seq_lanes.js` (one new builder, one new test), `TESTS.md` section 2.19 |
 | 3 | `assets/g_lanes.js` (the cache key, the check in `decode`, and their comments), `assets/cards/diagram.js` (the \|G\| build and `showStatus`), `tests/js/test_g_lanes.js` (one new builder, one new test), `TESTS.md` section 2.27 |
-| 4 | `TODO.md` (one new item, section 4.4) |
+| 4 | `tests/test_sampling.py` (one new test), `tests/test_rf_profiles.py` (one new test), `TESTS.md` sections 2.23 and 2.31 |
 | 5 | `cards/spectrum.py` (the note only), `tests/test_spectrum_card.py`, `TESTS.md` section 2.10 |
 | 6 | `cards/gradient_limits.py` (the note only), `grad_limits.py` (the module docstring, lines 19-23 only), `tests/test_gradient_limits_card.py`, `TESTS.md` section 2.14 |
 | 7 | `docs/examples/gre.html` (rebuilt), this plan file (status and section 8) |
@@ -512,9 +533,9 @@ checks it in a browser.
 
 ### 4.4 B4: an oversampled arbitrary gradient
 
-The user chose option D (decision 9). Options A, B and C stay below as the
-record of the choice. If the user opens the choice again, they are the
-design.
+The user chose a fork pin from the release, with the fix (decision 9): option
+C on the release. Options A, B, C and D stay below as the record of the choice.
+The tests of option B are the tests of phase 4.
 
 **Option A: refuse the sequence**, as `extensions.refuse_rotations` refuses a
 rotation. A new `extensions.refuse_oversampled_gradients(seq)` raises
@@ -606,13 +627,15 @@ Add `6db882b` (the fix of PR #424) to it. Pin its commit.
 
 **The choice.** The draft of this plan recommended option B: it is the only
 option that corrects the values for every consumer, whatever pypulseq it
-installs. The user chose option D (decision 9). The reach is small (section
-2.3), the upstream fix exists (PR #424), and this library gets no work-around
-of a pypulseq bug.
+installs. The user first chose option D, then the pin of decision 9. The reach
+is small (section 2.3), the upstream fix exists (PR #424), and this library
+gets no work-around of a pypulseq bug. A project that uses uv gets the pin, and
+with it the fix. A project that uses pip, or that sets its own pypulseq, does
+not (`docs/usage.md`, section 1).
 
-**Tests of option B.** With option D, the `TODO.md` item adds tests 2 and 3
-when the pin has the fix. Test 1 then checks only pypulseq's `get_block`
-(decision 4), so it is not added. Build the sequence of section 9.4 in each
+**Tests of option B.** Phase 4 adds tests 2 and 3 (decision 9). With the fix
+in the pin, test 1 checks only pypulseq's `get_block` (decision 4), so it is
+not added. Build the sequence of section 9.4 in each
 test. The
 sampler test uses all three blocks. The reference is the added events, not
 `get_block` and not `get_gradients`. `get_gradients` leaves out the first and
@@ -639,43 +662,6 @@ section 2.3, that difference was 3.3 % of the peak.
    `block_pulse(seq, 0)` has `gradient_kind` "none", a `grad_hz_per_m` of all
    zeros, and 0 for each gradient id in its key. Before the change, it has
    "one", a z gradient during the RF and the `gz` id in the key.
-
-**`TODO.md` item of option D** (phase 4 adds it with this text; update the
-status of #423 and #424 on the day):
-
-```markdown
-## Oversampled arbitrary gradients (pypulseq issue #423)
-
-**Why.** `get_block` of pypulseq 1.5.0.post1 and of the pinned fork gives an
-oversampled arbitrary gradient (`make_arbitrary_grad(oversampling=True)`) twice
-its `shape_dur` (upstream issue #423, with the fix in PR #424; draft 02 of
-`github.com/mdtisdall/pypulseq-issues`). Then these values are wrong (B4 of
-`docs/reviews/2026-09-28-code-review.md`, section 2.3 of
-`docs/plans/review-bugs.md`):
-
-- the gradient spectrum (the sampler: up to 40 % of the peak in the example);
-- the RMS of the gradient limits card (6 % too high in the example);
-- the diagram lanes and the RF profile card (a point after the block end);
-- the gradient kind and the pulse key of the RF profiles, where a gradient ends
-  before an RF in the same block (`pp.calc_duration(g)`).
-
-The PNS card and the block table are correct. Such a gradient gets to this
-library only from a sequence built in the same Python process, or from a `.seq`
-file read with `remove_duplicates=False`: the default `read()` raises `KeyError`
-(draft 04). The user decided to wait for the upstream fix (decision 9 of
-`docs/plans/review-bugs.md`).
-
-**What.** When the pin has the fix, add tests 2 and 3 of section 4.4 of
-`docs/plans/review-bugs.md` ("Tests of option B"). They must pass with no change
-to this library. Sections 9.4 and 9.6 of that plan must print the correct
-values. Then delete this item.
-
-**How to check.** `scripts/check`.
-
-**When.** After upstream merges PR #424 and the pin has it: a fork branch on that
-`master`, or a pypulseq release (see "Move from the pypulseq fork to a pypulseq
-release").
-```
 
 **Tests of option A.** In `test_extensions.py`, as the rotation tests do:
 
@@ -849,23 +835,30 @@ Checks:
 
 ---
 
-### Phase 4: B4, a `TODO.md` item
+### Phase 4: B4, the regression tests
 
-Branch: `docs/oversampled-gradient-todo`. Tier: O (one item with an exact
-text, too small to delegate). Wave 2. Decision 9.
+Branch: `fix/oversampled-gradient-tests`. Tier: S. Review: O. Wave 2, after
+the pin PR (`chore/pypulseq-pin-release-base`) is merged. Decision 9.
 
-**Task 4.1: The item.** Add the item of section 4.4 ("`TODO.md` item of
-option D") after the item "Move from the pypulseq fork to a pypulseq
-release". Before that, look at issue #423 and PR #424 of `pulseq/pypulseq`.
-If PR #424 is merged, stop and tell the user: then the tests of the item can
-be added now.
+**Task 4.1: The tests.** Tier S. Tests 2 and 3 of section 4.4, "Tests of
+option B". They must pass on the new pin with no change to the library code.
+Then run them with the old pin (`uv run --with-editable` of a pypulseq
+checkout at `20b9e5e`). They must fail there. Report both results.
 
-**Task 4.2: Repro.** Run sections 9.4 and 9.6 on the branch. They must still
-print the wrong values of section 2.3 (the pin has no fix). Put both outputs
-in the PR.
+**Task 4.2: `TESTS.md`.** Tier S. Sections 2.23 and 2.31: one entry each. The
+entry of section 2.23 says why its reference is the added events and not
+`seq.get_gradients()` (section 4.4). Each entry says that the test needs the
+fix of pypulseq PR #424, which the pin has.
+
+**Task 4.3: Repro.** Tier O. Run sections 9.4 and 9.6 on the branch. They
+must print the correct values of section 2.3 (sampler error 0.0 %, RMS 8.3424
+mT/m, `_plays_during: False`, `gradient_kind: none`). The default `write()`
+and `read()` still raise `KeyError` (draft 04, not in the pin). Put the
+outputs in the PR.
 
 Checks:
 
+- [ ] The new tests pass on the new pin and fail on `20b9e5e`.
 - [ ] `scripts/check` passes.
 
 ---
@@ -923,7 +916,7 @@ show no console error.
 decisions made during the work, and the measurements of task 3.4.
 
 **Task 7.3: Tell the user** that B1, B2, B3, B5 and B6 are fixed, and that
-B4 waits for upstream (`TODO.md`). Do not start the
+the pin fixes B4 (with its tests). Do not start the
 release `0.2.0rc2` (decision 8).
 
 Checks:
@@ -935,7 +928,7 @@ Checks:
 | Wave | Phases | Condition to start |
 |---|---|---|
 | 1 | 1, 2, 3 | This plan is merged. |
-| 2 | 4, 5, 6 | A free PR slot. Phase 6: phase 1 merged. |
+| 2 | 4, 5, 6 | A free PR slot. Phase 4: the pin PR merged. Phase 6: phase 1 merged. |
 | 3 | 7 | Phases 1 to 6 merged. |
 
 Workers inside a phase:
@@ -945,7 +938,7 @@ Workers inside a phase:
 | 1 | One S worker for tasks 1.1 to 1.3. The executing agent does task 1.4 and reviews. |
 | 2 | One S worker for tasks 2.1 to 2.3. The executing agent does task 2.4. |
 | 3 | S worker A for tasks 3.1 and 3.3, and S worker B for task 3.2, at the same time. The executing agent does tasks 3.4 and 3.5. |
-| 4 | The executing agent (one `TODO.md` item). |
+| 4 | One S worker for tasks 4.1 and 4.2. The executing agent does task 4.3 and reviews. |
 | 5 | One H worker for tasks 5.1 to 5.3, with the exact texts of section 4.5. |
 | 6 | One H worker for tasks 6.1 to 6.3, with the exact texts of section 4.6. |
 | 7 | The executing agent. |
@@ -954,8 +947,9 @@ Workers inside a phase:
 
 None. The user answered all six questions on 2026-09-29:
 
-1. B4: option D, wait for a pypulseq release or an upstream fix (decision 9).
-   The plan had recommended option B.
+1. B4: option D, wait for a pypulseq release or an upstream fix. Revised the
+   same day: a fork pin from the release, with the fix (decision 9). The plan
+   had recommended option B.
 2. B5 and B6: separate branches (decision 10).
 3. Order: B1, B2 and B3 first, then B4, B5 and B6, then phase 7 (decision
    11).
