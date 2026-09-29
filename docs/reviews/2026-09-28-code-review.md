@@ -34,25 +34,50 @@ comments), L (model details with a low reach).
 ## Status on 2026-09-29
 
 The findings were checked again against `main` at `4e17c66`, after #48 to
-#63 (the RF pulse profiles). The line numbers in the sections below are still
-those of the review state.
+#63 (the RF pulse profiles), and then updated for the pull requests below,
+up to `35531b9`. The line numbers in the sections below are still those of
+the review state.
 
-- **Fixed:** C21. #53 moved `decodeTable` to `lane_chart.js`, and the text
-  went with it.
+- **Fixed:**
+  - C21: #53 moved `decodeTable` to `lane_chart.js`, and the text went with
+    it.
+  - D1, D2, A9, A10, C1 and C2: #65, the public card helpers (step 1 of
+    section 10).
+  - C9: #67 corrected the claim in `docs/usage.md`, `TODO.md` and
+    `pyproject.toml`. uv applies the `[tool.uv.sources]` of a git
+    dependency; pip does not.
+  - B1 to B6: the plan `docs/plans/review-bugs.md` (step 2 of section 10).
+    Its section 8 has the results.
+
+    | Bug | Pull request |
+    |---|---|
+    | B1 | #69 |
+    | B2 | #70 |
+    | B3 | #71, also for the `goto` path below |
+    | B4 | #67: the pypulseq pin `pulseq-reports-pin-1` has the fix of pypulseq PR #424, so this library has no change. #72 adds the regression tests. |
+    | B5 | #73 |
+    | B6 | #74, with no test: a test that only checks a fixed sentence tests no computation |
+
+- **Partly fixed:**
+  - C25: #74 removed the history words of `grad_limits.py` (lines 19-23).
+    The others remain.
+  - C26: #71 removed "per the worker spec" from `g_lanes.js`. The others
+    remain.
 - **No longer apply:** D5, S17 and C11, because #55 deleted
   `scripts/vb_parity.py`. The `vb_parity.py` parts of A8 no longer apply
   either.
-- **Open:** all the other findings. `feature/public-card-helpers` is not
-  merged.
+- **Open:** all the other findings: A1 to A8, F1 to F7, D3, D4, D6 to D21,
+  S1 to S16 and S18, P1 to P6, C3 to C8, C10, C12 to C20, C22 to C24, C27,
+  and L1 to L3.
 - **New cases of the same findings,** in the code of #48 to #63:
   - B3: the `goto` message (#53), which the "Show" buttons of the RF profile
-    card send, also calls `showWindow`. A `GLanes` error there also leaves
-    "Loading…" and disabled buttons.
+    card send, also called `showWindow`. A `GLanes` error there also left
+    "Loading…" and disabled buttons. Fixed with B3 (#71).
   - A6: there are nine card builders now, with `rf_profile_card`.
   - A8: `rf_profile_data` and `rf_table` (`cards/rf_profile.py`) have public
     names and are not in `docs/usage.md`.
   - A10: the reserved script names are now `diagram`, `spectrum` and
-    `rf-profile`.
+    `rf-profile`. Fixed with A10 (#65).
   - C7: the sentence is already false on `main`. The RF profiles, `mapChart`
     and the message bus are not in `v0.2.0rc1`.
   - C8: the RF profile card adds more `<h3>` and `<h4>` headings.
