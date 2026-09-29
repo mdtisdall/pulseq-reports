@@ -1,7 +1,8 @@
 // The lane chart of the report cards, the card registry, the page-level
-// publish/subscribe message bus (`publish`/`subscribe`/`createMessageBus`,
-// docs/plans/rf-profiles.md section 4.1) and the shared table decoder
-// (`decodeTable`, which any card can use), in one global object, PulseqReport.
+// publish/subscribe message bus (`publish`/`subscribe`/`watchSubscribers`/
+// `requestButton`/`createMessageBus`, docs/plans/rf-profiles.md section 4.1) and the
+// shared table decoder (`decodeTable`, which any card can use), in one global object,
+// PulseqReport.
 // Loaded after chart_math.js and before the card scripts and page.js. Node tests
 // `require` this file directly (after setting `global.ChartMath`, since the top level
 // reads it); nothing at the top level touches `document` or `window`, so the file loads
@@ -42,14 +43,14 @@ const PulseqReport = (() => {
   // same number of lanes. `lanes` is then never drawn: without `groups`, it only sets the SVG
   // height (so it must have as many lanes as a `lanesFor` result); with `groups`, each render
   // sets the height. `setLanes` then has no effect. Without `lanesFor`, `lanes` is drawn as
-  // given to `laneChart` or to `setLanes`/`setWindow`.
+  // given to `laneChart` or to `setLanes`.
   // `groups`, when given, is a list of lane groups: {id, label, laneIds: [...], visible}.
   // Each lane (of `lanes`, and of a `lanesFor` result) has an `id`; a lane whose id is in no
   // group's `laneIds` is always drawn. `visibleGroupIds`, the third argument `lanesFor` gets,
   // is the Set of ids of the currently visible groups, so that a provider computes nothing
   // for a hidden group; the chart also drops any lane of a hidden group that a provider
   // returns anyway. The SVG height follows the number of lanes actually drawn. `groups`
-  // itself does not change after `laneChart` is called (not even through `setWindow`).
+  // itself does not change after `laneChart` is called.
   // `groupControls`, an existing DOM element, is required to show or hide a group: with both
   // `groups` and `groupControls` given, one `<button type="button" aria-pressed="...">` is
   // rendered into it for each group (its text is the group's `label`); a click toggles that
@@ -58,16 +59,14 @@ const PulseqReport = (() => {
   // is drawn, no group control is made, and `lanesFor` gets null as its third argument.
   // `onCursor(x, pxX)`, when given, is called whenever the hover cursor's value
   // changes: `x` in chart units, or null when the pointer leaves the plot or the
-  // cursor is otherwise cleared (Escape, or a `setView`/`setWindow` call); `pxX` is
+  // cursor is otherwise cleared (Escape, or a `setView` call); `pxX` is
   // the chart units per unit of plot width, `(view[1] - view[0]) / PLOT_W`.
   // `onAnchor(x)`, when given, is called whenever the anchor (the zoom marker that a
   // click or the arrow keys set) changes, with null when it is cleared (Escape, a
-  // drag-zoom, a reset, `setView` or `setWindow`). Both default to a no-op.
-  // Returns {setView, setLanes, setWindow, setAnchor}: setView changes the view
-  // without calling onViewChange. setWindow replaces the lanes, `xDomain` and
-  // `extent` together, and keeps `lanesFor` and `groups` if they were given.
-  // setAnchor(x) sets the anchor (or clears it with null), draws it and calls
-  // onAnchor.
+  // drag-zoom, a reset or `setView`). Both default to a no-op.
+  // Returns {setView, setLanes, setAnchor}: setView changes the view without calling
+  // onViewChange. setAnchor(x) sets the anchor (or clears it with null), draws it and
+  // calls onAnchor.
   function laneChart({svg, chart, tip, lanes, lanesFor, groups, groupControls,
                       xDomain, extent = xDomain,
                       minSpan: minSpanOption, onViewChange = () => {},
@@ -75,8 +74,7 @@ const PulseqReport = (() => {
                       bandStyle = "fill:var(--ink);fill-opacity:0.05",
                       onCursor = () => {}, onAnchor = () => {}}) {
     // `minSpan` when it is given, else a millionth of the extent.
-    const spanOf = ext => minSpanOption ?? (ext[1] - ext[0]) / 1e6;
-    let minSpan = spanOf(extent);
+    const minSpan = minSpanOption ?? (extent[1] - extent[0]) / 1e6;
 
     // Lane groups (comment above `laneChart`). `groupMap` and `filterLanes` are built once;
     // `visibleGroupIds` changes when a group control is clicked. Without `groups`,
@@ -87,9 +85,8 @@ const PulseqReport = (() => {
       ? new Set(groups.filter(g => g.visible).map(g => g.id)) : null;
     const filterLanes = groups ? ls => visibleLanes(ls, groupMap, visibleGroupIds) : ls => ls;
 
-    // The SVG height depends on the number of lanes actually drawn. setWindow changes it;
-    // with `groups`, `render` also changes it, since the visible lanes can then change
-    // without a `setWindow` call (a group control click).
+    // The SVG height depends on the number of lanes actually drawn. With `groups`,
+    // `render` changes it, since the visible lanes can change (a group control click).
     let H, PLOT_BOTTOM;
     function setHeight(n) {
       H = TOP + n * (LANE_H + LANE_GAP) - LANE_GAP + AXIS_H;
@@ -495,20 +492,6 @@ const PulseqReport = (() => {
         lanes = newLanes;
         render();
       },
-      // Replace the lanes (any number), the initial view and the widest view, for example
-      // to show another time window of the data. The view goes to the new `xDomain`.
-      setWindow({lanes: newLanes, xDomain: newDomain, extent: newExtent = newDomain}) {
-        stopGesture();
-        lanes = newLanes;
-        xDomain = newDomain.slice();
-        extent = newExtent.slice();
-        minSpan = spanOf(extent);
-        view = xDomain.slice();
-        setCursor(null);
-        setAnchor(null);
-        setHeight(filterLanes(lanes).length);
-        render();
-      },
       // Sets the anchor (or clears it with null), draws it and calls onAnchor.
       setAnchor,
     };
@@ -573,12 +556,12 @@ const PulseqReport = (() => {
   // finished, never nested inside it, so handlers always see one message at a time.
 
   // Written to the console by default when a handler throws; a test passes its own
-  // onError instead, so it does not depend on console output.
+  // onError instead, so it does not depend on console output. A watcher of
+  // `watchSubscribers` that throws is reported with no message.
   const defaultOnError = (error, topic, message) => {
-    console.error(
-      `PulseqReport: a subscriber of topic "${topic}" (source "${message.source}") threw:`,
-      error
-    );
+    const what = message ? `a subscriber of topic "${topic}" (source "${message.source}")`
+      : `a subscriber watcher of topic "${topic}"`;
+    console.error(`PulseqReport: ${what} threw:`, error);
   };
 
   // A pure factory (no DOM, no globals besides its own closure), so tests can make a
@@ -593,6 +576,9 @@ const PulseqReport = (() => {
     // `splice` mid-iteration would also skip the next handler), and makes a second
     // unsubscribe call a no-op.
     const subscribers = new Map();
+    // topic -> array of {fn, removed}: the watchers of `watchSubscribers`, in the order
+    // they were made. `removed` has the same job as it has for `subscribers`.
+    const watchers = new Map();
     // Deliveries not yet run: a publish while `delivering` is true pushes here
     // instead of fanning out immediately (the queue of the module comment above).
     const queue = [];
@@ -622,6 +608,22 @@ const PulseqReport = (() => {
         }
       } finally {
         delivering = false;
+      }
+    }
+
+    // Calls each watcher of `topic` with the number of its subscribers now.
+    function notifyWatchers(topic) {
+      const list = watchers.get(topic);
+      if (!list) return;
+      const subs = subscribers.get(topic);
+      const count = subs ? subs.length : 0;
+      for (const watcher of list.slice()) {
+        if (watcher.removed) continue;
+        try {
+          watcher.fn(count);
+        } catch (error) {
+          onError(error, topic, undefined);
+        }
       }
     }
 
@@ -655,6 +657,7 @@ const PulseqReport = (() => {
       }
       const sub = {handler, removed: false};
       subs.push(sub);
+      notifyWatchers(topic);
       if (replay) {
         const sourceMap = kept.get(topic);
         if (sourceMap) {
@@ -684,18 +687,54 @@ const PulseqReport = (() => {
         sub.removed = true;
         const i = subs.indexOf(sub);
         if (i >= 0) subs.splice(i, 1);
+        notifyWatchers(topic);
       };
     }
 
-    return {publish, subscribe};
+    // Calls `fn(count)` at once with the number of subscribers of `topic`, then each
+    // time that number changes. Returns a function that stops the watch (a second
+    // call does nothing). A card uses it to show a request button only while a card
+    // acts on the request (`requestButton` below).
+    function watchSubscribers(topic, fn) {
+      let list = watchers.get(topic);
+      if (!list) {
+        list = [];
+        watchers.set(topic, list);
+      }
+      const watcher = {fn, removed: false};
+      list.push(watcher);
+      const subs = subscribers.get(topic);
+      try {
+        fn(subs ? subs.length : 0);
+      } catch (error) {
+        onError(error, topic, undefined);
+      }
+      return () => {
+        if (watcher.removed) return;
+        watcher.removed = true;
+        const i = list.indexOf(watcher);
+        if (i >= 0) list.splice(i, 1);
+      };
+    }
+
+    return {publish, subscribe, watchSubscribers};
   }
 
-  // The one bus the page itself uses; PulseqReport.publish/subscribe are its
-  // functions. createMessageBus is exported too, for tests and for a card that wants
-  // a private bus of its own.
+  // The one bus the page itself uses; PulseqReport.publish/subscribe/watchSubscribers
+  // are its functions. createMessageBus is exported too, for tests and for a card that
+  // wants a private bus of its own.
   const pageBus = createMessageBus();
 
+  // Keeps `button.hidden` true while no card subscribes to `topic` on the page's bus,
+  // so a button that sends a request is shown only when a card acts on it (a `goto`
+  // request button of a card, or of a plugin's card). Returns the stop function of
+  // the watch.
+  function requestButton(button, topic) {
+    return pageBus.watchSubscribers(topic, count => { button.hidden = count === 0; });
+  }
+
   return {laneChart, registerCard, cards, el, text, decodeTable,
-    createMessageBus, publish: pageBus.publish, subscribe: pageBus.subscribe};
+    createMessageBus, publish: pageBus.publish, subscribe: pageBus.subscribe,
+    watchSubscribers: pageBus.watchSubscribers, requestButton};
 })();
 if (typeof module !== "undefined") module.exports = PulseqReport;

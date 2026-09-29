@@ -9,7 +9,6 @@ from pulseq_reports import pns_levels as pns_levels_module
 from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.pns import pns_data
 from pulseq_reports.pns import pns_levels_for
-from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import full_window
 
 
@@ -285,10 +284,9 @@ def test_pns_levels_for_shares_one_computation_with_the_pns_card_and_the_diagram
     section 4.6). Adding a block changes the sequence, so the next call recomputes."""
     calls = _count_pns_levels_calls(monkeypatch)
     seq = spin_echo_sequence()
-    named = NamedSequence("seq", seq)
 
     pns_data(seq)
-    diagram_card([named], [full_window([named])], pns=True)
+    diagram_card(seq, [full_window(seq)], pns=True)
     assert len(calls) == 1
 
     seq.add_block(pp.make_delay(1e-3))

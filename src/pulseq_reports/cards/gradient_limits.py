@@ -3,13 +3,13 @@ on each axis, and as a three-axis vector."""
 
 import html
 import math
-from collections.abc import Sequence
+
+import pypulseq as pp
 
 from ..extensions import refuse_rotations
 from ..grad_limits import GradientLimits, gradient_limits
 from ..markup import fmt, html_table
 from ..page import Card
-from ..seq_utils import NamedSequence
 
 _AXES = ("x", "y", "z")
 _AXIS_LABEL = {"x": "Gx", "y": "Gy", "z": "Gz"}
@@ -25,19 +25,17 @@ def _vector_rms(axis_rms_mt_per_m: dict[str, float]) -> float:
     return math.sqrt(sum(axis_rms_mt_per_m[axis] ** 2 for axis in _AXES))
 
 
-def _file_rows(windowed: GradientLimits, file_label: str | None) -> list[list]:
-    """The four rows (Gx, Gy, Gz, |G|) for one file, from one `gradient_limits` call.
+def _rows(windowed: GradientLimits) -> list[list]:
+    """The four rows (Gx, Gy, Gz, |G|), from one `gradient_limits` call.
     `windowed.whole_rms_mt_per_m` gives the extra "RMS over whole file" column when
     `windowed` is over a window (computed in that same call); it is None when there is
-    no window. `file_label` is the file name for the first cell of the first row
-    (blank for the other three rows), or None to leave out that column."""
+    no window."""
     limits = windowed.limits
     whole_rms = windowed.whole_rms_mt_per_m
     rows = []
-    for i, axis in enumerate(_AXES):
+    for axis in _AXES:
         a = windowed.axes[axis]
-        row = [] if file_label is None else [file_label if i == 0 else ""]
-        row += [
+        row = [
             _AXIS_LABEL[axis],
             fmt(a.peak_mt_per_m),
             _pct(a.peak_mt_per_m, limits.max_grad_mt_per_m),
@@ -53,8 +51,7 @@ def _file_rows(windowed: GradientLimits, file_label: str | None) -> list[list]:
     # cell is blank. The percent of limit compares the vector peak with the per-axis
     # max_grad, because an oblique prescription can put the vector peak onto a single
     # physical axis.
-    vector_row = [] if file_label is None else [""]
-    vector_row += [
+    vector_row = [
         "|G|",
         fmt(windowed.vector_peak_mt_per_m),
         _pct(windowed.vector_peak_mt_per_m, limits.max_grad_mt_per_m),
@@ -69,17 +66,16 @@ def _file_rows(windowed: GradientLimits, file_label: str | None) -> list[list]:
 
 
 def gradient_limits_card(
-    seqs: Sequence[NamedSequence],
+    seq: pp.Sequence,
+    *,
     window: tuple[float, float] | None = None,
     limits=None,
     card_id: str = "gradient-limits",
 ) -> Card:
-    """The "Gradient limits" card: for each file, one table row group with the peak
-    amplitude, the peak slew rate and the RMS amplitude of each logical axis (Gx, Gy,
-    Gz) and of the three-axis vector (|G|), each as a percent of `limits` where a limit
-    applies (see `grad_limits.gradient_limits`). With more than one file in `seqs`,
-    the table has a leading "File" column with the file name (HTML-escaped) on the
-    first row of each file's group.
+    """The "Gradient limits" card: one table with the peak amplitude, the peak slew rate
+    and the RMS amplitude of each logical axis (Gx, Gy, Gz) and of the three-axis vector
+    (|G|), each as a percent of `limits` where a limit applies (see
+    `grad_limits.gradient_limits`).
 
     With `window` given, the peak and the slew columns are over `window`, and the RMS
     column is split into "RMS over window" and "RMS over whole file". With
@@ -90,10 +86,8 @@ def gradient_limits_card(
     Raises `NotImplementedError` for a sequence with the rotation extension
     (`extensions.refuse_rotations`).
     """
-    for ns in seqs:
-        refuse_rotations(ns.seq)
-    multi = len(seqs) > 1
-    headers = (["File"] if multi else []) + [
+    refuse_rotations(seq)
+    headers = [
         "Axis",
         "Peak (mT/m)",
         "% of limit",
@@ -106,22 +100,15 @@ def gradient_limits_card(
         else ["RMS over window (mT/m)", "RMS over whole file (mT/m)"]
     )
 
-    rows: list[list] = []
-    reason_notes: list[str] = []
-    limits_label = None
-    for ns in seqs:
-        # One call: with a window, gradient_limits also computes the whole-file RMS in the
-        # same pass over the index (GradientLimits.whole_rms_mt_per_m), instead of a second
-        # call for it.
-        windowed = gradient_limits(ns.seq, window=window, limits=limits)
-        limits_label = windowed.limits.label
-        if windowed.reason is not None:
-            reason_notes.append(f"{ns.name}: {windowed.reason}.")
-        rows.extend(_file_rows(windowed, ns.name if multi else None))
+    # One call: with a window, gradient_limits also computes the whole-file RMS in the
+    # same pass over the index (GradientLimits.whole_rms_mt_per_m), instead of a second
+    # call for it.
+    windowed = gradient_limits(seq, window=window, limits=limits)
+    limits_label = windowed.limits.label
 
-    body = html_table(headers, rows)
-    for note in reason_notes:
-        body += f'<p class="muted">{html.escape(note)}</p>'
+    body = html_table(headers, _rows(windowed))
+    if windowed.reason is not None:
+        body += f'<p class="muted">{html.escape(f"{windowed.reason}.")}</p>'
     body += (
         '<p class="muted">Peak is the largest gradient amplitude at any point of the '
         "waveform. Max slew is the largest rate of change between neighbouring points "

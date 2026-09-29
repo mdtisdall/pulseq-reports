@@ -1388,19 +1388,17 @@ checks the result is 0.
 ### 2.5 Timing card (`test_timing_card.py`)
 
 `test_timing_card.py` tests `cards/timing.py`. `timing_card` builds the
-timing check card from pypulseq's `check_timing` result for one or more
-sequences. For one sequence, the body is the same HTML as vb-pulseq's timing
-check. For more than one sequence, a status line names each file and an
-error table is placed under each file that fails.
+timing check card from pypulseq's `check_timing` result for one sequence.
+The body is the same HTML as vb-pulseq's timing check.
 
 #### `test_timing_card_for_one_sequence_matches_timing_html`
 
-**Checks:** For one sequence, `timing_card`'s `body_html` equals the same
+**Checks:** `timing_card`'s `body_html` equals the same
 HTML as vb-pulseq's timing check (parity), and the card's `id`, `title`,
 `data` and `script` fields are correct.
 
 **How:** The test builds a synthetic spin echo sequence (it passes the
-timing check), calls `timing_card` with one `NamedSequence`, and compares
+timing check), calls `timing_card` with it, and compares
 `body_html` to `timing._timing_html(timing.timing_errors(seq))` called
 directly. It also checks `id == "timing"`, `title == "Timing check"`,
 "Timing check passed" is in the body, and `data` and `script` are both None.
@@ -1422,32 +1420,6 @@ error, then checks that `timing_card`'s body has "Timing check failed" and
 **Assumptions:** pypulseq's `check_timing` reports an `RF_DEAD_TIME` error
 for an RF block whose delay is below the system's RF dead time.
 
-#### `test_timing_card_for_two_sequences_names_each_file_and_only_the_failing_one_has_a_table`
-
-**Checks:** With two sequences, `timing_card` names each file in a status
-line, in the given order, and places the error table only under the file
-that fails.
-
-**How:** The test builds one `NamedSequence` with a valid sequence and one
-with the bad sequence from the previous test, calls `timing_card` with both,
-and checks that both file names appear (the good one first), that both a
-"passed" and a "failed" status line are present, that exactly one error
-table appears in the body, and that splitting the body on the second file's
-name puts "RF_DEAD_TIME" only in the part after it.
-
-**Assumptions:** None beyond the previous test's.
-
-#### `test_timing_card_escapes_file_names`
-
-**Checks:** A file name with HTML special characters is escaped in the
-body.
-
-**How:** The test calls `timing_card` with a `NamedSequence` named `"a<b>"`
-and checks that the raw text is absent from the body and the HTML-escaped
-form is present.
-
-**Assumptions:** None.
-
 #### `test_render_page_accepts_timing_card`
 
 **Checks:** `page.render_page` accepts a `Card` from `timing_card` and
@@ -1463,16 +1435,11 @@ result.
 
 `test_definitions_card.py` tests `cards/definitions.py`. `definitions_card`
 builds the two-column definitions table from a sequence's `Definitions`,
-the same as vb-pulseq, for one sequence. For more than one sequence, it
-builds one row for each definition key found in any file (in first-seen
-order), with one column for each file; a file that lacks a key gets an
-empty cell. When no file has any definitions, the body is a muted "No
-definitions." paragraph instead of an empty table — a choice this phase
-makes, since vb-pulseq has no multi-file case to match.
+the same as vb-pulseq.
 
 #### `test_definitions_card_for_one_sequence_matches_the_vb_table`
 
-**Checks:** For one sequence, `definitions_card`'s `body_html` equals
+**Checks:** `definitions_card`'s `body_html` equals
 vb-pulseq's two-column definitions table for the same sequence (parity),
 and the card's `id`, `title`, `data` and `script` fields are correct.
 
@@ -1486,9 +1453,8 @@ and `data` and `script` are both None.
 
 #### `test_definitions_card_for_one_sequence_with_no_definitions_is_an_empty_table`
 
-**Checks:** A single sequence with no definitions gets the two-column table
-with an empty body, not the "No definitions." message (that message is
-only for the multi-file case).
+**Checks:** A sequence with no definitions gets the two-column table with
+an empty body.
 
 **How:** The test clears `seq.definitions` on a synthetic spin echo
 sequence and checks that the body equals
@@ -1496,35 +1462,6 @@ sequence and checks that the body equals
 
 **Assumptions:** pypulseq's `Sequence.definitions` is a plain dict that a
 test can clear directly.
-
-#### `test_definitions_card_for_two_sequences_unions_keys_in_first_seen_order`
-
-**Checks:** With two sequences, the table has one column for each file and
-one row for each definition key found in any file, in first-seen order,
-with an empty cell where a file lacks the key.
-
-**How:** The test builds two plain pypulseq sequences with different
-definitions set ("Name" and "TR" on the first, "TR" and "FOV" on the
-second, with "TR" set to a different value in each), calls
-`definitions_card` with both, and checks that the header row names both
-files, that the "Name" row is empty for the second file, the "FOV" row is
-empty for the first, the "TR" row shows each file's own value, and that
-"Name" and "TR" (first seen in the first file) appear before "FOV" (first
-seen in the second).
-
-**Assumptions:** None.
-
-#### `test_definitions_card_for_two_sequences_with_no_definitions_shows_a_muted_message`
-
-**Checks:** When no file has any definitions, `definitions_card` shows a
-muted "No definitions." message instead of an empty table.
-
-**How:** The test clears the definitions of two plain pypulseq sequences
-and checks that the body equals `<p class="muted">No definitions.</p>`
-exactly.
-
-**Assumptions:** This is a design decision the plan leaves to this phase
-(section 5, Phase 2, task 2.2); there is no vb-pulseq behavior to match.
 
 #### `test_render_page_accepts_definitions_card`
 
@@ -1776,22 +1713,10 @@ gives `rf_exposure.rf_exposure` as a JSON-ready dict, in ms and µT, plus the
 highest window's real length and whether the sequence is periodic.
 `rf_exposure_card` builds the "RF exposure" `Card`: for one sequence, the
 body is `_rf_exposure_html(rf_exposure_data(seq))`, a six-row table and its
-note. For more than one sequence, the body has one table for each file,
-named by its file name, then an "All files" table and note: peak B1 is the
-maximum over the files, and B1+rms and the highest-window value treat the
-files as played one after another with no gap, and, when `periodic=True`,
-that concatenation repeated.
+note. The card takes one sequence.
 
-The tests use `tests/synthetic.py`'s `spin_echo_sequence`, `gre_sequence` and
+The tests use `tests/synthetic.py`'s `spin_echo_sequence` and
 `empty_sequence`.
-
-Since phase 3 of `docs/plans/cards-at-scale.md`, the "All files" table comes from the
-pulse trains that `rf_exposure_card` already built for each file's own table
-(`rf_exposure._pulse_train`, `cards/rf_exposure.py`'s `_combined_data`), so the card
-does not read a file a second time to build it (section 4.5 item 7 of that plan). The
-tests below the first group add: a comparison of the "All files" table with the
-oracle's own way of combining files, for two and for three files, and a check that each
-file is read only once.
 
 **Assumptions for the whole file:**
 
@@ -1827,7 +1752,7 @@ repetition of the short sequence).
 **Checks:** The rendered page has the RF exposure card, with its title and
 its six table rows, and the card itself has no chart data or script.
 
-**How:** The test builds the card for one named sequence, checks that its
+**How:** The test builds the card for the spin echo sequence, checks that its
 `data` and `script` are `None`, renders the page, cuts out the text from the
 card's id to the end of the result, and checks for the title "RF exposure"
 and the rows "RF pulses", "Peak B1 (µT)", "∫B1² dt over the sequence
@@ -1848,63 +1773,6 @@ is in a rendered page.
 
 **Assumptions:** None.
 
-#### `test_rf_exposure_card_two_files`
-
-**Checks:** For two named sequences, the card has one table for each file,
-named by its file name, in file order, then an "All files" table whose peak
-B1 is the maximum of the two files' peak B1, and whose note says the
-sequence is repeated (because `periodic` defaults to `True`).
-
-**How:** The test builds the card for a spin echo and a GRE sequence, checks
-that both file names appear as headings before "All files", in that order,
-computes each file's own peak B1 with `rf_exposure_data`, checks that the
-"All files" table has the larger of the two as its peak B1, checks that
-"sequence repeated" is in the "All files" section, and renders the page to
-check that `render_page` accepts a multi-file card.
-
-**Assumptions:** None.
-
-#### `test_rf_exposure_card_two_files_not_periodic_omits_repeated_wording`
-
-**Checks:** With `periodic=False`, the "All files" section does not say the
-sequence is repeated, and says instead that the files play once.
-
-**How:** The test builds the two-file card with `periodic=False` and checks
-that "sequence repeated" is not in the "All files" section and that "files
-played once" is.
-
-**Assumptions:** None.
-
-#### `test_all_files_table_matches_oracle`
-
-**Checks:** The "All files" table (`_combined_data`'s dict) for two files (spin echo and
-GRE) and for three (those two plus a spin echo variant with the readout prephaser after
-the second crusher instead of before it) matches the oracle's own way of combining
-files, for both `periodic` values.
-
-**How:** `_oracle_combined_data` rebuilds the "All files" data the way the card computed
-it before phase 3: each file's samples from `oracle._rf_samples`, offset by the
-durations before it, concatenated, then `oracle._windowed_energy` on the concatenation
-(`cards/rf_exposure.py`'s own `_combined_data`, before this task's changes). The test
-compares this with `_combined_data_from_new_module`'s dict (one `_pulse_train` per file,
-then the new `_combined_data`): `num_pulses`, `peak_block`, `window_s`, `window_used_s`
-and `periodic` exactly, and `duration_ms`, `peak_b1_ut`, `energy_ut2_ms`, `b1rms_ut` and
-`b1rms_window_ut` exactly too, because these are already rounded to 4 decimals and a
-relative 1e-12 difference before rounding is far too small to change the rounded value.
-
-**Assumptions:** None.
-
-#### `test_all_files_reads_each_file_once`
-
-**Checks:** `rf_exposure_card` calls `rf_exposure._pulse_train` exactly once for each
-file, for two and for three files.
-
-**How:** The test wraps `rf_exposure._pulse_train` with a counting wrapper
-(`monkeypatch`), calls `rf_exposure_card` with the two-file and the three-file cases,
-and checks that the wrapper was called exactly once for each file.
-
-**Assumptions:** None.
-
 ### 2.9 Gradient spectrum (`test_grad_spectrum.py`)
 
 The spectrum is calculated as in pypulseq: 50 ms Hann windows with 50 %
@@ -1916,7 +1784,7 @@ resonance bands, of the MAGNETOM Prisma AS82 gradient coil, are 590 ± 50 Hz
 and 1140 ± 110 Hz. The gradients are sampled through the raster sampler
 (`sampling.GradientSampler`, phase 2 of `docs/plans/cards-at-scale.md`),
 in chunks of `CHUNK_WINDOWS` windows, so the memory does not grow with the
-sequence length. `combine` gives the spectrum of several files.
+sequence length.
 `tests/oracles/grad_spectrum.py` is the module before that phase, sampling
 through `Sequence.get_gradients()` instead; the tests compare this module's
 spectra with it.
@@ -2046,36 +1914,6 @@ of 1e-12. The band peaks must be at the same frequencies.
   FFTs of a different number of windows in each call. The tolerance allows for
   that rounding.
 
-#### `test_combine_is_the_maximum_over_the_files`
-
-**Checks:** The combined spectrum of two files is the element-wise maximum of
-each axis and of the RSS, with the band peaks recomputed from the combined
-RSS.
-
-**How:** The test calculates the spectra of a 200 ms, 600 Hz sine and a
-200 ms, 300 Hz sine and combines them. The frequencies must be those of the
-files, and each axis and the RSS must be equal to the element-wise maximum.
-The first band's peak must be at 600 Hz with the value of the 600 Hz file,
-and its relative value must be that value divided by the combined RSS
-maximum.
-
-**Assumptions:**
-
-- The windows that would cross from one file to the next are not in the
-  combined spectrum. The test does not check them.
-
-#### `test_combine_skips_files_without_gradients`
-
-**Checks:** `combine` skips a file without gradients, gives "no gradients"
-when no file has gradients, and raises for an empty list.
-
-**How:** The test combines a file with only a delay block and a 100 ms sine:
-the result must be the same as the sine's spectrum. It combines the file
-without gradients alone: the reason must be "no gradients". Combining an empty
-list must raise ValueError.
-
-**Assumptions:** None.
-
 #### `test_matches_oracle_on_synthetic_sequences`
 
 **Checks:** Phase 5 of `docs/plans/cards-at-scale.md` moved
@@ -2135,12 +1973,10 @@ exactly the vb-pulseq `spectrum_data(seq)` data. `spectrum_card` builds the
 "Gradient spectrum" `Card`: for one sequence, the body is
 `_spectrum_html(spectrum_data(seq, resonances), scanner_label, card_id)` — the
 band table, the Linear/dB chart controls and the chart itself, or a note that
-there is no spectrum. For more than one sequence, the data is the combined
-spectrum (`grad_spectrum.combine`) of the files' own spectra, and the body
-has an added note that the chart is the maximum over the files. `data` is
-always the JSON-ready spectrum dict and `script` is always `"spectrum"`.
+there is no spectrum. `data` is always the JSON-ready spectrum dict and
+`script` is always `"spectrum"`.
 
-The tests use `tests/synthetic.py`'s `spin_echo_sequence`, `gre_sequence` and
+The tests use `tests/synthetic.py`'s `spin_echo_sequence` and
 `empty_sequence`.
 
 #### `test_spectrum_data_for_spin_echo`
@@ -2166,7 +2002,7 @@ maximum frequency. The bands must be 540–640 Hz and 1030–1250 Hz.
 band rows, the chart, the Linear and dB buttons with Linear selected, and
 the −80 dB note.
 
-**How:** The test builds the card for one named sequence, renders the page,
+**How:** The test builds the card for the spin echo sequence, renders the page,
 cuts out the text from the card's id to the end of the result, and checks
 for the title, the cells "540–640" and "1030–1250", the diagram element, the
 two scale buttons with their pressed states, and "drawn at −80 dB".
@@ -2213,21 +2049,6 @@ not appear unescaped anywhere in the card's HTML (review finding B5).
 setup of `test_custom_scanner_label_and_resonances_appear`. It checks that
 `body_html` does not contain "Coil <A&B>", and that it contains the note's
 phrase "the acoustic resonances of the Coil &lt;A&amp;B&gt; gradient coil".
-
-**Assumptions:** None.
-
-#### `test_two_file_card_uses_combined_spectrum`
-
-**Checks:** For two named sequences, the card's data equals
-`_spectrum_data(combine(...))` of the two files' own spectra, and the body
-states that the chart is the maximum over the files and that windows
-crossing between files are not included.
-
-**How:** The test builds the card for a spin echo and a GRE sequence,
-computes the expected data directly from `gradient_spectrum` and `combine`,
-and checks that the card's `data` equals it exactly and that the two note
-phrases are in the body. It renders the page to check that `render_page`
-accepts a multi-file card.
 
 **Assumptions:** None.
 
@@ -2556,7 +2377,7 @@ model once, not twice; adding a block makes the next call recompute
 for each call (patching the module attribute reaches `pns.pns_levels_for`, which
 imports it inside the function body on every call, to avoid a circular import with
 `pns_levels.py`). It calls `cards.pns.pns_data(seq)` and then
-`cards.diagram.diagram_card([named], [full_window([named])], pns=True)` for the same
+`cards.diagram.diagram_card(seq, [full_window(seq)], pns=True)` for the same
 sequence object and checks there was 1 call. It adds a delay block to the sequence and
 calls `pns_data` again, and checks there are then 2 calls.
 
@@ -2999,8 +2820,8 @@ compares `whole_rms_mt_per_m` against a fresh whole-file oracle call.
 
 `test_gradient_limits_card.py` tests `cards/gradient_limits.py`: the "Gradient
 limits" table (Gx, Gy, Gz and |G| rows, with the peak, its percent of the
-limit, the max slew, its percent, and the RMS), one row group for each file
-when there is more than one, and the extra RMS column when a window is given.
+limit, the max slew, its percent, and the RMS), and the extra RMS column when
+a window is given.
 Every expected numeric cell is computed by hand from the trapezoid the test
 builds, using the same formulas as `test_grad_limits.py`, and compared through
 `markup.html_table`, so a test also fixes the exact table that `html_table` would
@@ -3008,17 +2829,17 @@ render from those rows.
 
 Since phase 4 of `docs/plans/cards-at-scale.md`, a window's "RMS over whole file" column comes
 from the one `gradient_limits` call's own `whole_rms_mt_per_m`, not a second call with
-`window=None`, so that the card makes one pass over the per-event values for each file.
+`window=None`, so that the card makes one pass over the per-event values.
 
-#### `test_single_file_table_has_axis_rows_and_percents`
+#### `test_table_has_axis_rows_and_percents`
 
-**Checks:** For one file with a single x trapezoid, the card's table has no
-"File" column, and its Gx, Gy, Gz and |G| rows hold the hand-computed peak,
+**Checks:** For a sequence with a single x trapezoid, the card's Gx, Gy, Gz and
+|G| rows hold the hand-computed peak,
 percent of the limit, max slew, its percent, and RMS, with "—" for the
 max slew of |G| and its percent. The |G| RMS equals the Gx RMS, because only x
 has a gradient.
 
-**How:** The test builds one file with an x trapezoid, computes the expected
+**How:** The test builds a sequence with an x trapezoid, computes the expected
 peak, slew and RMS from the trapezoid's parameters (as in
 `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`) and their
 percents of `SYSTEM.max_grad` and `SYSTEM.max_slew`, and builds the expected
@@ -3028,32 +2849,16 @@ table HTML with `markup.html_table` from the hand-computed rows. It calls
 
 **Assumptions:** None.
 
-#### `test_two_files_have_one_row_group_each_with_file_names`
-
-**Checks:** With two files, the table has a leading "File" column, each
-file's name on the first of its four rows and blank on the other three, and a
-file name with an HTML special character is escaped.
-
-**How:** The test builds two files, each with a single x trapezoid of a
-different amplitude, computes the hand-computed rows for each as in the
-single-file test, and builds the expected table HTML with `markup.html_table`,
-with the first file's name (which contains `&`) on the first row of its group
-and the second file's name on the first row of its group. It checks that the
-card's body starts with the expected table HTML, and that the escaped form of
-the first file's name is in the body.
-
-**Assumptions:** None.
-
 #### `test_window_gives_rms_over_window_and_over_whole_file`
 
 **Checks:** With a window, the table has two RMS columns, "RMS over window"
 and "RMS over whole file", and the peak and the slew columns are over the
 window.
 
-**How:** The test builds one file with an x trapezoid and a window equal to
+**How:** The test builds a sequence with an x trapezoid and a window equal to
 the rising ramp. It computes the expected peak, slew and window RMS from the
 ramp alone (RMS from `amplitude^2 * rise_time / 3` divided by the window
-length), and the expected whole-file RMS as in the single-file test. It builds
+length), and the expected whole-file RMS as in the first test. It builds
 the expected table HTML with `markup.html_table` from these hand-computed rows,
 with both RMS columns, and checks that the card's body starts with it.
 
@@ -3061,12 +2866,12 @@ with both RMS columns, and checks that the card's body starts with it.
 
 #### `test_no_gradients_adds_a_reason_note`
 
-**Checks:** A file with no gradient events gets a muted note in the card that
-names the file and the reason.
+**Checks:** A sequence with no gradient events gets a muted note in the card
+that gives the reason, with no file name in front of it.
 
-**How:** The test builds a file with a delay block only, calls
+**How:** The test builds a sequence with a delay block only, calls
 `gradient_limits_card`, and checks that the body contains
-"empty.seq: no gradient events in the sequence.".
+`<p class="muted">no gradient events in the sequence.</p>`.
 
 **Assumptions:** None.
 
@@ -3074,11 +2879,11 @@ names the file and the reason.
 
 **Checks:** With a window, `gradient_limits_card` calls the per-event
 function (`seq_index.grad_events`, which reads each unique gradient event's
-block with `get_block`) exactly one time for the one file, instead of once
+block with `get_block`) exactly one time for the sequence, instead of once
 for the window and again for the whole-file RMS.
 
 **How:** The test wraps `grad_limits.grad_events` with a counting wrapper
-(`monkeypatch`), calls `gradient_limits_card` with one file and a window, and
+(`monkeypatch`), calls `gradient_limits_card` with a sequence and a window, and
 checks that the wrapper was called exactly once.
 
 **Assumptions:** None.
@@ -3088,7 +2893,7 @@ checks that the wrapper was called exactly once.
 **Checks:** `render_page` accepts the card that `gradient_limits_card`
 returns.
 
-**How:** The test builds a card from one file with a trapezoid, calls
+**How:** The test builds a card from a sequence with a trapezoid, calls
 `render_page` with it, and checks that the card's section and its `<h2>`
 title are in the result.
 
@@ -3227,7 +3032,7 @@ label that names that end time.
 **How:** The test builds a synthetic gradient echo sequence with a short TR,
 reads the first exact ADC window's end from `file_lanes`, computes the
 expected end as `min(duration_ms, 1.1 * first_window_end_ms)` rounded the
-same way the function documents, and checks `first_adc_window`'s `file_index`,
+same way the function documents, and checks `first_adc_window`'s
 `start_s`, `end_s` and `label` against it.
 
 **Assumptions:** None.
@@ -3248,7 +3053,7 @@ that `first_adc_window`'s end and label both use the file's own duration.
 a label that names the duration.
 
 **How:** The test builds a synthetic gradient echo sequence and checks
-`full_window`'s `file_index`, `start_s`, `end_s` and `label` against the
+`full_window`'s `start_s`, `end_s` and `label` against the
 file's own duration.
 
 **Assumptions:** None.
@@ -3270,29 +3075,29 @@ unlimited rows with the same `total`.
 
 ### 2.16 Sequence diagram card (`test_diagram_card.py`)
 
-`test_diagram_card.py` tests `cards/diagram.py`. `diagram_card` sends one
-entry in `data["files"]` for each file that at least one caller-given time
-window uses (its compressed block and event tables, `diagram_data`, plus
-`lane_meta`), and one entry in `data["windows"]` for each window, with one
-button for each window in the given order (section 4.1 of
-`docs/plans/diagram-event-table.md`). There is no lane set and no point
+`test_diagram_card.py` tests `cards/diagram.py`. `diagram_card` sends the
+sequence as `data["file"]` (its compressed block and event tables,
+`diagram_data`, plus `lane_meta`), and one entry in `data["windows"]` for each
+caller-given time window, with one button for each window in the given order
+(section 4.1 of `docs/plans/diagram-event-table.md`, and format 2 of
+`docs/plans/public-api.md`, section 4.1, item 6). There is no lane set and no point
 budget any more: every view is drawn in the browser from the tables (phase
 4's job is done there, not in Python). The last test is adapted from
 vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`.
 
-#### `test_data_has_format_1_with_file_and_window_keys`
+#### `test_data_has_format_2_with_file_and_window_keys`
 
-**Checks:** `diagram_card`'s data has `format == 1`, one file entry with
-the keys of section 4.1 (`name`, `duration_s`, `num_blocks`, `lanes`,
-`tables`), a `lanes` equal to `lane_meta(seq)`, a `duration_s` and
-`num_blocks` equal to `waveforms.duration_s(seq)` and
-`len(seq.block_events)`, each table entry with the keys `dtype`, `length`
-and `data`, and each window entry with the keys `label`, `file` and
-`view_ms`.
+**Checks:** `diagram_card`'s data has the keys `format`, `file` and `windows`,
+with `format == 2`; the `file` entry has the keys `duration_s`, `num_blocks`,
+`lanes` and `tables` (no `name`), a `lanes` equal to `lane_meta(seq)`, a
+`duration_s` and `num_blocks` equal to `waveforms.duration_s(seq)` and
+`len(seq.block_events)`, and each table entry has the keys `dtype`, `length`
+and `data`; there is one window entry for each given window, with the keys
+`label` and `view_ms` (no `file`).
 
 **How:** The test builds a synthetic spin echo sequence and calls
 `diagram_card` with its `first_adc_window` and `full_window`, then checks
-the key sets and values of `card.data` and of its one file and its windows
+the key sets and values of `card.data`, of its `file` and of its windows
 directly against `diagram_data.lane_meta`, `waveforms.duration_s` and
 `seq.block_events`.
 
@@ -3300,44 +3105,14 @@ directly against `diagram_data.lane_meta`, `waveforms.duration_s` and
 
 #### `test_tables_decode_to_diagram_tables`
 
-**Checks:** A file entry's `tables`, decoded with `diagram_data.decode_tables`,
-equal `diagram_data.diagram_tables(seq)`: the same table names, the same
-dtype and the same values for each.
+**Checks:** The `file` entry's `tables`, decoded with
+`diagram_data.decode_tables`, equal `diagram_data.diagram_tables(seq)`: the
+same table names, the same dtype and the same values for each.
 
 **How:** The test builds a synthetic gradient echo sequence, calls
-`diagram_card` with its `full_window`, decodes the one file entry's
+`diagram_card` with its `full_window`, decodes the `file` entry's
 `tables`, and compares each decoded array's dtype and values
 (`numpy.array_equal`) against `diagram_tables(seq)`'s own arrays.
-
-**Assumptions:** None.
-
-#### `test_two_files_give_two_file_entries_and_names_in_button_texts`
-
-**Checks:** With two files, each used by one window, `data["files"]` has
-two entries in the order in which the windows first use them (here the
-`seqs` order), and each button's text starts with its file's name.
-
-**How:** The test builds two named sequences and one `full_window` for
-each, calls `diagram_card`, and checks `data["files"]`'s names and that
-`"a.seq: Full sequence"` and `"b.seq: Full sequence"` both appear in
-`body_html`.
-
-**Assumptions:** None.
-
-#### `test_a_window_of_a_file_with_no_other_window_adds_that_file`
-
-**Checks:** A window of a file that no other window uses still adds that
-file to `data["files"]`; a file in `seqs` with no window at all is not in
-`data["files"]`; and each window's `file` index points at the right entry.
-
-**How:** The test builds three named sequences, `a.seq`, `b.seq` and
-`c.seq`, and calls `diagram_card` with one window each for `c.seq` and
-`a.seq` only (`b.seq` gets none). It checks `data["files"]` has exactly two
-entries, with the names `{"a.seq", "c.seq"}`, and that each window's `file`
-index, looked up by the window's label prefix (`"c.seq:"`, `"a.seq:"`),
-names the file with the matching file name (so a file's position in
-`data["files"]` — its order of first use — is checked against the window
-that should point at it, not assumed).
 
 **Assumptions:** None.
 
@@ -3362,23 +3137,27 @@ expects `ValueError`.
 
 **Assumptions:** None.
 
-#### `test_bad_file_index_raises`
+#### `test_a_window_outside_the_sequence_raises`
 
-**Checks:** `diagram_card` raises `ValueError` when a window names a file
-index outside the given sequences.
+**Checks:** `diagram_card` raises `ValueError`, with the window's label in the
+message, for a window that is not inside the sequence: one that ends after the
+end of the sequence, and one that starts before 0.
 
-**How:** The test calls `diagram_card` with one sequence and a `TimeWindow`
-whose `file_index` is 1 and expects `ValueError`.
+**How:** The test is parametrized over two `TimeWindow` objects (`"past the
+end"`, from 0 to 10^6 s, and `"before the start"`, from -0.5 s), calls
+`diagram_card` with a synthetic spin echo sequence and that one window, and
+expects `ValueError` with a message that matches the label.
 
 **Assumptions:** None.
 
 #### `test_end_before_start_raises`
 
-**Checks:** `diagram_card` raises `ValueError` when a window's end is not
-after its start.
+**Checks:** `diagram_card` raises `ValueError`, with the window's label in the
+message, when a window's end is not after its start.
 
 **How:** The test calls `diagram_card` with a `TimeWindow` whose `end_s` is
-before its `start_s` and expects `ValueError`.
+before its `start_s` and expects `ValueError` with a message that matches the
+label.
 
 **Assumptions:** None.
 
@@ -3424,16 +3203,16 @@ characters.
 
 #### `test_pns_false_by_default_adds_no_pns_key`
 
-**Checks:** Without `pns` (the default, `False`), a file entry has no `"pns"` key.
+**Checks:** Without `pns` (the default, `False`), the `file` entry has no `"pns"` key.
 
 **How:** The test builds a diagram card for the synthetic spin echo sequence with no
-`pns` argument and checks that `"pns"` is not a key of the one file entry.
+`pns` argument and checks that `"pns"` is not a key of the `file` entry.
 
 **Assumptions:** None.
 
 #### `test_pns_true_adds_the_pns_key_with_the_example_hardware`
 
-**Checks:** With `pns=True`, the file entry gets a `"pns"` key with the example
+**Checks:** With `pns=True`, the `file` entry gets a `"pns"` key with the example
 hardware, the SAFE parameters, the gradient raster, `gradScale`, `binSamples`, the
 summary and the stored level, all with the keys the plan's data section lists.
 
@@ -3479,7 +3258,7 @@ False.
 
 **How:** The test builds a diagram card with `pns=True` for the synthetic sequence
 with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks that
-`"pns"` is not a key of the one file entry.
+`"pns"` is not a key of the `file` entry.
 
 **Assumptions:** None.
 
@@ -3601,16 +3380,16 @@ checks that none of the three explanation phrases appears in the body.
 
 `test_blocks_card.py` tests `cards/blocks.py`. `blocks_card` builds a
 collapsed "Blocks (table view)" card from `waveforms.block_rows`: the first
-`max_rows` blocks of each file when there are no windows (vb-pulseq's own
-note and table for one file, parity), or one table for each window when
-`windows` is given. Every expected table in this file is built with
+`max_rows` blocks when there are no windows (vb-pulseq's own note and table,
+parity), or one table for each window when `windows` is given; a window that is
+not inside the sequence raises `ValueError`. Every expected table in this file is built with
 `markup.html_table`, the same helper the card itself uses, from the rows that
 `block_rows` gives directly, so a test also fixes the exact table that
 `html_table` would render from those rows.
 
-#### `test_one_file_note_and_table_when_rows_are_cut`
+#### `test_note_and_table_when_rows_are_cut`
 
-**Checks:** For one file with more blocks than `max_rows`, `body_html` is the
+**Checks:** For a sequence with more blocks than `max_rows`, `body_html` is the
 "First N of M blocks." note, a newline, and the table, and the card's other
 fields are correct.
 
@@ -3635,19 +3414,6 @@ the expected table (built with `markup.html_table`), and that the text "muted"
 
 **Assumptions:** None.
 
-#### `test_two_files_have_an_h3_with_each_escaped_file_name`
-
-**Checks:** With more than one file and no windows, each file's table is
-headed by an `<h3>` with the file's own name, HTML-escaped, in the given
-order.
-
-**How:** The test builds two named sequences, one with a name that has an
-HTML special character, calls `blocks_card` with both, and checks that the
-escaped and the plain `<h3>` headings are both present and in the given
-order.
-
-**Assumptions:** None.
-
 #### `test_windows_give_one_table_each_headed_by_the_window_label`
 
 **Checks:** With `windows` given, the card has exactly one table for each
@@ -3659,18 +3425,6 @@ for each TR, calls `blocks_card` with them, and checks that `body_html` has
 exactly as many `<h3>` elements as windows, that each window's label
 appears in its own heading, and that the expected table for that window's
 own range (from `block_rows` and `markup.html_table`) appears in the body.
-
-**Assumptions:** None.
-
-#### `test_windows_with_two_files_prefix_the_heading_with_the_file_name`
-
-**Checks:** With `windows` and more than one file, each heading has the
-file's name before the window's label, in the same "name: label" format as
-`cards.diagram.diagram_card`'s buttons.
-
-**How:** The test builds two named sequences, one `TimeWindow` for each
-(naming its own `file_index`), calls `blocks_card` with both, and checks
-that both `"<h3>a.seq: TR 0</h3>"` and `"<h3>b.seq: TR 0</h3>"` are present.
 
 **Assumptions:** None.
 
@@ -3693,6 +3447,17 @@ names the window's own total.
 
 **How:** The test builds a blocks card, renders it with `render_page`, and
 checks that `<summary>Blocks (table view)</summary>` is in the result.
+
+**Assumptions:** None.
+
+#### `test_a_window_outside_the_sequence_or_without_length_raises_value_error`
+
+**Checks:** `blocks_card` raises `ValueError` that names the label of a window
+that ends after the sequence, starts before 0, or does not end after its start.
+
+**How:** The test builds a synthetic gradient echo sequence and, for each of
+the three bad `TimeWindow`s, calls `blocks_card` with a good window followed by
+the bad one, and checks that `pytest.raises(ValueError, match=label)` holds.
 
 **Assumptions:** None.
 
@@ -4810,27 +4575,10 @@ for `NotImplementedError`.
 `diagram_card` each raise `NotImplementedError` for a sequence with a
 rotation library.
 
-**How:** The test is parametrized over the four cards, each called through
-a small lambda or helper function that wraps the sequence in the
-`NamedSequence` (and list) form that card expects; `diagram_card` also
-needs a window, so its helper gives it `waveforms.full_window`. For each,
-it builds a `gre_sequence` with a non-empty `rotation_library` and calls
-the card inside `pytest.raises`.
-
-**Assumptions:** None.
-
-#### `test_multi_file_cards_refuse_a_rotation_in_any_file`
-
-**Checks:** `spectrum_card`, `gradient_limits_card` and `diagram_card`
-raise `NotImplementedError` when any one of several files has a rotation,
-not only when the first one does.
-
-**How:** The test is parametrized over the three cards (`diagram_card`
-through a helper that gives it one window, `waveforms.full_window`, on the
-first file only, so the file with the rotation is checked with no window
-of its own). For each, it calls the card with two named sequences, a plain
-`gre_sequence` first and a `gre_sequence` with a rotation library second,
-inside `pytest.raises`.
+**How:** The test is parametrized over the four cards; `diagram_card` also
+needs a window, so it is called through a lambda that gives it
+`waveforms.full_window`. For each, it builds a `gre_sequence` with a
+non-empty `rotation_library` and calls the card inside `pytest.raises`.
 
 **Assumptions:** None.
 
@@ -6305,8 +6053,12 @@ would exceed 2^53" (checked).
 message of each `(topic, source)` pair and fans it out to every handler of that topic
 in subscription order; `subscribe(topic, handler, {replay})` returns an unsubscribe
 function and, by default, replays the kept messages of a topic to a new handler, in
-the order those pairs were first published. `PulseqReport.publish` and
-`PulseqReport.subscribe` are the one bus the page itself uses; `PulseqReport.createMessageBus`
+the order those pairs were first published. `watchSubscribers(topic, fn)` calls
+`fn(count)` at once with the number of subscribers of a topic, then each time that
+number changes, and returns a function that stops the watch (a card shows a request
+button only while a card subscribes to the request). `PulseqReport.publish`,
+`PulseqReport.subscribe` and `PulseqReport.watchSubscribers` are the one bus the page
+itself uses; `PulseqReport.createMessageBus`
 is also exported, so a test builds its own private bus instead of sharing state with
 any other test.
 
@@ -6472,6 +6224,40 @@ kept messages or subscribers.
 
 **How:** Builds two buses, subscribes a handler on one of them, publishes a message
 on the other, and checks the handler was not called.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_watch_subscribers_calls_at_once_with_the_current_count`
+
+**Checks:** `watchSubscribers(topic, fn)` calls `fn` at once with the number of
+subscribers that the topic has now (0 for a topic that no one subscribed to), and
+counts only the subscribers of the watched topic.
+
+**How:** Watches a topic of a fresh bus with no subscriber and checks the calls are
+`[0]`. Subscribes two handlers to the topic and makes a second watch, which is called
+with `[2]`. Subscribes a handler to another topic and checks the first watch did not
+get a call for it (its calls are `[0, 1, 2]`).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_watch_subscribers_calls_after_a_subscribe_and_after_an_unsubscribe`
+
+**Checks:** A watch is called with the new count each time a subscriber is added
+or removed, and a second call of the same unsubscribe function is not a change.
+
+**How:** Watches a topic, subscribes two handlers, unsubscribes the first (twice),
+then the second, and checks the watch's calls are `[0, 1, 2, 1, 0]`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_a_stopped_watch_is_not_called_again`
+
+**Checks:** The function that `watchSubscribers` returns stops that watch (a second
+call of it does nothing), and does not stop another watch of the same topic.
+
+**How:** Makes two watches of one topic, stops the first (twice), subscribes a
+handler, and checks the stopped watch has only its call at once (`[0]`) and the
+other has `[0, 1]`.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -7775,8 +7561,9 @@ Python message.
 and refuses a file without use labels, a missing column, and a column of another
 length.
 
-**How:** The RF table of `spinEcho("gy")` with a hand-made entry; a copy without the
-`center` column; a copy whose `dt` column has one value.
+**How:** The RF table of `spinEcho("gy")` with a hand-made entry (it has no `name`,
+as the entry of `rf_profile_data` has none); a copy without the `center` column; a copy
+whose `dt` column has one value.
 
 **Assumptions:** None beyond the file's own.
 
@@ -7959,9 +7746,9 @@ tolerance; no comparison came close to its limit.
 ### 2.34 RF profile card (`test_rf_profile_card.py`)
 
 `test_rf_profile_card.py` tests `cards/rf_profile.py` (`docs/plans/rf-profiles.md`,
-section 4.5, items 1 and 2; task 5.3, items 1 to 7): `rf_table` (the RF table of a file,
-its pools and its label check), `rf_profile_data` (one file entry, labeled or not) and
-`rf_profile_card` (the options, the checks and the body). Each test builds its own
+section 4.5, items 1 and 2; task 5.3, items 1 to 7): `rf_table` (the RF table of the
+sequence, its pools and its label check), `rf_profile_data` (the file entry, labeled or
+not) and `rf_profile_card` (the options, the checks and the body). Each test builds its own
 sequences with pypulseq, with the same helpers as `test_rf_profiles.py`, from
 `tests/rf_sequences.py`. This card copies values from `rf_profiles` and `diagram_data`,
 so most checks compare with `==` or `np.array_equal` (exact); a comparison that is not
@@ -8044,14 +7831,12 @@ without them, the data has `["profile"]`, `None` and `None`.
 
 #### `test_value_error_cases`
 
-**Checks:** `rf_profile_card` raises `ValueError` for: empty `seqs`; two files with the
-same name; `views` without `"profile"`; an unknown view; a view given twice; `plane`
-with one name, with the same name twice, or with an axis that is not `x`, `y` or `z`;
-`extent_m` of 0, −1, NaN or infinity; and a `diagram_card_id` that does not match
-`[a-z][a-z0-9-]*` ("Diagram").
+**Checks:** `rf_profile_card` raises `ValueError` for: `views` without `"profile"`; an
+unknown view; a view given twice; `plane` with one name, with the same name twice, or
+with an axis that is not `x`, `y` or `z`; and `extent_m` of 0, −1, NaN or infinity.
 
-**How:** A parametrized test over the 13 cases, each with one sequence (or none, for the
-empty case) and the one bad keyword argument.
+**How:** A parametrized test over the 10 cases, each with one sequence and the one bad
+keyword argument.
 
 **Assumptions:** None.
 
@@ -8067,25 +7852,23 @@ draft PR #372 stores a rotation in memory (as `test_extensions.py` does).
 
 #### `test_two_cards_on_one_page_have_unique_ids`
 
-**Checks:** Two RF profile cards on one page, with different `card_id`s and
-`diagram_card_id`s but the same two files, give a page with no `id="..."` value used
-twice.
+**Checks:** Two RF profile cards on one page, with different `card_id`s but the same
+sequence, give a page with no `id="..."` value used twice.
 
-**How:** `page.render_page` with two cards (`card_id` "rf-a"/"rf-b",
-`diagram_card_id` "diag-a"/"diag-b"); every `id="..."` value in the result is found with
-a regular expression and checked for duplicates.
+**How:** `page.render_page` with two cards (`card_id` "rf-a"/"rf-b"); every `id="..."`
+value in the result is found with a regular expression and checked for duplicates.
 
 **Assumptions:** None.
 
-#### `test_unlabeled_file_gets_a_note_and_the_labeled_file_still_works`
+#### `test_unlabeled_sequence_gets_a_note_and_no_profiles`
 
-**Checks:** A report with a labeled file and a file with one unlabeled RF event (and one
-labeled event, so the counts are "1 of 2") raises nothing: the labeled file's data is its
-full entry, and the other file's data is only its name and the counts. The body has the
-note with the counts and the escaped file name; the raw (unescaped) name is not in the
-body.
+**Checks:** A sequence with one unlabeled RF event (and one labeled event, so the counts
+are "1 of 2") raises nothing: its data is only `labeled` False and the counts, and the
+body has the note (the `status bad` paragraph) with the counts and no "Show" button. A
+labeled sequence has its full entry and no note.
 
-**How:** A file name with a character that `html.escape` changes (`"a<b"`).
+**How:** One card for a sequence of one labeled pulse, and one for a sequence of one
+labeled and one unlabeled pulse (`make_block_pulse` with no `use`).
 
 **Assumptions:** None.
 
@@ -8107,7 +7890,7 @@ and the escaped note.
 
 **Checks:** A sequence without RF gives a file entry with `first_rf_block` None, an RF
 table with length 0 in every column (after decoding), and an empty `pulses` list; the
-card body says "No RF pulses." for that file.
+card body says "No RF pulses.".
 
 **How:** A sequence with one trapezoid and one delay block, no RF.
 
@@ -8118,19 +7901,19 @@ card body says "No RF pulses." for that file.
 **Checks:** The card script (`assets/cards/rf-profile.js`) is DOM code, which the
 library tests only in a browser check (decision 10 of `docs/plans/pulseq-reports.md`);
 this test holds the Python half to what the script reads. On a page with a diagram card
-and this card, for an RF-spoiled GRE, a file without use labels and a spin echo: the page
-has the card script one time (`PulseqReport.registerCard("rf-profile"` and the text of
-`page.card_asset("rf-profile")`); the card data names the diagram card; the body has the
-status line with `aria-live="polite"`, the empty pulses element, and the combined
+and this card, for a spin echo: the page has the card script one time
+(`PulseqReport.registerCard("rf-profile"` and the text of
+`page.card_asset("rf-profile")`); the card data has `format` 2 and exactly the keys
+`format`, `views`, `plane`, `extent_m` and `file` (no `diagram_card_id`); the body has
+the status line with `aria-live="polite"`, the empty pulses element, and the combined
 element, hidden, whose first paragraph is the primary echo note (the script hides that
 paragraph above a period without a combined profile) and which holds the empty combined
-body. The "Show" buttons are exactly one for each distinct pulse of each labeled file,
-in order: `data-file` the file's index in the card's list (the unlabeled file, index 1,
-has none) and `data-block` the pulse's first block.
+body. The "Show" buttons are exactly one for each distinct pulse, in order, with
+`data-block` the pulse's first block and no `data-file`.
 
-**How:** `page.render_page` with `diagram_card` (a full window for each file) and
-`rf_profile_card`; regular expressions on the body for the elements and the buttons,
-compared with the card data's `pulses`.
+**How:** `page.render_page` with `diagram_card` (a full window) and `rf_profile_card`;
+regular expressions on the body for the elements and the buttons, compared with the card
+data's `pulses`.
 
 **Assumptions:** None.
 

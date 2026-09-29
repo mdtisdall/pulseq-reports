@@ -12,7 +12,6 @@ from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
 from pulseq_reports.pns import pns_prediction
-from pulseq_reports.seq_utils import NamedSequence
 
 
 def pns_data(seq: pp.Sequence, gradient_asc: str | Path | None = None) -> dict:
@@ -79,7 +78,7 @@ def _pns_html(p: dict) -> str:
 
 
 def pns_card(
-    seq: NamedSequence, gradient_asc: str | Path | None = None, card_id: str = "pns"
+    seq: pp.Sequence, *, gradient_asc: str | Path | None = None, card_id: str = "pns"
 ) -> Card:
     """The "PNS prediction" card for one sequence: the SAFE-model prediction summary
     (`pns_data`) as a status line, a table of the peak percent of the stimulation limit
@@ -96,8 +95,8 @@ def pns_card(
     Raises `NotImplementedError` for a sequence with the rotation extension
     (`extensions.refuse_rotations`).
     """
-    refuse_rotations(seq.seq)
-    data = pns_data(seq.seq, gradient_asc)
+    refuse_rotations(seq)
+    data = pns_data(seq, gradient_asc)
     return Card(
         id=card_id,
         title="PNS prediction",

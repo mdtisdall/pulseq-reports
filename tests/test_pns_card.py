@@ -4,7 +4,6 @@ from synthetic import SYSTEM, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page, pns
 from pulseq_reports.cards.pns import pns_card, pns_data
-from pulseq_reports.seq_utils import NamedSequence
 
 _DATA_KEYS = {
     "reason",
@@ -81,7 +80,7 @@ def test_pns_data_for_each_tr_position(peak_tr):
 
 
 def test_report_has_pns_card(default_seq):
-    card = pns_card(NamedSequence("vb-spin-echo", default_seq))
+    card = pns_card(default_seq)
     assert card.id == "pns"
     assert card.title == "PNS prediction"
     assert card.script is None
@@ -107,7 +106,7 @@ def test_report_has_pns_card(default_seq):
 
 
 def test_report_without_gradients_has_no_pns_table():
-    card = pns_card(NamedSequence("no-gradients", empty_sequence()))
+    card = pns_card(empty_sequence())
     result = page.render_page("Title", "Subtitle", [card])
     assert '<p class="muted">No PNS prediction: no gradients.</p>' in result
     assert "<table>" not in result
@@ -117,7 +116,7 @@ def test_card_id_is_used_for_the_section_and_data_element():
     """With a non-default `card_id`, the card's own id follows it (so two PNS cards,
     for example for two sequences, can be on one page without an id clash), and its
     JSON data element key is that id too."""
-    card = pns_card(NamedSequence("vb-spin-echo", spin_echo_sequence()), card_id="pns-b")
+    card = pns_card(spin_echo_sequence(), card_id="pns-b")
     assert card.id == "pns-b"
     assert card.script is None
     result = page.render_page("Title", "Subtitle", [card])

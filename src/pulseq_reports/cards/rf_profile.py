@@ -1,14 +1,15 @@
-"""RF profile card: the RF pulses of the period at the cursor of a sequence diagram
+"""RF profile card: the RF pulses of the period at the cursor of the sequence diagram
 card, simulated in the browser (`docs/plans/rf-profiles.md`, section 4.5).
 
-This module builds the Python half of the card: the RF table, the pulse list of each
-file, and the card's options. The card script (`assets/cards/rf-profile.js`) reads this
-data with `RfProfiles` (`assets/rf_profiles.js`) and the sequence view of the diagram
-card (`SeqLanes.sequenceView`), which it gets from the diagram's `sequence` messages.
+This module builds the Python half of the card: the RF table, the pulse list of the
+sequence, and the card's options. The card script (`assets/cards/rf-profile.js`) reads
+this data with `RfProfiles` (`assets/rf_profiles.js`) and the sequence view of the
+diagram card (`SeqLanes.sequenceView`), which it gets from the diagram's `sequence`
+messages.
 
-The card needs an RF use label on every RF event of a file (decision 22 of the plan):
-`rf_profiles.rf_uses_labeled` tells the caller so before it adds the card. A file
-without labels gets a note instead of profiles.
+The card needs an RF use label on every RF event of the sequence (decision 22 of the
+plan): `rf_profiles.rf_uses_labeled` tells the caller so before it adds the card. A
+sequence without labels gets a note instead of profiles.
 """
 
 import dataclasses
@@ -22,7 +23,7 @@ import pypulseq as pp
 from pulseq_reports import diagram_data
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.markup import fmt
-from pulseq_reports.page import _ID_RE, Card
+from pulseq_reports.page import Card
 from pulseq_reports.rf_profiles import (
     _PHASE_ITEMS,
     _RF_COLUMN,
@@ -34,7 +35,7 @@ from pulseq_reports.rf_profiles import (
     rf_uses_labeled,
 )
 from pulseq_reports.seq_index import rf_events, sequence_index
-from pulseq_reports.seq_utils import NamedSequence, hold_samples
+from pulseq_reports.seq_utils import hold_samples
 
 VIEWS = ("profile", "z_df", "2d")
 PRIMARY_ECHO_TITLE = "Primary echo pathway only."
@@ -188,20 +189,20 @@ def rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
     }
 
 
-def rf_profile_data(seq: pp.Sequence, name: str) -> dict:
-    """One file entry of the RF profile card data. `refuse_rotations(seq)` first.
+def rf_profile_data(seq: pp.Sequence) -> dict:
+    """The file entry of the RF profile card data. `refuse_rotations(seq)` first.
 
-    For a file where `rf_profiles.rf_uses_labeled(seq)` is True: `name`; `labeled`
+    For a sequence where `rf_profiles.rf_uses_labeled(seq)` is True: `labeled`
     True; `slice_thickness_m` (the `SliceThickness` definition, or None);
     `fov_m` (the `FOV` definition as [x, y, z], or None); `b0_t`; `gamma_hz_per_t`
     (`abs(seq.system.gamma)`); `first_rf_block` (the play index of the first RF block,
     or None without RF); `rf` (`rf_table(seq)`, encoded with `diagram_data.encode_tables`);
     `pulses` (`rf_profiles.pulse_list(seq)`, each pulse as `dataclasses.asdict`).
 
-    For a file where it is False: `name`; `labeled` False; `unlabeled_rf_events` (the
+    For a sequence where it is False: `labeled` False; `unlabeled_rf_events` (the
     number of RF events whose use letter is not a key of `rf_profiles._USE_OF_LETTER`);
-    `rf_events` (the number of RF events of the file). No other key, and no exception:
-    the card shows a note for this file instead of raising.
+    `rf_events` (the number of RF events of the sequence). No other key, and no
+    exception: the card shows a note instead of raising.
     """
     refuse_rotations(seq)
     if not rf_uses_labeled(seq):
@@ -210,7 +211,6 @@ def rf_profile_data(seq: pp.Sequence, name: str) -> dict:
             1 for rf_id in library.data if library.type.get(rf_id) not in _USE_OF_LETTER
         )
         return {
-            "name": name,
             "labeled": False,
             "unlabeled_rf_events": unlabeled,
             "rf_events": len(library.data),
@@ -220,7 +220,6 @@ def rf_profile_data(seq: pp.Sequence, name: str) -> dict:
     thickness = _definition(seq, "SliceThickness", 1)
     fov = _definition(seq, "FOV", 3)
     return {
-        "name": name,
         "labeled": True,
         "slice_thickness_m": None if thickness is None else float(thickness[0]),
         "fov_m": None if fov is None else [float(v) for v in fov],
@@ -257,12 +256,11 @@ def _check_extent(extent_m: float | None) -> None:
 
 
 def _unlabeled_note(entry: dict) -> str:
-    """The note of section 4.5, item 1, for a file with RF pulses that have no use
+    """The note of section 4.5, item 1, for a sequence with RF pulses that have no use
     label, with its counts."""
-    name = html.escape(entry["name"])
     n, m = entry["unlabeled_rf_events"], entry["rf_events"]
     return (
-        f'<p class="status bad">{name}: This file has RF pulses without a use label '
+        f'<p class="status bad">This file has RF pulses without a use label '
         f"({n} of {m} RF events). The RF profile card needs a use label on each RF pulse: "
         "set <code>use=</code> in the pypulseq <code>make_*_pulse</code> functions. A "
         "<code>.seq</code> file older than format 1.5 has no labels: read it with "
@@ -272,7 +270,7 @@ def _unlabeled_note(entry: dict) -> str:
 
 
 def _pulse_table(rows: list[list]) -> str:
-    """The pulse list table of one file: the markup of `markup.html_table`, written locally
+    """The pulse list table: the markup of `markup.html_table`, written locally
     because the last cell holds a "Show" button, and `html_table` escapes every cell."""
     head = "".join(f"<th>{html.escape(h)}</th>" for h in _PULSE_TABLE_HEADERS)
     body = "".join(
@@ -284,8 +282,8 @@ def _pulse_table(rows: list[list]) -> str:
     return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
-def _body_html(card_id: str, files: list[dict]) -> str:
-    parts = [_unlabeled_note(entry) for entry in files if not entry["labeled"]]
+def _body_html(card_id: str, entry: dict) -> str:
+    parts = [] if entry["labeled"] else [_unlabeled_note(entry)]
     parts.append(
         f'<p class="muted" id="{card_id}-status" aria-live="polite">Move the cursor over '
         "the sequence diagram to show the RF pulses of that period.</p>"
@@ -296,50 +294,43 @@ def _body_html(card_id: str, files: list[dict]) -> str:
         f"<p><strong>{PRIMARY_ECHO_TITLE}</strong> {html.escape(PRIMARY_ECHO_NOTE)}</p>\n"
         f'<div id="{card_id}-combined-body"></div></div>'
     )
-    parts.append("<h3>Distinct pulses of each file</h3>")
-    multi = len(files) > 1
-    for i, entry in enumerate(files):
-        if not entry["labeled"]:
-            continue
-        if multi:
-            parts.append(f"<h4>{html.escape(entry['name'])}</h4>")
+    parts.append("<h3>Distinct pulses</h3>")
+    if entry["labeled"]:
         pulses = entry["pulses"]
         if not pulses:
             parts.append('<p class="muted">No RF pulses.</p>')
-            continue
-        rows = [
-            [
-                p["use"],
-                _GRADIENT_KIND_LABEL[p["gradient_kind"]],
-                p["first_block"],
-                p["num_blocks"],
-                fmt(p["flip_deg"]),
-                fmt(p["peak_b1_ut"]),
-                fmt(p["energy_ut2_ms"]),
-                f'<button type="button" data-file="{i}" data-block="{p["first_block"]}">Show</button>',
+        else:
+            rows = [
+                [
+                    p["use"],
+                    _GRADIENT_KIND_LABEL[p["gradient_kind"]],
+                    p["first_block"],
+                    p["num_blocks"],
+                    fmt(p["flip_deg"]),
+                    fmt(p["peak_b1_ut"]),
+                    fmt(p["energy_ut2_ms"]),
+                    f'<button type="button" data-block="{p["first_block"]}">Show</button>',
+                ]
+                for p in pulses
             ]
-            for p in pulses
-        ]
-        parts.append(_pulse_table(rows))
+            parts.append(_pulse_table(rows))
     return "\n".join(parts)
 
 
 def rf_profile_card(
-    seqs: Sequence[NamedSequence],
+    seq: pp.Sequence,
     *,
-    diagram_card_id: str = "diagram",
     views: Sequence[str] = ("profile",),
     plane: tuple[str, str] | None = None,
     extent_m: float | None = None,
     card_id: str = "rf-profile",
 ) -> Card:
     """The "RF pulse profiles" card (`docs/plans/rf-profiles.md`, section 4.5): the RF
-    pulses of the period at the cursor of the sequence diagram card `diagram_card_id`,
+    pulses of the period at the cursor of the sequence diagram card of the page,
     simulated in the browser by the card script (`assets/cards/rf-profile.js`).
 
-    `seqs` must be the list of the diagram card `diagram_card_id`, with the same names:
-    the card script matches the files of the diagram's `sequence` messages by name,
-    because the diagram's own file index can be in another order.
+    The card follows the diagram only through the page's messages (`sequence`, `cursor`
+    and `anchor`), so `seq` must be the sequence of the page's diagram card.
 
     `views` switches on the map views in addition to the always-shown 1D profile:
     `"z_df"` (the select coordinate against the frequency offset) and `"2d"` (two
@@ -349,55 +340,42 @@ def rf_profile_card(
 
     Checks, before any other work:
 
-    1. `seqs` is empty: `ValueError`.
-    2. Two files of `seqs` have the same name: `ValueError` (names must be unique so the
-       card script can match files by name).
-    3. `views` has a name that is not in `VIEWS`, has a name twice, or does not have
+    1. `views` has a name that is not in `VIEWS`, has a name twice, or does not have
        `"profile"`: `ValueError`.
-    4. `plane` is not None and is not two different names of `("x", "y", "z")`:
+    2. `plane` is not None and is not two different names of `("x", "y", "z")`:
        `ValueError` (the rule of `rf_profiles.view_spec`).
-    5. `extent_m` is not None and is not a finite number above 0: `ValueError`.
-    6. `diagram_card_id` does not match `[a-z][a-z0-9-]*` (`page._ID_RE`): `ValueError`.
-       `card_id` is checked by `render_page`, as for the other cards.
-    7. `refuse_rotations` for each file: `NotImplementedError`.
+    3. `extent_m` is not None and is not a finite number above 0: `ValueError`.
+    4. `refuse_rotations`: `NotImplementedError`.
 
-    A file where `rf_profiles.rf_uses_labeled` is False gets a note in the body instead
-    of profiles (section 4.5, item 1), and its data is only its name and the count of RF
-    events without a use label (`rf_profile_data`); this does not raise.
+    A sequence where `rf_profiles.rf_uses_labeled` is False gets a note in the body
+    instead of profiles (section 4.5, item 1), and its data is only the count of RF
+    events without a use label (`rf_profile_data`); this does not raise. `card_id` is
+    checked by `render_page`, as for the other cards.
 
-    The body: a note for each unlabeled file, a status line that the card script fills,
-    the elements for the pulses of the period at the cursor and the combined profile of
-    the first echo (both empty here, and the combined one hidden, until the card script
-    fills them), the note of section 4.3, item 7 (`PRIMARY_ECHO_TITLE`,
+    The body: a note for an unlabeled sequence, a status line that the card script
+    fills, the elements for the pulses of the period at the cursor and the combined
+    profile of the first echo (both empty here, and the combined one hidden, until the
+    card script fills them), the note of section 4.3, item 7 (`PRIMARY_ECHO_TITLE`,
     `PRIMARY_ECHO_NOTE`: the first paragraph of the combined element, which the card
-    script hides above a period without a combined profile), and a table of the distinct
-    pulses of each labeled file, with a "Show" button in each row that the card script
-    uses to move the diagram (`data-file` is the file's index in `seqs`, `data-block` its
-    first block; the script sends `goto` with the file's name).
+    script hides above a period without a combined profile), and a table of the
+    distinct pulses of a labeled sequence, with a "Show" button in each row that the
+    card script uses to move the diagram (`data-block` is the pulse's first block; the
+    script sends `goto` with it).
     """
-    if not seqs:
-        raise ValueError("rf_profile_card needs at least one sequence")
-    names = [named.name for named in seqs]
-    if len(set(names)) != len(names):
-        raise ValueError(f"rf_profile_card needs unique file names: {names!r}")
     _check_views(views)
     _check_plane(plane)
     _check_extent(extent_m)
-    if not _ID_RE.fullmatch(diagram_card_id):
-        raise ValueError(f"diagram_card_id {diagram_card_id!r} does not match [a-z][a-z0-9-]*")
-    for named in seqs:
-        refuse_rotations(named.seq)
+    refuse_rotations(seq)
 
-    files = [rf_profile_data(named.seq, named.name) for named in seqs]
+    file = rf_profile_data(seq)
     data = {
-        "format": 1,
-        "diagram_card_id": diagram_card_id,
+        "format": 2,
         "views": list(views),
         "plane": None if plane is None else list(plane),
         "extent_m": None if extent_m is None else float(extent_m),
-        "files": files,
+        "file": file,
     }
-    body = _body_html(card_id, files)
+    body = _body_html(card_id, file)
     return Card(
         id=card_id, title="RF pulse profiles", body_html=body, data=data, script="rf-profile"
     )

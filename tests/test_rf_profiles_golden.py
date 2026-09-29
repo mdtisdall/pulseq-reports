@@ -845,7 +845,7 @@ def test_rf_profiles_js_matches_python_reference(name, tmp_path):
         "format": 1,
         "tables": diagram_data.encode_tables(tables),
         "lanes": diagram_data.lane_meta(seq, tables=tables),
-        "file": rf_profile_data(seq, name),
+        "file": rf_profile_data(seq),
         "queries": queries,
     }
     in_path = tmp_path / "in.json"

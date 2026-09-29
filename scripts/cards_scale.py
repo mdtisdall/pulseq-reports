@@ -113,7 +113,6 @@ from pulseq_reports.cards.rf_exposure import rf_exposure_card
 from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.page import Card
-from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import first_adc_window, full_window
 
 _THIS_FILE = Path(__file__).resolve()
@@ -172,30 +171,29 @@ def resolve_tr_margin(diagram_scale: types.ModuleType, case: str, tr_s: float) -
     return _round_to_raster(_round_to_raster(tr_s) - used)
 
 
-def _run_pns(named: NamedSequence) -> Card:
-    return pns_card(named)
+def _run_pns(seq: pp.Sequence) -> Card:
+    return pns_card(seq)
 
 
-def _run_rf(named: NamedSequence) -> Card:
-    return rf_exposure_card([named])
+def _run_rf(seq: pp.Sequence) -> Card:
+    return rf_exposure_card(seq)
 
 
-def _run_limits(named: NamedSequence) -> Card:
-    return gradient_limits_card([named])
+def _run_limits(seq: pp.Sequence) -> Card:
+    return gradient_limits_card(seq)
 
 
-def _run_spectrum(named: NamedSequence) -> Card:
-    return spectrum_card([named])
+def _run_spectrum(seq: pp.Sequence) -> Card:
+    return spectrum_card(seq)
 
 
-def _run_diagram(named: NamedSequence, pns_lanes: bool) -> Card:
-    seqs = [named]
-    windows = [first_adc_window(seqs), full_window(seqs)]
-    return diagram_card(seqs, windows, pns=pns_lanes)
+def _run_diagram(seq: pp.Sequence, pns_lanes: bool) -> Card:
+    windows = [first_adc_window(seq), full_window(seq)]
+    return diagram_card(seq, windows, pns=pns_lanes)
 
 
-def _run_rf_profile(named: NamedSequence) -> Card:
-    return rf_profile_card([named])
+def _run_rf_profile(seq: pp.Sequence) -> Card:
+    return rf_profile_card(seq)
 
 
 def _card_bytes(card: Card) -> int:
@@ -239,10 +237,8 @@ def run(
     build_rss_bytes = _current_rss_bytes()
     peak_rss_before_card_bytes = diagram_scale._peak_rss_bytes()
 
-    named = NamedSequence(f"cards-scale-{card}-{case}-{blocks}", seq)
-
     card_start = time.perf_counter()
-    built = _run_diagram(named, pns_lanes) if card == "diagram" else CARD_RUNNERS[card](named)
+    built = _run_diagram(seq, pns_lanes) if card == "diagram" else CARD_RUNNERS[card](seq)
     card_s = time.perf_counter() - card_start
     peak_rss_after_card_bytes = diagram_scale._peak_rss_bytes()
 

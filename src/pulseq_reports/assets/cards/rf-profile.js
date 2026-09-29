@@ -1,14 +1,12 @@
 // RF profile card (docs/plans/rf-profiles.md, section 4.5, items 3 to 6): the RF pulses
-// of the period at the cursor of one sequence diagram card, simulated in the browser
+// of the period at the cursor of the sequence diagram card, simulated in the browser
 // with RfProfiles (assets/rf_profiles.js).
 //
-// The card follows the diagram only through its messages (section 4.1): `sequence`
-// gives the sequence view of each file that the diagram has decoded, with the file's
-// name; `cursor` and `anchor` give a block of the file that the diagram shows. The card
-// data (cards/rf_profile.py) has the files in the order of the card's own list, so the
-// card matches a diagram file to its own by name (the names are unique, decision 23).
-// The card subscribes to no `view` message: nothing here depends on the diagram's view
-// (decision 13).
+// The card follows the diagram only through the page's messages (section 4.1):
+// `sequence` gives the sequence view, and `cursor` and `anchor` give a block. A page has
+// one publisher of each of these topics (decision 21 of docs/plans/public-api.md), so
+// the card takes every message of them. The card subscribes to no `view` message:
+// nothing here depends on the diagram's view (decision 13).
 //
 // Which period: the period that contains the block of the anchor, or of the cursor when
 // there is no anchor (decision 14). When the cursor leaves the plot, or a reset clears
@@ -28,7 +26,7 @@
 // that the new period does not have stops, and its progress stays in the cache, so it
 // goes on when the pulse comes back. The cache keeps the profiles and maps of the last
 // MAX_KEYS pulse keys (the key leaves out the phase offsets of the RF, so an RF-spoiled
-// GRE has one key). Each file also has a line cache (RfProfiles, decision 25) that the
+// GRE has one key). The card also has a line cache (RfProfiles, decision 25) that the
 // combined profile shares with the 1D profiles; the entries of a pulse key leave it with
 // that key. Combined profiles are kept by the layout of the RF blocks of their period
 // (MAX_COMBINED of them), so a move to the next TR of the same kind draws at once.
@@ -37,8 +35,8 @@
 // phase numbers of an excitation come from its last block in the period (the one
 // nearest to the ADC), with the profile of its key.
 //
-// The "Show" buttons of the pulse lists publish `goto` with the file's name (decision
-// 25), so they also work for a file that the diagram has not shown yet.
+// The "Show" buttons of the pulse list publish `goto` with the block, and are shown only
+// while a card subscribes to `goto` (decision 22 of docs/plans/public-api.md).
 PulseqReport.registerCard("rf-profile", (section, data) => {
   const {fmt} = ChartMath;
   const id = section.id;
@@ -51,7 +49,6 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   // paragraph after the heading of the combined element. It shows only above a combined
   // profile, not above the line that says why a period has none.
   const combinedNote = combinedEl.querySelector(":scope > p");
-  const diagramId = data.diagram_card_id;
   const mapViews = data.views.filter(v => v !== "profile");
   const viewOptions = {plane: data.plane, extentM: data.extent_m};
   const combinedView = data.views.includes("2d") ? "2d" : "profile";
@@ -65,57 +62,55 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   const MAX_KEYS = 64; // the pulse keys whose profiles and maps the cache keeps
   const MAX_COMBINED = 16; // the combined profiles that the cache keeps
 
-  // ---- Files ----
+  // ---- The file ----
 
-  // One state for each file of the card data, in its order. `fd` is the RfProfiles file
-  // data once the RF table is decoded; `blockKeys` maps the event ids of an RF block
-  // ("rf,gx,gy,gz") to its pulse key, so that the key of a block needs one blockPulse
-  // call for each distinct combination.
-  const files = data.files.map((entry, index) => ({
-    index, entry, fd: null, decoding: null, error: null,
+  // The state of the card data's file. `fd` is the RfProfiles file data once the RF table
+  // is decoded; `blockKeys` maps the event ids of an RF block ("rf,gx,gy,gz") to its
+  // pulse key, so that the key of a block needs one blockPulse call for each distinct
+  // combination.
+  const file = {
+    entry: data.file, fd: null, decoding: null, error: null,
     lineCache: new Map(), blockKeys: new Map(),
-  }));
-  const fileByName = new Map(files.map(f => [f.entry.name, f]));
-  // The files of the diagram, by the diagram's own file index: {name, file (a state
-  // above, or null when the card does not have that name), seqView}.
-  const diagramFiles = new Map();
+  };
+  // The sequence view of the diagram's last `sequence` message, or null before it.
+  let diagramView = null;
 
-  function decodeFile(f) {
-    if (f.decoding === null) {
-      const rf = f.entry.rf;
+  function decodeFile() {
+    if (file.decoding === null) {
+      const rf = file.entry.rf;
       const names = Object.keys(rf);
-      f.decoding = Promise.all(names.map(name => PulseqReport.decodeTable(rf[name])))
+      file.decoding = Promise.all(names.map(name => PulseqReport.decodeTable(rf[name])))
         .then(arrays => {
           const tables = {};
           names.forEach((name, i) => { tables[name] = arrays[i]; });
-          f.fd = RfProfiles.fileData(f.entry, tables);
+          file.fd = RfProfiles.fileData(file.entry, tables);
         })
         .catch(error => {
-          f.error = error;
-          console.error(`RF profile card "${id}": the RF table of "${f.entry.name}":`, error);
+          file.error = error;
+          console.error(`RF profile card "${id}": the RF table:`, error);
         })
         .then(select);
     }
-    return f.decoding;
+    return file.decoding;
   }
 
   // The pulse key of the RF block `b`.
-  function blockKey(f, seqView, b) {
+  function blockKey(seqView, b) {
     const ev = seqView.events(b);
     const combo = `${ev.rf},${ev.gx},${ev.gy},${ev.gz}`;
-    let key = f.blockKeys.get(combo);
+    let key = file.blockKeys.get(combo);
     if (key === undefined) {
-      key = RfProfiles.blockPulse(seqView, f.fd, b, {maxBlocks: 1}).key;
-      f.blockKeys.set(combo, key);
+      key = RfProfiles.blockPulse(seqView, file.fd, b, {maxBlocks: 1}).key;
+      file.blockKeys.set(combo, key);
     }
     return key;
   }
 
   // ---- The caches ----
 
-  // `${file index}/${pulse key}` -> {file, key, pulse, profile, maps: {view}}, in the
-  // order of use (the first entry is the least recently used). `profile` and each map
-  // are a record of one view of the pulse (newRecord).
+  // pulse key -> {key, pulse, profile, maps: {view}}, in the order of use (the first
+  // entry is the least recently used). `profile` and each map are a record of one view of
+  // the pulse (newRecord).
   const keyCache = new Map();
 
   // The record of one view of a pulse: its spec (undefined until the work makes it,
@@ -154,62 +149,59 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
 
   // The cache entry of `key`, made with the pulse that `makePulse()` gives (a pulse of
   // a block with that key) when the cache does not have it.
-  function keyEntry(f, key, makePulse) {
-    const name = `${f.index}/${key}`;
-    let entry = keyCache.get(name);
+  function keyEntry(key, makePulse) {
+    let entry = keyCache.get(key);
     if (entry !== undefined) {
-      keyCache.delete(name);
-      keyCache.set(name, entry);
+      keyCache.delete(key);
+      keyCache.set(key, entry);
       return entry;
     }
     const pulse = makePulse();
-    entry = {file: f, key, pulse, profile: newRecord(), maps: {}};
-    keyCache.set(name, entry);
+    entry = {key, pulse, profile: newRecord(), maps: {}};
+    keyCache.set(key, entry);
     while (keyCache.size > MAX_KEYS) {
-      const [oldName, old] = keyCache.entries().next().value;
-      keyCache.delete(oldName);
-      const prefix = `${old.key}|`;
-      for (const lineKey of Array.from(old.file.lineCache.keys())) {
-        if (lineKey.startsWith(prefix)) old.file.lineCache.delete(lineKey);
+      const [oldKey] = keyCache.entries().next().value;
+      keyCache.delete(oldKey);
+      const prefix = `${oldKey}|`;
+      for (const lineKey of Array.from(file.lineCache.keys())) {
+        if (lineKey.startsWith(prefix)) file.lineCache.delete(lineKey);
       }
     }
     return entry;
   }
 
-  // `${file index}/${layout}/${view}` -> {firstBlock, result}: the combined profiles,
+  // `${layout}/${view}` -> {firstBlock, result}: the combined profiles,
   // by the layout of the RF blocks of their period up to its first ADC (each block's
   // offset from the period start and its pulse key), which decides the result; its
   // blocks are those of the period `firstBlock`.
   const combinedCache = new Map();
 
-  function combinedName(f, seqView, per) {
+  function combinedName(seqView, per) {
     const parts = [];
     if (per.firstAdcBlock !== null) {
       for (let b = per.firstBlock; b <= per.firstAdcBlock; b++) {
-        if (seqView.events(b).rf !== 0) parts.push(`${b - per.firstBlock}:${blockKey(f, seqView, b)}`);
+        if (seqView.events(b).rf !== 0) parts.push(`${b - per.firstBlock}:${blockKey(seqView, b)}`);
       }
     }
-    return `${f.index}/${parts.join(",")}/${combinedView}`;
+    return `${parts.join(",")}/${combinedView}`;
   }
 
   // ---- Which period ----
 
-  let anchor = null; // {diagram file, block} of the diagram's anchor, or null
-  let cursor = null; // {diagram file, block} of the last cursor in the plot, or null
-  // What the card shows: null (nothing yet), {note} (a line of text only), or {file,
-  // diagramFile, seqView, per, pinned}.
+  let anchor = null; // {block} of the diagram's anchor, or null
+  let cursor = null; // {block} of the last cursor in the plot, or null
+  // What the card shows: null (nothing yet), {note} (a line of text only), or {seqView,
+  // per, pinned}.
   let shown = null;
   let frame = null;
 
   function onMessage(topic, message) {
-    if (message.source !== diagramId) return;
     if (topic === "sequence") {
-      const f = fileByName.get(message.name) ?? null;
-      diagramFiles.set(message.file, {name: message.name, file: f, seqView: message.view});
-      if (f !== null && f.entry.labeled) decodeFile(f);
+      diagramView = message.view;
+      if (file.entry.labeled) decodeFile();
       return;
     }
-    const at = message.file === null ? null : {diagramFile: message.file, block: message.block};
+    const at = message.tS === null ? null : {block: message.block};
     if (topic === "anchor") {
       anchor = at;
       // A cleared anchor keeps the shown period, and ends the "pinned" text.
@@ -239,37 +231,29 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   function select() {
     const target = anchor ?? cursor;
     if (target === null) return;
-    const d = diagramFiles.get(target.diagramFile);
-    if (d === undefined) return;
-    const f = d.file;
-    if (f === null) {
-      showNote(`The diagram shows "${d.name}", which this card does not have.`);
-      return;
-    }
-    const name = f.entry.name;
-    if (!f.entry.labeled) {
-      showNote(`${name}: this file has RF pulses without a use label, so the card shows ` +
+    if (diagramView === null) return;
+    if (!file.entry.labeled) {
+      showNote("This file has RF pulses without a use label, so the card shows " +
         "no profiles for it (see the note above).");
       return;
     }
-    if (f.error !== null) {
-      showNote(`${name}: the card could not read its RF table: ${f.error.message}`);
+    if (file.error !== null) {
+      showNote(`The card could not read its RF table: ${file.error.message}`);
       return;
     }
-    if (f.fd === null) {
-      decodeFile(f);
-      statusEl.textContent = `Loading the RF pulses of ${name}…`;
+    if (file.fd === null) {
+      decodeFile();
+      statusEl.textContent = "Loading the RF pulses…";
       return;
     }
-    if (f.fd.firstRfBlock === null) {
-      showNote(`${name}: this file has no RF pulses.`);
+    if (file.fd.firstRfBlock === null) {
+      showNote("This file has no RF pulses.");
       return;
     }
-    const seqView = d.seqView;
+    const seqView = diagramView;
     const block = Math.min(Math.max(target.block, 0), seqView.numBlocks - 1);
     const pinned = target === anchor;
-    const same = shown !== null && shown.per !== undefined && shown.file === f &&
-      shown.diagramFile === target.diagramFile;
+    const same = shown !== null && shown.per !== undefined;
     if (same && !shown.per.truncated && block >= shown.per.firstBlock &&
         block <= shown.per.lastBlock) {
       if (shown.pinned !== pinned) {
@@ -278,23 +262,23 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
       }
       return;
     }
-    const per = RfProfiles.period(seqView, f.fd, block);
+    const per = RfProfiles.period(seqView, file.fd, block);
     if (same && per.firstBlock === shown.per.firstBlock && per.lastBlock === shown.per.lastBlock) {
       shown.pinned = pinned;
       statusEl.textContent = statusText();
       return;
     }
-    shown = {file: f, diagramFile: target.diagramFile, seqView, per, pinned};
+    shown = {seqView, per, pinned};
     stopWork();
     if (frame === null) frame = requestAnimationFrame(render);
   }
 
   function statusText() {
-    const {file: f, seqView, per, pinned} = shown;
+    const {seqView, per, pinned} = shown;
     const t0 = seqView.blockStart(per.firstBlock) * 1e3;
     const t1 = (seqView.blockStart(per.lastBlock) + seqView.blockDuration(per.lastBlock)) * 1e3;
     const n = per.pulses.length;
-    let text = `${f.entry.name}: blocks ${per.firstBlock}–${per.lastBlock} ` +
+    let text = `Blocks ${per.firstBlock}–${per.lastBlock} ` +
       `(${t0.toFixed(3)}–${t1.toFixed(3)} ms), ${n} distinct RF pulse${n === 1 ? "" : "s"}.`;
     if (per.truncated) {
       text += ` The period goes on for more than ${RfProfiles.PERIOD_MAX_BLOCKS} blocks ` +
@@ -511,9 +495,9 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
 
   // ---- The elements of the distinct pulses ----
 
-  // The elements of each distinct pulse of the shown period, by `${file index}/${pulse
-  // key}`: {el, heading, profileBox, drawn (the 1D chart is drawn), phase (the echo
-  // phase it shows, or null), mapBoxes: {view}, maps: {view: map chart}}. A pulse of the
+  // The elements of each distinct pulse of the shown period, by pulse key: {el, heading,
+  // profileBox, drawn (the 1D chart is drawn), phase (the echo phase it shows, or null),
+  // mapBoxes: {view}, maps: {view: map chart}}. A pulse of the
   // next period with the same key keeps its elements, so a move to the next TR of a
   // sequence draws no chart again, except a 1D chart whose echo phase changes.
   let pulseViews = new Map();
@@ -569,7 +553,7 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   function render() {
     frame = null;
     if (shown === null || shown.per === undefined) return;
-    const {file: f, seqView, per} = shown;
+    const {seqView, per} = shown;
     stopWork();
     statusEl.textContent = statusText();
 
@@ -578,10 +562,10 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     // the key's pulse), and its elements.
     const views = new Map();
     const slots = per.pulses.map((g, i) => {
-      const name = `${f.index}/${g.key}`;
-      let pulse = g.use === "excitation" ? RfProfiles.blockPulse(seqView, f.fd, g.lastBlock) : null;
-      const entry = keyEntry(f, g.key,
-        () => pulse ?? RfProfiles.blockPulse(seqView, f.fd, g.lastBlock));
+      const name = g.key;
+      let pulse = g.use === "excitation" ? RfProfiles.blockPulse(seqView, file.fd, g.lastBlock) : null;
+      const entry = keyEntry(g.key,
+        () => pulse ?? RfProfiles.blockPulse(seqView, file.fd, g.lastBlock));
       if (pulse === null) pulse = entry.pulse;
       const view = pulseViews.get(name) ?? makeView(pulse);
       views.set(name, view);
@@ -618,7 +602,7 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     // combined profile and the maps, in slices.
     for (const slot of slots) profileNow(slot);
     const list = [];
-    combinedWork(f, seqView, per, slots, list);
+    combinedWork(seqView, per, slots, list);
     for (const view of mapViews) for (const slot of slots) mapWork(slot, view, list);
     startWork(list);
   }
@@ -632,7 +616,7 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     const {entry, view} = slot;
     const p = entry.profile;
     if (!recordDone(p)) {
-      const work = viewWork(p, entry.pulse, "profile", entry.file.lineCache);
+      const work = viewWork(p, entry.pulse, "profile", file.lineCache);
       while (!work.done) work.step(Infinity);
     }
     if (p.spec === null) {
@@ -751,24 +735,24 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
 
   // ---- The combined profile ----
 
-  function combinedWork(f, seqView, per, slots, list) {
-    const name = combinedName(f, seqView, per);
+  function combinedWork(seqView, per, slots, list) {
+    const name = combinedName(seqView, per);
     const kept = combinedCache.get(name);
     if (kept !== undefined) {
       combinedCache.delete(name);
       combinedCache.set(name, kept);
-      showCombined(f, seqView, slots, name, kept.result, per.firstBlock - kept.firstBlock);
+      showCombined(seqView, slots, name, kept.result, per.firstBlock - kept.firstBlock);
       return;
     }
-    const work = RfProfiles.combinedProfile(seqView, f.fd, per,
-      {view: combinedView, cache: f.lineCache});
+    const work = RfProfiles.combinedProfile(seqView, file.fd, per,
+      {view: combinedView, cache: file.lineCache});
     const finish = () => {
       const result = work.result();
       combinedCache.set(name, {firstBlock: per.firstBlock, result});
       while (combinedCache.size > MAX_COMBINED) {
         combinedCache.delete(combinedCache.keys().next().value);
       }
-      showCombined(f, seqView, slots, name, result, 0);
+      showCombined(seqView, slots, name, result, 0);
     };
     if (work.done) {
       finish();
@@ -795,11 +779,11 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   // moves its blocks to this period, when it comes from another period with the same
   // layout of RF blocks. When the card shows that entry already, only the block numbers
   // change.
-  function showCombined(f, seqView, slots, name, result, shift) {
+  function showCombined(seqView, slots, name, result, shift) {
     // The distinct pulse (its number in the table) of a block of the result.
-    const slotOf = b => slots.find(s => s.g.key === blockKey(f, seqView, b + shift));
+    const slotOf = b => slots.find(s => s.g.key === blockKey(seqView, b + shift));
     const blocks = result.reason === null ? [result.excitationBlock, ...result.refocusingBlocks] : [];
-    const pulses = blocks.map(b => RfProfiles.blockPulse(seqView, f.fd, b + shift, {maxBlocks: 1}));
+    const pulses = blocks.map(b => RfProfiles.blockPulse(seqView, file.fd, b + shift, {maxBlocks: 1}));
     const summaryText = () => {
       const names = blocks.map(b => {
         const s = slotOf(b);
@@ -844,7 +828,7 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
       const p = pulses.find(q => q.gradientKind === "one" && q.selectKind === kind);
       return p ? p.sliceCentreM : null;
     };
-    const nominal = f.fd.sliceThicknessM;
+    const nominal = file.fd.sliceThicknessM;
     if (result.line !== null) {
       const u = result.line.u;
       const axis = axisOf(result.directions[0]);
@@ -899,11 +883,10 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     PulseqReport.subscribe(topic, message => onMessage(topic, message));
   }
 
-  for (const button of section.querySelectorAll("button[data-file][data-block]")) {
+  for (const button of section.querySelectorAll("button[data-block]")) {
+    PulseqReport.requestButton(button, "goto");
     button.addEventListener("click", () => {
-      const f = files[Number(button.dataset.file)];
-      PulseqReport.publish("goto", {source: id, target: diagramId, name: f.entry.name,
-        block: Number(button.dataset.block)});
+      PulseqReport.publish("goto", {source: id, block: Number(button.dataset.block)});
     });
   }
 });

@@ -6,7 +6,7 @@ from synthetic import SYSTEM
 from pulseq_reports import grad_limits, page
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.markup import fmt, html_table
-from pulseq_reports.seq_utils import GAMMA, NamedSequence
+from pulseq_reports.seq_utils import GAMMA
 
 
 def _trapezoid_seq(amplitude: float, rise_time: float = 200e-6, flat_time: float = 1e-3):
@@ -35,10 +35,10 @@ def _hand_computed(amplitude: float, gx) -> dict:
     }
 
 
-def test_single_file_table_has_axis_rows_and_percents():
-    """One file, one x trapezoid: the table has no "File" column, and the Gx, Gy, Gz
-    and |G| rows hold the peak, the percent of the limit, the max slew, its percent,
-    and the RMS, each computed by hand from the trapezoid's own parameters."""
+def test_table_has_axis_rows_and_percents():
+    """One x trapezoid: the Gx, Gy, Gz and |G| rows hold the peak, the percent of the
+    limit, the max slew, its percent, and the RMS, each computed by hand from the
+    trapezoid's own parameters."""
     amplitude = 0.4 * SYSTEM.max_grad
     seq, gx = _trapezoid_seq(amplitude)
     values = _hand_computed(amplitude, gx)
@@ -48,7 +48,7 @@ def test_single_file_table_has_axis_rows_and_percents():
     slew_pct = values["slew_t"] / max_slew_t * 100
     zero_row = ["", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)]
 
-    card = gradient_limits_card([NamedSequence("a.seq", seq)])
+    card = gradient_limits_card(seq)
 
     expected_table = html_table(
         ["Axis", "Peak (mT/m)", "% of limit", "Max slew (T/m/s)", "% of limit", "RMS (mT/m)"],
@@ -77,77 +77,6 @@ def test_single_file_table_has_axis_rows_and_percents():
     assert "pypulseq system limits" in card.body_html
 
 
-def test_two_files_have_one_row_group_each_with_file_names():
-    """Two files: the table has a "File" column, with each file's name on the first of
-    its four rows and blank on the other three, and the file names are HTML-escaped."""
-    seq_a, gx_a = _trapezoid_seq(0.3 * SYSTEM.max_grad)
-    seq_b, gx_b = _trapezoid_seq(0.6 * SYSTEM.max_grad)
-    values_a = _hand_computed(0.3 * SYSTEM.max_grad, gx_a)
-    values_b = _hand_computed(0.6 * SYSTEM.max_grad, gx_b)
-    max_grad_mt = SYSTEM.max_grad / GAMMA * 1e3
-    max_slew_t = SYSTEM.max_slew / GAMMA
-
-    card = gradient_limits_card([NamedSequence("a & b.seq", seq_a), NamedSequence("c.seq", seq_b)])
-
-    expected_table = html_table(
-        [
-            "File",
-            "Axis",
-            "Peak (mT/m)",
-            "% of limit",
-            "Max slew (T/m/s)",
-            "% of limit",
-            "RMS (mT/m)",
-        ],
-        [
-            [
-                "a & b.seq",
-                "Gx",
-                fmt(values_a["peak_mt"]),
-                fmt(values_a["peak_mt"] / max_grad_mt * 100),
-                fmt(values_a["slew_t"]),
-                fmt(values_a["slew_t"] / max_slew_t * 100),
-                fmt(values_a["rms_mt"]),
-            ],
-            ["", "Gy", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
-            ["", "Gz", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
-            [
-                "",
-                "|G|",
-                fmt(values_a["peak_mt"]),
-                fmt(values_a["peak_mt"] / max_grad_mt * 100),
-                "—",
-                "—",
-                fmt(values_a["rms_mt"]),
-            ],
-            [
-                "c.seq",
-                "Gx",
-                fmt(values_b["peak_mt"]),
-                fmt(values_b["peak_mt"] / max_grad_mt * 100),
-                fmt(values_b["slew_t"]),
-                fmt(values_b["slew_t"] / max_slew_t * 100),
-                fmt(values_b["rms_mt"]),
-            ],
-            ["", "Gy", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
-            ["", "Gz", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)],
-            [
-                "",
-                "|G|",
-                fmt(values_b["peak_mt"]),
-                fmt(values_b["peak_mt"] / max_grad_mt * 100),
-                "—",
-                "—",
-                fmt(values_b["rms_mt"]),
-            ],
-        ],
-    )
-
-    assert card.body_html.startswith(expected_table)
-    # markup.html_table HTML-escapes every cell, including the file name.
-    assert "a &amp; b.seq" in card.body_html
-
-
 def test_window_gives_rms_over_window_and_over_whole_file():
     """With a window, the table has two RMS columns: over the window, and over the
     whole file. The window here is the whole first ramp, so the window RMS differs
@@ -164,7 +93,7 @@ def test_window_gives_rms_over_window_and_over_whole_file():
     window_peak_mt = amplitude / GAMMA * 1e3  # the ramp reaches amplitude at the window edge
     window_slew_t = amplitude / gx.rise_time / GAMMA
 
-    card = gradient_limits_card([NamedSequence("a.seq", seq)], window=window)
+    card = gradient_limits_card(seq, window=window)
 
     expected_table = html_table(
         [
@@ -205,13 +134,13 @@ def test_window_gives_rms_over_window_and_over_whole_file():
 
 def test_no_gradients_adds_a_reason_note():
     """A file with no gradient events: the table still has the four rows, all zero,
-    and the muted note lists that file's name and the reason."""
+    and the muted note gives the reason."""
     seq = pp.Sequence(SYSTEM)
     seq.add_block(pp.make_delay(2e-3))
 
-    card = gradient_limits_card([NamedSequence("empty.seq", seq)])
+    card = gradient_limits_card(seq)
 
-    assert "empty.seq: no gradient events in the sequence." in card.body_html
+    assert '<p class="muted">no gradient events in the sequence.</p>' in card.body_html
 
 
 def test_card_with_a_window_makes_one_pass_over_the_per_event_values(monkeypatch):
@@ -230,7 +159,7 @@ def test_card_with_a_window_makes_one_pass_over_the_per_event_values(monkeypatch
 
     monkeypatch.setattr(grad_limits, "grad_events", counting_grad_events)
 
-    gradient_limits_card([NamedSequence("a.seq", seq)], window=(0.0, 1e-3))
+    gradient_limits_card(seq, window=(0.0, 1e-3))
 
     assert len(calls) == 1
 
@@ -238,7 +167,7 @@ def test_card_with_a_window_makes_one_pass_over_the_per_event_values(monkeypatch
 def test_render_page_accepts_gradient_limits_card():
     """`render_page` accepts the card that `gradient_limits_card` returns."""
     seq, _gx = _trapezoid_seq(0.4 * SYSTEM.max_grad)
-    card = gradient_limits_card([NamedSequence("a.seq", seq)])
+    card = gradient_limits_card(seq)
 
     result = page.render_page("Title", "Subtitle", [card])
 

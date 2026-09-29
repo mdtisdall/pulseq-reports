@@ -161,7 +161,7 @@ function newSeq({thickness = W, fov = null} = {}) {
     },
     build() {
       const first = blocks.findIndex(b => b.rf);
-      const entry = {name: "test.seq", labeled: true, slice_thickness_m: thickness, fov_m: fov,
+      const entry = {labeled: true, slice_thickness_m: thickness, fov_m: fov,
         b0_t: 3, gamma_hz_per_t: 42.576e6, first_rf_block: first < 0 ? null : first};
       return {view: fakeView(blocks, grads, adcs, rows), file: R.fileData(entry, rfTables(rows))};
     },
@@ -993,12 +993,12 @@ test("test_file_data_checks_the_rf_table", () => {
   // `fileData` refuses a file without use labels, a missing column and a column of
   // another length; the pools may have another length than the columns.
   const {file} = spinEcho("gy");
-  const entry = {name: "a.seq", labeled: true, slice_thickness_m: null, fov_m: [0.2, 0.2, 0.01],
+  const entry = {labeled: true, slice_thickness_m: null, fov_m: [0.2, 0.2, 0.01],
     b0_t: 3, gamma_hz_per_t: 42.576e6, first_rf_block: 0};
   const data = R.fileData(entry, file.rf);
   assert.deepEqual([data.sliceThicknessM, data.fovM, data.firstRfBlock], [null, [0.2, 0.2, 0.01], 0]);
   assert.ok(Object.isFrozen(data));
-  assert.throws(() => R.fileData({name: "u.seq", labeled: false}, file.rf), /use label/);
+  assert.throws(() => R.fileData({labeled: false}, file.rf), /use label/);
   const {center, ...missing} = file.rf;
   assert.equal(center.length, file.rf.key.length);
   assert.throws(() => R.fileData(entry, missing), /no column "center"/);

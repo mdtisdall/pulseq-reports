@@ -758,9 +758,9 @@ const RfProfiles = (() => {
   function fileData(entry, rfTables) {
     if (!entry.labeled) {
       throw new Error(
-        `RfProfiles.fileData needs a use label on each RF event, and the file ` +
-        `${_pyRepr(entry.name)} has an RF event with the use 'undefined' (labeled is ` +
-        "false): set use= in the pypulseq make_*_pulse functions");
+        "RfProfiles.fileData needs a use label on each RF event, and the file has an RF " +
+        "event with the use 'undefined' (labeled is false): set use= in the pypulseq " +
+        "make_*_pulse functions");
     }
     for (const name of [...RF_COLUMNS, ...RF_POOLS]) {
       if (!rfTables || !(name in rfTables)) {
@@ -780,7 +780,6 @@ const RfProfiles = (() => {
     }
     const fov = entry.fov_m;
     return Object.freeze({
-      name: entry.name,
       rf: rfTables,
       sliceThicknessM: entry.slice_thickness_m ?? null,
       fovM: fov === null || fov === undefined ? null : Object.freeze(Array.from(fov, Number)),
