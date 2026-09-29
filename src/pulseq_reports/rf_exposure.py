@@ -46,13 +46,12 @@ class RfExposure:
 
 @dataclass(frozen=True)
 class _PulseTrain:
-    """The RF pulses of one or more sequences in play order, and the samples of their
-    unique events. Sample `i` of pulse `j` is at the time `(base[j] + i * dt) + add[j]`
-    (s), and it holds the energy `cum[i + 1] - cum[i]` (µT²·s) of the pulse's event."""
+    """The RF pulses of one sequence in play order, and the samples of their unique
+    events. Sample `i` of pulse `j` is at the time `base[j] + i * dt` (s), and it holds
+    the energy `cum[i + 1] - cum[i]` (µT²·s) of the pulse's event."""
 
     event: np.ndarray  # int64, M: the pulse's unique event (0-based)
     base: np.ndarray  # float64, M: block start + RF delay (s)
-    add: np.ndarray  # float64, M: added after base + i * dt: the file offset, 0 for one file
     block_id: np.ndarray  # int64, M: the pypulseq block id of the pulse
     ev_n: np.ndarray  # int64, K: the number of samples of each event
     ev_dt: np.ndarray  # float64, K: the sample duration of each event (s)
@@ -92,7 +91,6 @@ def _pulse_train(seq: pp.Sequence) -> tuple[_PulseTrain, float]:
     train = _PulseTrain(
         event=event,
         base=index.start_s[blocks] + delay[event],
-        add=np.zeros(blocks.size),
         block_id=index.block_id[blocks].astype(np.int64),
         ev_n=n,
         ev_dt=np.asarray(ev_dt, dtype=np.float64),
@@ -102,25 +100,6 @@ def _pulse_train(seq: pp.Sequence) -> tuple[_PulseTrain, float]:
         ev_peak=np.asarray(ev_peak, dtype=np.float64),
     )
     return train, index.end_s
-
-
-def _concat_trains(trains: list[_PulseTrain], offsets: list[float]) -> _PulseTrain:
-    """The trains of several files played one after another: file `f` gets `offsets[f]`
-    as its `add`, and its event indexes move past the events of the files before it."""
-    event_base = np.cumsum([0] + [t.ev_n.size for t in trains[:-1]])
-    cum_base = np.cumsum([0] + [t.cum.size for t in trains[:-1]])
-    return _PulseTrain(
-        event=np.concatenate([t.event + b for t, b in zip(trains, event_base)]),
-        base=np.concatenate([t.base for t in trains]),
-        add=np.concatenate([np.full(t.num_pulses, off) for t, off in zip(trains, offsets)]),
-        block_id=np.concatenate([t.block_id for t in trains]),
-        ev_n=np.concatenate([t.ev_n for t in trains]),
-        ev_dt=np.concatenate([t.ev_dt for t in trains]),
-        ev_at=np.concatenate([t.ev_at + b for t, b in zip(trains, cum_base)]),
-        cum=np.concatenate([t.cum for t in trains]),
-        ev_total=np.concatenate([t.ev_total for t in trains]),
-        ev_peak=np.concatenate([t.ev_peak for t in trains]),
-    )
 
 
 class _Search:
@@ -148,14 +127,13 @@ class _Search:
         self.m = m
         self.event = np.tile(train.event, copies)
         self.base = np.tile(train.base, copies)
-        self.add = np.tile(train.add, copies)
         self.shift = np.concatenate(
             [np.zeros(m)] + ([np.full(m, period)] if period is not None else [])
         )
         self.n = train.ev_n[self.event]
         self.dt = train.ev_dt[self.event]
         self.at = train.ev_at[self.event]
-        # The time of each pulse's first sample, `((base + 0 * dt) + add) + shift`.
+        # The time of each pulse's first sample, `(base + 0 * dt) + shift`.
         self.first = self._time(np.arange(self.event.size), np.zeros(self.event.size, np.int64))
         # The number of samples and the energy before each pulse.
         self.samples_before = np.concatenate([[0], np.cumsum(self.n)[:-1]]).astype(np.int64)
@@ -164,8 +142,8 @@ class _Search:
 
     def _time(self, pulse: np.ndarray, i: np.ndarray) -> np.ndarray:
         """The time of sample `i` of (extended) pulse `pulse`, with the float operations of
-        a search over every sample: `((base + i * dt) + add) + shift`."""
-        return ((self.base[pulse] + i * self.dt[pulse]) + self.add[pulse]) + self.shift[pulse]
+        a search over every sample: `(base + i * dt) + shift`."""
+        return (self.base[pulse] + i * self.dt[pulse]) + self.shift[pulse]
 
     def _before(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """The number of samples whose time is before `x`, and their energy."""
@@ -192,7 +170,7 @@ class _Search:
         """For each first-copy `pulse` and time `u`, the smallest sample `i` (1 to n - 1)
         with `fl(time(pulse, i) + length) > u`. The caller makes sure that it exists."""
         n = self.n[pulse]
-        start = self.base[pulse] + self.add[pulse]
+        start = self.base[pulse]
         i = np.ceil(((u - length) - start) / self.dt[pulse])
         i = np.clip(np.nan_to_num(i, nan=1.0), 1, n - 1).astype(np.int64)
         for _ in range(64):

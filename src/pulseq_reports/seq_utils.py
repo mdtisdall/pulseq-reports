@@ -1,10 +1,8 @@
 """Shared helpers for reading a pypulseq sequence, used by the report cards."""
 
-from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
-import pypulseq as pp
 
 GAMMA = 42.576e6  # Hz/T
 TIME_TOLERANCE = 1e-9  # s
@@ -46,9 +44,3 @@ def gradient_points(g, t0: float) -> tuple[np.ndarray, np.ndarray]:
     """Corner or sample times (s) and amplitudes (Hz/m) of one gradient event."""
     delay, offsets, amp = gradient_offsets(g)
     return (t0 + delay) + offsets, amp
-
-
-@dataclass(frozen=True)
-class NamedSequence:
-    name: str  # shown in the report, for example the file name
-    seq: pp.Sequence

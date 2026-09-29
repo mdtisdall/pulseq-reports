@@ -41,7 +41,7 @@ from pulseq_reports.cards.rf_profile import (
     rf_table,
 )
 from pulseq_reports.diagram_data import decode_tables, encode_tables
-from pulseq_reports.seq_utils import NamedSequence, hold_samples
+from pulseq_reports.seq_utils import hold_samples
 from pulseq_reports.waveforms import full_window
 
 # ---- Sequence helpers ----
@@ -194,7 +194,7 @@ def test_pulse_list_and_file_entry_keys():
     seq.add_block(block)
     seq.add_block(_hard("inversion", duration=0.8e-3), turn_x, turn_y)
 
-    entry = rf_profile_data(seq, "a.seq")
+    entry = rf_profile_data(seq)
     assert entry["labeled"] is True
     assert entry["pulses"] == [dataclasses.asdict(p) for p in rp.pulse_list(seq)]
     assert len(entry["pulses"]) == 4
@@ -206,9 +206,9 @@ def test_pulse_list_and_file_entry_keys():
 
     without_fov = _new()
     without_fov.add_block(_hard("excitation", duration=0.4e-3))
-    assert rf_profile_data(without_fov, "b.seq")["fov_m"] is None
+    assert rf_profile_data(without_fov)["fov_m"] is None
 
-    card = rf_profile_card([NamedSequence("a.seq", seq)])
+    card = rf_profile_card(seq)
     assert card.body_html.count("<button") == len(entry["pulses"])
     for pulse in entry["pulses"]:
         assert f'data-block="{pulse["first_block"]}"' in card.body_html
@@ -222,54 +222,39 @@ def test_options_appear_in_the_data_as_given_and_the_defaults():
     given; the defaults give ["profile"], None and None."""
     seq = _new()
     seq.add_block(_hard("excitation", duration=0.4e-3))
-    named = [NamedSequence("a.seq", seq)]
 
-    card = rf_profile_card(named, views=("profile", "z_df", "2d"), plane=("x", "y"), extent_m=0.2)
+    card = rf_profile_card(seq, views=("profile", "z_df", "2d"), plane=("x", "y"), extent_m=0.2)
     assert card.data["views"] == ["profile", "z_df", "2d"]
     assert card.data["plane"] == ["x", "y"]
     assert card.data["extent_m"] == 0.2
 
-    default_card = rf_profile_card(named)
+    default_card = rf_profile_card(seq)
     assert default_card.data["views"] == ["profile"]
     assert default_card.data["plane"] is None
     assert default_card.data["extent_m"] is None
 
 
-def _one_named():
+def _one_sequence():
     seq = _new()
     seq.add_block(_hard("excitation", duration=0.4e-3))
-    return [NamedSequence("a.seq", seq)]
-
-
-def _two_named_with_the_same_name():
-    def one():
-        seq = _new()
-        seq.add_block(_hard("excitation", duration=0.4e-3))
-        return seq
-
-    return [NamedSequence("a.seq", one()), NamedSequence("a.seq", one())]
+    return seq
 
 
 @pytest.mark.parametrize(
-    ("seqs_factory", "kwargs"),
+    "kwargs",
     [
-        (list, {}),
-        (_two_named_with_the_same_name, {}),
-        (_one_named, {"views": ("z_df",)}),
-        (_one_named, {"views": ("profile", "bogus")}),
-        (_one_named, {"views": ("profile", "profile")}),
-        (_one_named, {"plane": ("x",)}),
-        (_one_named, {"plane": ("x", "x")}),
-        (_one_named, {"plane": ("x", "w")}),
-        (_one_named, {"extent_m": 0}),
-        (_one_named, {"extent_m": -1}),
-        (_one_named, {"extent_m": math.nan}),
-        (_one_named, {"extent_m": math.inf}),
-        (_one_named, {"diagram_card_id": "Diagram"}),
+        {"views": ("z_df",)},
+        {"views": ("profile", "bogus")},
+        {"views": ("profile", "profile")},
+        {"plane": ("x",)},
+        {"plane": ("x", "x")},
+        {"plane": ("x", "w")},
+        {"extent_m": 0},
+        {"extent_m": -1},
+        {"extent_m": math.nan},
+        {"extent_m": math.inf},
     ],
     ids=[
-        "empty_seqs",
-        "duplicate_names",
         "views_without_profile",
         "unknown_view",
         "view_twice",
@@ -280,15 +265,13 @@ def _two_named_with_the_same_name():
         "extent_negative",
         "extent_nan",
         "extent_inf",
-        "bad_diagram_card_id",
     ],
 )
-def test_value_error_cases(seqs_factory, kwargs):
-    """The ValueError cases (task 5.3, item 3): empty seqs, duplicate names, views
-    without "profile", an unknown view, a view twice, a bad plane, a bad extent_m, and a
-    diagram_card_id that does not match the id rule."""
+def test_value_error_cases(kwargs):
+    """The ValueError cases (task 5.3, item 3): views without "profile", an unknown view,
+    a view twice, a bad plane and a bad extent_m."""
     with pytest.raises(ValueError):
-        rf_profile_card(seqs_factory(), **kwargs)
+        rf_profile_card(_one_sequence(), **kwargs)
 
 
 # ---- 5. Rotations ----
@@ -300,22 +283,20 @@ def test_rf_profile_card_refuses_rotations():
     tests/test_extensions.py builds one)."""
     seq = _rotation_library_sequence()
     with pytest.raises(NotImplementedError, match="rotation extension"):
-        rf_profile_card([NamedSequence("a.seq", seq)])
+        rf_profile_card(seq)
 
 
 # ---- 6. Two cards on one page ----
 
 
 def test_two_cards_on_one_page_have_unique_ids():
-    """Two cards on one page (task 5.3, item 5): different card_id and diagram_card_id,
-    the same two files: no id="..." value occurs twice in the page."""
-    seq_a, seq_b = _new(), _new()
-    seq_a.add_block(_hard("excitation", duration=0.4e-3))
-    seq_b.add_block(_hard("excitation", duration=0.4e-3))
-    files = [NamedSequence("a.seq", seq_a), NamedSequence("b.seq", seq_b)]
+    """Two cards on one page (task 5.3, item 5): different card_id, the same sequence: no
+    id="..." value occurs twice in the page."""
+    seq = _new()
+    seq.add_block(_hard("excitation", duration=0.4e-3))
 
-    card_a = rf_profile_card(files, card_id="rf-a", diagram_card_id="diag-a")
-    card_b = rf_profile_card(files, card_id="rf-b", diagram_card_id="diag-b")
+    card_a = rf_profile_card(seq, card_id="rf-a")
+    card_b = rf_profile_card(seq, card_id="rf-b")
     result = page.render_page("Title", "Subtitle", [card_a, card_b])
 
     ids = re.findall(r'id="([^"]+)"', result)
@@ -325,11 +306,11 @@ def test_two_cards_on_one_page_have_unique_ids():
 # ---- 7. Labels ----
 
 
-def test_unlabeled_file_gets_a_note_and_the_labeled_file_still_works():
-    """Labels (task 5.3, item 6): a labeled file and a file with one undefined pulse
-    (and one labeled pulse, so the counts are "1 of 2"). No exception: the labeled file
-    has its full entry, and the other has only its name and the counts. The body has the
-    note with the counts and the escaped file name; the raw name is not in the body."""
+def test_unlabeled_sequence_gets_a_note_and_no_profiles():
+    """Labels (task 5.3, item 6): a sequence with one undefined pulse (and one labeled
+    pulse, so the counts are "1 of 2"). No exception: the data has only the counts. The
+    body has the note with the counts and no "Show" button. A labeled sequence has its
+    full entry and no note."""
     labeled = _new()
     labeled.add_block(_hard("excitation", duration=0.4e-3))
 
@@ -341,21 +322,15 @@ def test_unlabeled_file_gets_a_note_and_the_labeled_file_still_works():
         )
     )
 
-    name = "a<b"
-    files = [NamedSequence("good.seq", labeled), NamedSequence(name, mixed)]
-    card = rf_profile_card(files)
+    good = rf_profile_card(labeled)
+    assert good.data["file"]["labeled"] is True and "rf" in good.data["file"]
+    assert 'class="status bad"' not in good.body_html
 
-    good_entry, mixed_entry = card.data["files"]
-    assert good_entry["labeled"] is True and "rf" in good_entry
-    assert mixed_entry == {
-        "name": name,
-        "labeled": False,
-        "unlabeled_rf_events": 1,
-        "rf_events": 2,
-    }
+    card = rf_profile_card(mixed)
+    assert card.data["file"] == {"labeled": False, "unlabeled_rf_events": 1, "rf_events": 2}
+    assert 'class="status bad"' in card.body_html
     assert "(1 of 2 RF events)" in card.body_html
-    assert html.escape(name) in card.body_html
-    assert name not in card.body_html
+    assert "<button" not in card.body_html
 
 
 # ---- 8. The primary echo note ----
@@ -376,7 +351,7 @@ def test_primary_echo_note_matches_the_plan_text():
 
     seq = _new()
     seq.add_block(_hard("excitation", duration=0.4e-3))
-    card = rf_profile_card([NamedSequence("a.seq", seq)], card_id="rf-profile")
+    card = rf_profile_card(seq, card_id="rf-profile")
     # The part of the body from the start of the combined element to the element that
     # the card script fills: the note must be there, not elsewhere in the body.
     combined = re.search(
@@ -401,7 +376,7 @@ def test_sequence_without_rf_has_an_empty_entry_and_no_pulses_note():
     seq.add_block(_trap("x", 100.0))
     seq.add_block(pp.make_delay(1e-3))
 
-    entry = rf_profile_data(seq, "a.seq")
+    entry = rf_profile_data(seq)
     assert entry["labeled"] is True
     assert entry["first_rf_block"] is None
     assert entry["pulses"] == []
@@ -409,7 +384,7 @@ def test_sequence_without_rf_has_an_empty_entry_and_no_pulses_note():
     for name, arr in decoded.items():
         assert arr.size == 0, name
 
-    card = rf_profile_card([NamedSequence("a.seq", seq)])
+    card = rf_profile_card(seq)
     assert '<p class="muted">No RF pulses.</p>' in card.body_html
 
 
@@ -433,34 +408,23 @@ def _spin_echo():
 
 
 def test_page_has_the_card_script_and_the_elements_it_reads():
-    """A page with a diagram card and this card, for two files and a third without use
-    labels (`assets/cards/rf-profile.js` is DOM code, with no Node test: decision 10 of
-    `docs/plans/pulseq-reports.md`): the page has the card script once; the data names
-    the diagram card; the body has the elements that the script reads by id (the status
-    line with `aria-live`, the pulses element, the combined element, hidden, with the
-    combined body inside it), and the primary echo note is the first paragraph of the
-    combined element (the script hides that paragraph above a period without a combined
-    profile). The "Show" buttons are exactly one for each distinct pulse of each labeled
-    file: `data-file` its index in the card's list (the script sends the name of that
-    file) and `data-block` its first block."""
-    unlabeled = _new()
-    unlabeled.add_block(
-        pp.make_block_pulse(
-            flip_angle=0.1, duration=0.2e-3, delay=SYSTEM.rf_dead_time, system=SYSTEM
-        )
-    )
-    seqs = [
-        NamedSequence("gre.seq", _gre(3, rf_spoiling=True)),
-        NamedSequence("old.seq", unlabeled),
-        NamedSequence("se.seq", _spin_echo()),
-    ]
-    windows = [full_window(seqs, i) for i in range(len(seqs))]
-    card = rf_profile_card(seqs, diagram_card_id="diagram")
-    result = page.render_page("Title", "Subtitle", [diagram_card(seqs, windows), card])
+    """A page with a diagram card and this card, for a spin echo
+    (`assets/cards/rf-profile.js` is DOM code, with no Node test: decision 10 of
+    `docs/plans/pulseq-reports.md`): the page has the card script once; the data has
+    the keys of format 2 (no `diagram_card_id`); the body has the elements that the
+    script reads by id (the status line with `aria-live`, the pulses element, the
+    combined element, hidden, with the combined body inside it), and the primary echo
+    note is the first paragraph of the combined element (the script hides that paragraph
+    above a period without a combined profile). The "Show" buttons are exactly one for
+    each distinct pulse, with `data-block` its first block and no `data-file`."""
+    seq = _spin_echo()
+    card = rf_profile_card(seq)
+    result = page.render_page("Title", "Subtitle", [diagram_card(seq, [full_window(seq)]), card])
 
     assert result.count('PulseqReport.registerCard("rf-profile"') == 1
     assert page.card_asset("rf-profile") in result
-    assert card.data["diagram_card_id"] == "diagram"
+    assert card.data["format"] == 2
+    assert set(card.data) == {"format", "views", "plane", "extent_m", "file"}
 
     body = card.body_html
     assert '<p class="muted" id="rf-profile-status" aria-live="polite">' in body
@@ -474,15 +438,9 @@ def test_page_has_the_card_script_and_the_elements_it_reads():
     assert combined is not None
     assert combined.group(1).startswith(f"<strong>{PRIMARY_ECHO_TITLE}</strong>")
 
-    buttons = re.findall(r'<button type="button" data-file="(\d+)" data-block="(\d+)">', body)
-    expected = [
-        (str(i), str(p["first_block"]))
-        for i, entry in enumerate(card.data["files"])
-        if entry["labeled"]
-        for p in entry["pulses"]
-    ]
-    assert buttons == expected
-    assert {i for i, _ in buttons} == {"0", "2"}
+    buttons = re.findall(r'<button type="button" data-block="(\d+)">', body)
+    assert buttons == [str(p["first_block"]) for p in card.data["file"]["pulses"]]
+    assert len(buttons) == body.count("<button")
 
 
 def test_usage_md_has_the_primary_echo_note_word_for_word():

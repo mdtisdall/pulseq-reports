@@ -30,7 +30,6 @@ from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.cards.timing import timing_card
 from pulseq_reports.page import write_page
-from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import TimeWindow, first_adc_window, full_window
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "docs" / "examples" / "gre.html"
@@ -119,26 +118,24 @@ def gre_sequence() -> pp.Sequence:
 
 def main(output: Path) -> None:
     seq = gre_sequence()
-    named = NamedSequence(name="gre.seq", seq=seq)
-    seqs = [named]
 
-    windows = [first_adc_window(seqs), full_window(seqs)]
+    windows = [first_adc_window(seq), full_window(seq)]
     prediction = pns.pns_prediction(seq)
     peak_window = pns.peak_tr_window(seq, prediction.peak_time_s)
     if peak_window is not None:
         start_s, end_s = peak_window
-        windows.append(TimeWindow("Peak-PNS TR", 0, start_s, end_s))
+        windows.append(TimeWindow("Peak-PNS TR", start_s, end_s))
 
     cards = [
-        timing_card(seqs),
-        rf_exposure_card(seqs),
-        diagram_card(seqs, windows, pns=True),
-        rf_profile_card(seqs, views=("profile", "z_df")),
-        spectrum_card(seqs),
-        pns_card(named),
-        gradient_limits_card(seqs),
-        definitions_card(seqs),
-        blocks_card(seqs),
+        timing_card(seq),
+        rf_exposure_card(seq),
+        diagram_card(seq, windows, pns=True),
+        rf_profile_card(seq, views=("profile", "z_df")),
+        spectrum_card(seq),
+        pns_card(seq),
+        gradient_limits_card(seq),
+        definitions_card(seq),
+        blocks_card(seq),
     ]
 
     output.parent.mkdir(parents=True, exist_ok=True)

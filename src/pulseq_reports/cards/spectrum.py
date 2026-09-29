@@ -2,7 +2,6 @@
 resonances."""
 
 import html
-from collections.abc import Sequence
 
 import pypulseq as pp
 
@@ -13,7 +12,6 @@ from pulseq_reports.grad_spectrum import (
     WINDOW_S,
     AcousticResonance,
     GradientSpectrum,
-    combine,
     gradient_spectrum,
 )
 from pulseq_reports.markup import (
@@ -26,7 +24,6 @@ from pulseq_reports.markup import (
     zoom_controls,
 )
 from pulseq_reports.page import Card
-from pulseq_reports.seq_utils import NamedSequence
 
 _SPECTRUM_UNIT = "mT/m/√Hz"
 _SPECTRUM_DB_FLOOR = -80  # the lowest value drawn on the spectrum's dB scale
@@ -160,20 +157,14 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
 
 
 def spectrum_card(
-    seqs: Sequence[NamedSequence],
+    seq: pp.Sequence,
+    *,
     resonances: tuple[AcousticResonance, ...] = PRISMA_AS82_RESONANCES,
     scanner_label: str = "MAGNETOM Prisma (AS82)",
     card_id: str = "gradient-spectrum",
 ) -> Card:
-    """The "Gradient spectrum" card: for one sequence, the body is
+    """The "Gradient spectrum" card: the body is
     `_spectrum_html(spectrum_data(seq, resonances), scanner_label, card_id)`.
-
-    For more than one sequence, the data is the combined spectrum
-    (`grad_spectrum.combine`) of each file's own spectrum: the element-wise maximum,
-    at each frequency, over the files, with the band peaks recomputed from that
-    maximum. The body then has an extra note that the spectrum is this maximum over
-    the files, and that windows that would cross from one file to the next are not
-    included (`grad_spectrum.combine` does not compute them).
 
     `data` is always the JSON-ready spectrum dict and `script` is always `"spectrum"`,
     even when there are no gradients, so the card script can still read `data.reason`.
@@ -181,21 +172,7 @@ def spectrum_card(
     Raises `NotImplementedError` for a sequence with the rotation extension
     (`extensions.refuse_rotations`).
     """
-    if not seqs:
-        raise ValueError("spectrum_card needs at least one sequence")
-    for named in seqs:
-        refuse_rotations(named.seq)
-
-    if len(seqs) == 1:
-        data = spectrum_data(seqs[0].seq, resonances=resonances)
-    else:
-        spectra = [gradient_spectrum(named.seq, resonances=resonances) for named in seqs]
-        data = _spectrum_data(combine(spectra))
-
+    refuse_rotations(seq)
+    data = spectrum_data(seq, resonances=resonances)
     body = _spectrum_html(data, scanner_label, card_id)
-    if len(seqs) > 1 and data["reason"] is None:
-        body += (
-            '<p class="muted">This chart is the maximum, at each frequency, over the files: '
-            "windows that would cross from one file to the next are not included.</p>"
-        )
     return Card(id=card_id, title="Gradient spectrum", body_html=body, data=data, script="spectrum")

@@ -176,6 +176,50 @@ test("test_create_message_bus_returns_independent_buses", () => {
   assert.equal(received.length, 0);
 });
 
+test("test_watch_subscribers_calls_at_once_with_the_current_count", () => {
+  const bus = createMessageBus();
+  const counts = [];
+  bus.watchSubscribers("t", n => counts.push(n));
+  assert.deepEqual(counts, [0]);
+
+  bus.subscribe("t", () => {}, {replay: false});
+  bus.subscribe("t", () => {}, {replay: false});
+  const later = [];
+  bus.watchSubscribers("t", n => later.push(n));
+  assert.deepEqual(later, [2]);
+  // Only the subscribers of the watched topic count.
+  bus.subscribe("u", () => {}, {replay: false});
+  assert.deepEqual(counts, [0, 1, 2]);
+});
+
+test("test_watch_subscribers_calls_after_a_subscribe_and_after_an_unsubscribe", () => {
+  const bus = createMessageBus();
+  const counts = [];
+  bus.watchSubscribers("t", n => counts.push(n));
+  const first = bus.subscribe("t", () => {}, {replay: false});
+  const second = bus.subscribe("t", () => {}, {replay: false});
+  assert.deepEqual(counts, [0, 1, 2]);
+  first();
+  assert.deepEqual(counts, [0, 1, 2, 1]);
+  // A second call of an unsubscribe function does not change the count.
+  first();
+  second();
+  assert.deepEqual(counts, [0, 1, 2, 1, 0]);
+});
+
+test("test_a_stopped_watch_is_not_called_again", () => {
+  const bus = createMessageBus();
+  const stopped = [];
+  const kept = [];
+  const stop = bus.watchSubscribers("t", n => stopped.push(n));
+  bus.watchSubscribers("t", n => kept.push(n));
+  stop();
+  assert.doesNotThrow(() => stop());
+  bus.subscribe("t", () => {}, {replay: false});
+  assert.deepEqual(stopped, [0]);
+  assert.deepEqual(kept, [0, 1]);
+});
+
 // The only test that touches PulseqReport's own page-level bus (PulseqReport.publish
 // and PulseqReport.subscribe): that singleton is shared by every test in this file's
 // process (Node module caching), so this uses a topic name no other test publishes,

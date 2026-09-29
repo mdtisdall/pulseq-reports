@@ -21,7 +21,6 @@ as one spectrogram of the whole padded waveform.
 """
 
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -182,34 +181,3 @@ def _band_peaks(
             )
         )
     return tuple(band_peaks)
-
-
-def combine(spectra: Sequence[GradientSpectrum]) -> GradientSpectrum:
-    """The spectrum of several files: the element-wise maximum of each axis and of RSS
-    over the files, with the band peaks recomputed.
-
-    Each spectrum is a maximum over windows, so the maximum over the files is the
-    maximum over the windows of all the files. The windows that would cross from one
-    file to the next are not included. Files with no gradients are skipped; when no
-    file has gradients, the result has the reason `NO_GRADIENTS`. All the spectra must
-    have the same resonances and the same frequencies (the same gradient raster), or
-    this raises ValueError.
-    """
-    if not spectra:
-        raise ValueError("combine needs at least one spectrum")
-    resonances = spectra[0].resonances
-    if any(s.resonances != resonances for s in spectra):
-        raise ValueError("the spectra have different resonances")
-    with_gradients = [s for s in spectra if s.reason is None]
-    if not with_gradients:
-        empty = np.zeros(0)
-        return GradientSpectrum(NO_GRADIENTS, resonances, empty, {}, empty, ())
-    freq = with_gradients[0].frequency_hz
-    if any(not np.array_equal(s.frequency_hz, freq) for s in with_gradients):
-        raise ValueError("the spectra have different frequencies (different gradient rasters)")
-    axes = {
-        axis: np.maximum.reduce([s.axes[axis] for s in with_gradients])
-        for axis in with_gradients[0].axes
-    }
-    rss = np.maximum.reduce([s.rss for s in with_gradients])
-    return GradientSpectrum(None, resonances, freq, axes, rss, _band_peaks(freq, rss, resonances))

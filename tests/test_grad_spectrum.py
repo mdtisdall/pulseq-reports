@@ -114,36 +114,6 @@ def test_chunks_give_the_same_spectrum_as_one_chunk(monkeypatch):
     _assert_same_spectrum(chunked, whole)
 
 
-def test_combine_is_the_maximum_over_the_files():
-    in_band = grad_spectrum.gradient_spectrum(_sine_sequence(600, duration_s=0.2))
-    outside = grad_spectrum.gradient_spectrum(_sine_sequence(300, duration_s=0.2))
-    combined = grad_spectrum.combine([in_band, outside])
-    assert combined.reason is None
-    np.testing.assert_array_equal(combined.frequency_hz, in_band.frequency_hz)
-    for axis in "xyz":
-        np.testing.assert_array_equal(
-            combined.axes[axis], np.maximum(in_band.axes[axis], outside.axes[axis])
-        )
-    np.testing.assert_array_equal(combined.rss, np.maximum(in_band.rss, outside.rss))
-    # The band peaks are recomputed from the combined RSS: the 600 Hz sine is in the
-    # first band, and both sines have about the same peak.
-    first, _ = combined.band_peaks
-    assert first.frequency_hz == pytest.approx(600)
-    assert first.peak == pytest.approx(in_band.band_peaks[0].peak)
-    assert first.relative == pytest.approx(first.peak / combined.rss.max())
-
-
-def test_combine_skips_files_without_gradients():
-    empty = pp.Sequence(SYSTEM)
-    empty.add_block(pp.make_delay(1e-3))
-    no_gradients = grad_spectrum.gradient_spectrum(empty)
-    sine = grad_spectrum.gradient_spectrum(_sine_sequence(600, duration_s=0.1))
-    _assert_same_spectrum(grad_spectrum.combine([no_gradients, sine]), sine)
-    assert grad_spectrum.combine([no_gradients]).reason == grad_spectrum.NO_GRADIENTS
-    with pytest.raises(ValueError, match="at least one"):
-        grad_spectrum.combine([])
-
-
 def _assert_matches_oracle(got: grad_spectrum.GradientSpectrum, ref, tol: float = 1e-12) -> None:
     """`got` (this module, the sampler-based implementation) equals `ref`
     (`tests/oracles/grad_spectrum.py`, the implementation before phase 5, which samples

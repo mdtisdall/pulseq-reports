@@ -10,7 +10,7 @@ Each function reads one block at a time. A range reads only the blocks that over
 """
 
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 import numpy as np
@@ -18,19 +18,34 @@ import pypulseq as pp
 
 from .markup import Lane, _points, fmt, lanes_json
 from .seq_index import block_cache_off, sequence_index
-from .seq_utils import GAMMA, NamedSequence, gradient_points
+from .seq_utils import GAMMA, gradient_points
 
 _AXES = ("gx", "gy", "gz")
 
 
 @dataclass(frozen=True)
 class TimeWindow:
-    """A named time range in one file of a list of sequences, for example one TR."""
+    """A named time range in a sequence, for example one TR."""
 
     label: str  # the button text
-    file_index: int  # the index in the list of sequences
     start_s: float
     end_s: float
+
+
+# The end of a window is rounded to 1e-4 ms (`full_window`), so it can pass the end of the
+# sequence by up to 5e-8 s.
+_WINDOW_TOLERANCE_S = 1e-7
+
+
+def _check_windows(seq: pp.Sequence, windows: Iterable[TimeWindow]) -> None:
+    """Raise `ValueError`, with the window's label, for a window that is not inside the
+    sequence or does not end after its start. The check of the cards that take windows."""
+    end = duration_s(seq)
+    for w in windows:
+        if not w.end_s > w.start_s:
+            raise ValueError(f"window {w.label!r}: the end is not after the start")
+        if w.start_s < -_WINDOW_TOLERANCE_S or w.end_s > end + _WINDOW_TOLERANCE_S:
+            raise ValueError(f"window {w.label!r}: not inside the sequence (0 to {end:g} s)")
 
 
 @dataclass(frozen=True)
@@ -322,11 +337,10 @@ def file_lanes(
     return lanes_json(_lanes(segments, adc_windows, peaks, has_events))
 
 
-def first_adc_window(seqs: Sequence[NamedSequence], file_index: int = 0) -> TimeWindow:
-    """vb-pulseq's "First ADC" view of one file: from 0 to 1.1 times the end of the first
-    ADC window, or the whole file when that is shorter or there is no ADC. Reads only the
-    block of the first ADC, with the block cache off."""
-    seq = seqs[file_index].seq
+def first_adc_window(seq: pp.Sequence) -> TimeWindow:
+    """vb-pulseq's "First ADC" view of the sequence: from 0 to 1.1 times the end of the
+    first ADC window, or the whole sequence when that is shorter or there is no ADC. Reads
+    only the block of the first ADC, with the block cache off."""
     index = sequence_index(seq)
     duration_ms = round(index.end_s * 1e3, 4)
     window_ms = duration_ms
@@ -342,10 +356,10 @@ def first_adc_window(seqs: Sequence[NamedSequence], file_index: int = 0) -> Time
         a0 = float(index.start_s[play]) + adc.delay
         window_ms = min(duration_ms, 1.1 * round((a0 + adc.num_samples * adc.dwell) * 1e3, 4))
     window_ms = round(window_ms, 4)
-    return TimeWindow(f"First ADC (0–{window_ms:.3g} ms)", file_index, 0.0, window_ms / 1e3)
+    return TimeWindow(f"First ADC (0–{window_ms:.3g} ms)", 0.0, window_ms / 1e3)
 
 
-def full_window(seqs: Sequence[NamedSequence], file_index: int = 0) -> TimeWindow:
-    """vb-pulseq's "Full sequence" view of one file: from 0 to the end of the file."""
-    duration_ms = round(duration_s(seqs[file_index].seq) * 1e3, 4)
-    return TimeWindow(f"Full sequence (0–{duration_ms:g} ms)", file_index, 0.0, duration_ms / 1e3)
+def full_window(seq: pp.Sequence) -> TimeWindow:
+    """vb-pulseq's "Full sequence" view of the sequence: from 0 to its end."""
+    duration_ms = round(duration_s(seq) * 1e3, 4)
+    return TimeWindow(f"Full sequence (0–{duration_ms:g} ms)", 0.0, duration_ms / 1e3)

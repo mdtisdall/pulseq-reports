@@ -1,10 +1,9 @@
 import pytest
-from synthetic import empty_sequence, gre_sequence, spin_echo_sequence
+from synthetic import empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page
-from pulseq_reports.cards.spectrum import _spectrum_data, spectrum_card, spectrum_data
-from pulseq_reports.grad_spectrum import AcousticResonance, combine, gradient_spectrum
-from pulseq_reports.seq_utils import NamedSequence
+from pulseq_reports.cards.spectrum import spectrum_card, spectrum_data
+from pulseq_reports.grad_spectrum import AcousticResonance
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +30,7 @@ def test_spectrum_data_for_spin_echo(default_seq):
 
 
 def test_report_has_gradient_spectrum_card(default_seq):
-    card = spectrum_card([NamedSequence("vb-spin-echo", default_seq)])
+    card = spectrum_card(default_seq)
     result = page.render_page("Title", "Subtitle", [card])
     body = result[result.index('id="gradient-spectrum"') :]
 
@@ -45,7 +44,7 @@ def test_report_has_gradient_spectrum_card(default_seq):
 
 
 def test_report_without_gradients_has_no_spectrum_chart():
-    card = spectrum_card([NamedSequence("no-gradients", empty_sequence())])
+    card = spectrum_card(empty_sequence())
     assert card.body_html == '<p class="muted">No gradient spectrum: no gradients.</p>'
 
     result = page.render_page("Title", "Subtitle", [card])
@@ -57,7 +56,7 @@ def test_custom_scanner_label_and_resonances_appear(default_seq):
     custom_resonances = (AcousticResonance(frequency_hz=700.0, bandwidth_hz=40.0),)
 
     card = spectrum_card(
-        [NamedSequence("a.seq", default_seq)],
+        default_seq,
         resonances=custom_resonances,
         scanner_label="Acme Scanner",
     )
@@ -76,7 +75,7 @@ def test_scanner_label_is_escaped_in_the_note(default_seq):
     custom_resonances = (AcousticResonance(frequency_hz=700.0, bandwidth_hz=40.0),)
 
     card = spectrum_card(
-        [NamedSequence("a.seq", default_seq)],
+        default_seq,
         resonances=custom_resonances,
         scanner_label="Coil <A&B>",
     )
@@ -85,25 +84,8 @@ def test_scanner_label_is_escaped_in_the_note(default_seq):
     assert "the acoustic resonances of the Coil &lt;A&amp;B&gt; gradient coil" in card.body_html
 
 
-def test_two_file_card_uses_combined_spectrum():
-    seqs = [
-        NamedSequence("spin-echo.seq", spin_echo_sequence()),
-        NamedSequence("gre.seq", gre_sequence()),
-    ]
-
-    card = spectrum_card(seqs)
-
-    expected = _spectrum_data(combine([gradient_spectrum(named.seq) for named in seqs]))
-    assert card.data == expected
-    assert "maximum, at each frequency, over the files" in card.body_html
-    assert "windows that would cross from one file to the next are not included" in card.body_html
-
-    # render_page accepts a card built for more than one file too.
-    page.render_page("Title", "Subtitle", [card])
-
-
 def test_custom_card_id_changes_element_ids(default_seq):
-    card = spectrum_card([NamedSequence("a.seq", default_seq)], card_id="spectrum-b")
+    card = spectrum_card(default_seq, card_id="spectrum-b")
 
     assert card.id == "spectrum-b"
     assert 'id="spectrum-b-chart"' in card.body_html
@@ -114,8 +96,8 @@ def test_custom_card_id_changes_element_ids(default_seq):
 
 def test_render_page_includes_spectrum_script_once(default_seq):
     cards = [
-        spectrum_card([NamedSequence("a.seq", default_seq)], card_id="spectrum-a"),
-        spectrum_card([NamedSequence("a.seq", default_seq)], card_id="spectrum-b"),
+        spectrum_card(default_seq, card_id="spectrum-a"),
+        spectrum_card(default_seq, card_id="spectrum-b"),
     ]
 
     result = page.render_page("Title", "Subtitle", cards)

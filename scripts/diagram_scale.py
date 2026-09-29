@@ -37,7 +37,7 @@ converted to bytes by platform, for peak RSS, which is a running maximum since t
 process started, not a delta):
 
 - `build_s`, `build_peak_rss_bytes`: building the `pp.Sequence`.
-- `card_s`, `card_peak_rss_bytes`: `diagram_card(...)` for the one file, with windows
+- `card_s`, `card_peak_rss_bytes`: `diagram_card(...)` for the sequence, with windows
   `[first_adc_window, full_window]`. This is the number that counts against the
   "Python time to make the card data" budget.
 - `breakdown`: `diagram_tables`, `lane_meta` and `encode_tables` timed separately, by
@@ -84,7 +84,6 @@ import pypulseq as pp
 from pulseq_reports import diagram_data
 from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.page import render_page
-from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import first_adc_window, full_window
 
 # ---- Copied from tests/synthetic.py (this script must not import tests/) ----
@@ -294,11 +293,10 @@ def run(blocks: int, case: str, out_dir: Path, timing_probe: bool) -> dict:
     build_s = time.perf_counter() - build_start
     build_peak_rss_bytes = _peak_rss_bytes()
 
-    named = [NamedSequence(f"diagram-scale-{case}-{blocks}", seq)]
-    windows = [first_adc_window(named), full_window(named)]
+    windows = [first_adc_window(seq), full_window(seq)]
 
     card_start = time.perf_counter()
-    card = diagram_card(named, windows, card_id="diagram")
+    card = diagram_card(seq, windows, card_id="diagram")
     card_s = time.perf_counter() - card_start
     card_peak_rss_bytes = _peak_rss_bytes()
 
@@ -314,7 +312,7 @@ def run(blocks: int, case: str, out_dir: Path, timing_probe: bool) -> dict:
     diagram_data.encode_tables(tables_again)
     encode_tables_s = time.perf_counter() - encode_start
 
-    file_entry = card.data["files"][0]
+    file_entry = card.data["file"]
     num_unique_rf = file_entry["tables"]["rf_delay"]["length"]
     num_unique_grad = file_entry["tables"]["grad_delay"]["length"]
     num_unique_adc = file_entry["tables"]["adc_delay"]["length"]

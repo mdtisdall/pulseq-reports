@@ -79,10 +79,12 @@ of `docs/plans/diagram-event-table.md`):
   gradients as if they were correct.
 
 The diagram data format reserves these names (section 4.6 of that plan):
-`"format": 2` for data with rotations; the tables `rotation` (uint8/16/32,
+`"format": 3` for data with rotations (format 2 is the one-sequence form of
+the data); the tables `rotation` (uint8/16/32,
 length N, dense rotation index, 0 = none) and `rotations` (float64, 9 values
-for each rotation: the rotation matrix, row by row). `SeqLanes.decode` already
-raises an error for format 2 and for an unknown table name. The other gradient
+for each rotation: the rotation matrix, row by row). The diagram script
+already raises an error for a format other than 2, and `SeqLanes.decode`
+raises an error for an unknown table name. The other gradient
 cards need the rotated waveforms too, and `refuse_rotations` is then removed
 from each card that supports them.
 

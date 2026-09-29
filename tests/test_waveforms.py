@@ -6,7 +6,7 @@ from oracles.blocks import iter_blocks
 from synthetic import DWELL, NUM_SAMPLES, SYSTEM, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import waveforms
-from pulseq_reports.seq_utils import GAMMA, NamedSequence
+from pulseq_reports.seq_utils import GAMMA
 
 
 @pytest.fixture(scope="module")
@@ -29,7 +29,7 @@ def test_spin_echo_lanes(spin_echo):
     (window,) = by_id["adc"]["windows"]
     assert window[1] - window[0] == pytest.approx(NUM_SAMPLES * DWELL * 1e3, abs=0.01)
     assert len(by_id["rf_phase"]["segments"]) == 2  # excitation and refocusing
-    first_adc = waveforms.first_adc_window([NamedSequence("se", seq)])
+    first_adc = waveforms.first_adc_window(seq)
     assert first_adc.end_s * 1e3 > window[1]
 
 
@@ -123,8 +123,7 @@ def test_first_adc_window_label_and_times():
     duration_ms = round(waveforms.duration_s(seq) * 1e3, 4)
     expected_end_ms = round(min(duration_ms, 1.1 * exact_windows[0][1]), 4)
 
-    w = waveforms.first_adc_window([NamedSequence("g", seq)])
-    assert w.file_index == 0
+    w = waveforms.first_adc_window(seq)
     assert w.start_s == 0.0
     assert w.end_s * 1e3 == pytest.approx(expected_end_ms, abs=1e-4)
     assert w.label == f"First ADC (0–{expected_end_ms:.3g} ms)"
@@ -134,7 +133,7 @@ def test_first_adc_window_with_no_adc_is_the_whole_file():
     seq_no_adc = pp.Sequence(SYSTEM)
     seq_no_adc.add_block(pp.make_delay(2e-3))
     duration_ms = round(waveforms.duration_s(seq_no_adc) * 1e3, 4)
-    w = waveforms.first_adc_window([NamedSequence("g", seq_no_adc)])
+    w = waveforms.first_adc_window(seq_no_adc)
     assert w.end_s * 1e3 == pytest.approx(duration_ms, abs=1e-4)
     assert w.label == f"First ADC (0–{duration_ms:.3g} ms)"
 
@@ -142,8 +141,7 @@ def test_first_adc_window_with_no_adc_is_the_whole_file():
 def test_full_window_label_and_times():
     seq = gre_sequence(num_trs=2, tr=20e-3)
     duration_ms = round(waveforms.duration_s(seq) * 1e3, 4)
-    w = waveforms.full_window([NamedSequence("g", seq)], file_index=0)
-    assert w.file_index == 0
+    w = waveforms.full_window(seq)
     assert w.start_s == 0.0
     assert w.end_s * 1e3 == pytest.approx(duration_ms, abs=1e-4)
     assert w.label == f"Full sequence (0–{duration_ms:g} ms)"
