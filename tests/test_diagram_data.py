@@ -1,11 +1,11 @@
 """Tests for `diagram_data.py` (task 1.3 of `docs/plans/diagram-event-table.md`).
 
 `waveforms._events_in_range` is the reference for exact values (section 3.5 of the
-plan): a later phase rebuilds these same numbers in JavaScript, and a golden test there
-compares them with `==` and no tolerance, so a test here that lets a real regression
-through by using a tolerance where the plan says exact would defeat that later check.
-`_rebuild_lane_polylines` below rebuilds each lane's whole-file polyline from the
-decoded tables with the time formulas of section 4.3, entirely independently of
+plan): `test_seq_lanes_golden.py` rebuilds these same numbers in JavaScript, and a
+golden test there compares them with `==` and no tolerance, so a test here that lets a
+real regression through by using a tolerance where the plan says exact would defeat that
+later check. `_rebuild_lane_polylines` below rebuilds each lane's whole-file polyline
+from the decoded tables with the time formulas of section 4.3, entirely independently of
 `waveforms.py`, so the comparison is a real check of the tables' content, not a
 tautology.
 """

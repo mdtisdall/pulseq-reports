@@ -183,8 +183,7 @@ def _random_pulse_train(rng: np.random.Generator) -> pp.Sequence:
     """A random train of 1 to 11 blocks on the synthetic system: about 70% of them a
     block or a sinc RF pulse, with a random flip angle and a random duration on the
     10 us raster, each followed by a random gap (`make_delay`), also on the 10 us
-    raster. Matches the scratch comparison the executing agent ran before this task
-    (S/compare.py's `random_seq`)."""
+    raster."""
     seq = pp.Sequence(SYSTEM)
     for _ in range(rng.integers(1, 12)):
         if rng.random() < 0.7:

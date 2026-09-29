@@ -6,6 +6,7 @@ from pypulseq.utils.safe_pns_prediction import safe_example_hw
 from synthetic import (
     SYSTEM,
     arbitrary_gradient_sequence,
+    border_sequence,
     empty_sequence,
     gre_sequence,
     spin_echo_sequence,
@@ -22,28 +23,6 @@ def _hw_dict(hw_ns) -> dict:
         axis: {field: getattr(getattr(hw_ns, axis), field) for field in _HW_FIELDS}
         for axis in "xyz"
     }
-
-
-def _border_sequence() -> pp.Sequence:
-    """Two extended-trapezoid blocks on x whose gradient is not zero at the border
-    between them, unlike a plain trapezoid (which is zero at both ends of its own
-    event): the amplitude ramps up in block 0 and continues, unchanged, into block 1,
-    where it ramps back down to 0. `add_block` accepts this because the amplitude is
-    continuous across the junction (no step)."""
-    dt = SYSTEM.grad_raster_time
-    amp = 0.1 * SYSTEM.max_grad  # the same fraction of max_grad as arbitrary_gradient_sequence
-    n = 40
-    rise = n * dt
-    g1 = pp.make_extended_trapezoid(
-        channel="x", amplitudes=np.array([0.0, amp]), times=np.array([0.0, rise]), system=SYSTEM
-    )
-    g2 = pp.make_extended_trapezoid(
-        channel="x", amplitudes=np.array([amp, 0.0]), times=np.array([0.0, rise]), system=SYSTEM
-    )
-    seq = pp.Sequence(SYSTEM)
-    seq.add_block(g1)
-    seq.add_block(g2)
-    return seq
 
 
 def _off_raster_sequence() -> pp.Sequence:
@@ -71,7 +50,7 @@ _SEQUENCES = {
     "spin_echo": spin_echo_sequence,
     "gre": gre_sequence,
     "arbitrary_gradient": arbitrary_gradient_sequence,
-    "border": _border_sequence,
+    "border": border_sequence,
 }
 
 

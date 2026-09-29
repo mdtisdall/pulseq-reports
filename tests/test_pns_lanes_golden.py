@@ -7,11 +7,12 @@ every JS exact sample of its own bin (plan section 4.2); and each pyramid level 
 (plan section 4.5's "pyramid").
 
 `_run_golden` writes one sequence's diagram tables and its `pns` object (plan section
-4.4, including `gradScale`, decision 14) to a JSON file, runs
-`tests/js/golden_pns_lanes.js` with Node on it, and reads back the JSON result:
-`PnsLanes.decode`, one `exactView` call for the whole file (forced to the "samples"
-kind by a bin count far larger than the sample count, so every sample is returned,
-never a minimum/maximum reduction), and the decoded pyramid (`model.levels`).
+4.4, including `gradScale`, decision 14; made by `cards.diagram._pns_entry`, as for the
+page) to a JSON file, runs `tests/js/golden_pns_lanes.js` with Node on it, and reads
+back the JSON result: `PnsLanes.decode`, one `exactView` call for the whole file (forced
+to the "samples" kind by a bin count far larger than the sample count, so every sample
+is returned, never a minimum/maximum reduction), and the decoded pyramid
+(`model.levels`).
 
 The Python reference (`_python_reference_totals`) is the same pipeline
 `pns_levels.pns_levels` itself runs (its own docstring, items 1 to 3), but built
@@ -27,15 +28,14 @@ totals.max()` exactly, as a check that this file's one-call reference really is 
 same computation as `pns_levels`'s chunked one, not a second, independent PNS
 implementation.
 
-The sequences (task 4.5, item 1): the three synthetic sequences of
-`tests/synthetic.py` that have a gradient event (`pns_levels` has no bins to compare
-for the empty sequence); a "border" sequence, whose gradient is not zero at the block
-junction (built again here, not imported from `test_pns_levels.py`'s
-`_border_sequence`, so this file needs no cross-file import); a repeating sequence of
-more than `3 * PnsLanes.GROUP_BLOCKS` (192) blocks, so the golden test crosses more
-than 3 of the JavaScript block map's checkpoint groups; and a sequence built with
-`pp.Opts(gamma=11.262e6)` (sodium), with a gradient on every axis so a wrong
-`gradScale` would show on all three, not just one.
+The sequences (task 4.5, item 1): the three synthetic sequences of `tests/synthetic.py`
+that have a gradient event (`pns_levels` has no bins to compare for the empty sequence);
+a "border" sequence, whose gradient is not zero at the block junction
+(`synthetic.border_sequence`, shared with `test_pns_levels.py`); a repeating sequence of
+more than `3 * PnsLanes.GROUP_BLOCKS` (192) blocks, so the golden test crosses more than
+3 of the JavaScript block map's checkpoint groups; and a sequence built with
+`pp.Opts(gamma=11.262e6)` (sodium), with a gradient on every axis so a wrong `gradScale`
+would show on all three, not just one.
 
 The gamma case needs `PnsLanes.decode` to read `pns.gradScale`: the diagram tables
 always hold gradients in mT/m under the fixed proton `seq_utils.GAMMA`
@@ -52,13 +52,18 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from pypulseq.utils.safe_pns_prediction import _safe_gwf_to_pns_chunk, safe_example_hw
-from synthetic import SYSTEM, arbitrary_gradient_sequence, gre_sequence, spin_echo_sequence
+from synthetic import (
+    arbitrary_gradient_sequence,
+    border_sequence,
+    gre_sequence,
+    spin_echo_sequence,
+)
 
 from pulseq_reports import diagram_data
+from pulseq_reports.cards.diagram import _pns_entry
 from pulseq_reports.pns_levels import pns_levels
 from pulseq_reports.sampling import GradientSampler
 from pulseq_reports.seq_index import sequence_index
-from pulseq_reports.seq_utils import GAMMA
 
 _GOLDEN_SCRIPT = Path(__file__).parent / "js" / "golden_pns_lanes.js"
 
@@ -70,30 +75,6 @@ GROUP_BLOCKS = 64
 
 
 # ---- The sequences -----------------------------------------------------------------
-
-
-def _border_sequence() -> pp.Sequence:
-    """Two extended-trapezoid blocks on x whose gradient is not zero at the border
-    between them, unlike a plain trapezoid (which is zero at both ends of its own
-    event): the amplitude ramps up in block 0 and continues, unchanged, into block 1,
-    where it ramps back down to 0. `add_block` accepts this because the amplitude is
-    continuous across the junction (no step). The same construction as
-    `test_pns_levels.py`'s `_border_sequence`, built again here rather than shared, so
-    that the two test files do not import each other."""
-    dt = SYSTEM.grad_raster_time
-    amp = 0.1 * SYSTEM.max_grad
-    n = 40
-    rise = n * dt
-    g1 = pp.make_extended_trapezoid(
-        channel="x", amplitudes=np.array([0.0, amp]), times=np.array([0.0, rise]), system=SYSTEM
-    )
-    g2 = pp.make_extended_trapezoid(
-        channel="x", amplitudes=np.array([amp, 0.0]), times=np.array([0.0, rise]), system=SYSTEM
-    )
-    seq = pp.Sequence(SYSTEM)
-    seq.add_block(g1)
-    seq.add_block(g2)
-    return seq
 
 
 def _repeating_sequence() -> pp.Sequence:
@@ -134,7 +115,7 @@ _SEQUENCES = {
     "spin_echo": spin_echo_sequence,
     "gre_default": gre_sequence,
     "arbitrary_gradient": arbitrary_gradient_sequence,
-    "border": _border_sequence,
+    "border": border_sequence,
     "repeating_more_than_3_checkpoint_groups": _repeating_sequence,
     "sodium_gamma": _sodium_sequence,
 }
@@ -168,9 +149,9 @@ def _python_reference_totals(seq: pp.Sequence) -> np.ndarray:
 
 
 def _run_golden(seq: pp.Sequence, tmp_path: Path):
-    """Writes `seq`'s diagram tables and `pns` object (plan section 4.4) to a JSON
-    file in `tmp_path`, runs `golden_pns_lanes.js` on it with Node, and returns
-    `(json.loads(OUT.json), pns_levels(seq))`.
+    """Writes `seq`'s diagram tables and `pns` object (plan section 4.4, made by
+    `cards.diagram._pns_entry`) to a JSON file in `tmp_path`, runs `golden_pns_lanes.js`
+    on it with Node, and returns `(json.loads(OUT.json), pns_levels(seq))`.
 
     Fails the test, with a clear message, when `node` is not on `PATH`: the plan
     requires this (both devShells have Node), not a silent skip.
@@ -183,22 +164,7 @@ def _run_golden(seq: pp.Sequence, tmp_path: Path):
         )
     tables = diagram_data.diagram_tables(seq)
     levels = pns_levels(seq)
-    grad_scale = GAMMA / seq.system.gamma
-    pns_payload = {
-        "hardware": levels.hardware,
-        "example": levels.asc_file is None,
-        "asc_file": levels.asc_file,
-        "hw": levels.hw,
-        "dtS": levels.dt_s,
-        "gradScale": grad_scale,
-        "binSamples": levels.bin_samples,
-        "summary": {
-            "peak": levels.peak,
-            "peak_time_s": levels.peak_time_s,
-            "axis_peaks": levels.axis_peaks,
-        },
-        "levels": diagram_data.encode_tables({"min": levels.level_min, "max": levels.level_max}),
-    }
+    pns_payload = _pns_entry(seq, levels)
     payload = {
         "tables": diagram_data.encode_tables(tables),
         "pns": pns_payload,

@@ -177,17 +177,8 @@ def test_no_envelope_note_and_status_line_is_present():
     assert 'aria-live="polite"' in card.body_html
 
 
-_ZOOM_HELP_SENTENCE = (
-    "Click the chart to mark the centre for the zoom buttons. Drag across the chart to zoom to "
-    "that range. Hold Shift and drag, or scroll sideways, to pan."
-)
-
-
-def test_diagram_card_has_zoom_controls_before_its_chart_and_the_help_sentence_once():
-    """Adapted from vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`.
-    Phases 4 (gradient spectrum) and 5 (PNS) are not merged into this branch, so only
-    the diagram card's own zoom controls and help text are checked, not a page with
-    every line chart."""
+def test_diagram_card_has_zoom_controls_directly_before_its_chart():
+    """Adapted from vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`."""
     named = _named(spin_echo_sequence())
     card = diagram_card([named], [full_window([named])], card_id="diagram")
     result = page.render_page("t", "s", [card])
@@ -313,9 +304,9 @@ _GROUP_CONTROLS = '<div class="controls" role="group" aria-label="Lanes" id="dia
 
 def test_group_controls_container_is_between_the_window_buttons_and_the_zoom_controls():
     """The RF/ADC/Gradients/PNS toggle buttons go above the chart, after the window
-    buttons (worker spec); `zoom_controls` must still sit directly before
-    `<div class="chart"` (the existing zoom-controls test), so the group-controls
-    container goes before it, not after."""
+    buttons; `zoom_controls` must still sit directly before `<div class="chart"` (the
+    existing zoom-controls test), so the group-controls container goes before it, not
+    after."""
     named = _named(spin_echo_sequence())
     card = diagram_card([named], [full_window([named])], card_id="diagram")
     body = card.body_html

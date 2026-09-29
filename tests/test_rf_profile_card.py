@@ -1,11 +1,10 @@
 """Tests for `pulseq_reports.cards.rf_profile` (`docs/plans/rf-profiles.md`, section 4.5,
 items 1 and 2; task 5.3, items 1 to 7).
 
-Each test builds its sequences here with pypulseq, with the same helpers as
-`tests/test_rf_profiles.py` (copied, not imported: a test module here does not import
-another test module). This card copies values from `rf_profiles` and `diagram_data`, so
-most checks compare with `==` or `np.array_equal` (exact); a comparison that is not exact
-says why.
+Each test builds its sequences with pypulseq, with the same helpers as
+`tests/test_rf_profiles.py`, which both import from `tests/rf_sequences.py`. This card
+copies values from `rf_profiles` and `diagram_data`, so most checks compare with `==` or
+`np.array_equal` (exact); a comparison that is not exact says why.
 """
 
 import dataclasses
@@ -18,6 +17,18 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from pypulseq.event_lib import EventLibrary
+from rf_sequences import (
+    CRUSHER_AREA,
+    SYSTEM,
+    W,
+    _gre,
+    _hard,
+    _new,
+    _readout,
+    _sinc,
+    _trap,
+    _turning_gradients,
+)
 
 from pulseq_reports import page
 from pulseq_reports import rf_profiles as rp
@@ -33,99 +44,7 @@ from pulseq_reports.diagram_data import decode_tables, encode_tables
 from pulseq_reports.seq_utils import NamedSequence, hold_samples
 from pulseq_reports.waveforms import full_window
 
-SYSTEM = pp.Opts(
-    max_grad=30,
-    grad_unit="mT/m",
-    max_slew=150,
-    slew_unit="T/m/s",
-    rf_dead_time=100e-6,
-    rf_ringdown_time=30e-6,
-    adc_dead_time=10e-6,
-    rf_raster_time=5e-6,
-)
-W = 5e-3  # m, the SliceThickness definition
-CRUSHER_AREA = 4 / W  # 1/m: four cycles across W
-
-
-# ---- Sequence helpers (copied from tests/test_rf_profiles.py) ----
-
-
-def _sinc(use, flip=math.pi / 2, thickness=W, system=SYSTEM, **kwargs):
-    """A 1.5 ms sinc (300 samples at 5 µs) with its select gradient on z and rephaser."""
-    return pp.make_sinc_pulse(
-        flip_angle=flip,
-        duration=1.5e-3,
-        slice_thickness=thickness,
-        system=system,
-        return_gz=True,
-        delay=system.rf_dead_time,
-        use=use,
-        **kwargs,
-    )
-
-
-def _hard(use, flip=math.pi / 2, duration=0.5e-3, system=SYSTEM, **kwargs):
-    return pp.make_block_pulse(
-        flip_angle=flip,
-        duration=duration,
-        delay=system.rf_dead_time,
-        system=system,
-        use=use,
-        **kwargs,
-    )
-
-
-def _readout():
-    """A readout trapezoid on x with its ADC on the flat top."""
-    gx = pp.make_trapezoid("x", flat_area=250, flat_time=0.64e-3, system=SYSTEM)
-    adc = pp.make_adc(num_samples=32, duration=gx.flat_time, delay=gx.rise_time, system=SYSTEM)
-    return gx, adc
-
-
-def _trap(axis, area):
-    return pp.make_trapezoid(axis, area=area, system=SYSTEM)
-
-
-def _new(thickness=W, system=SYSTEM):
-    seq = pp.Sequence(system)
-    if thickness is not None:
-        seq.set_definition("SliceThickness", thickness)
-    return seq
-
-
-def _turning_gradients(duration=1e-3, amplitude=2e5):
-    """Arbitrary gradients on x and y whose direction turns one time during `duration`."""
-    n = round(duration / SYSTEM.grad_raster_time)
-    t = (np.arange(n) + 0.5) * SYSTEM.grad_raster_time
-    envelope = amplitude * np.sin(np.pi * t / duration)
-    angle = 2 * np.pi * t / duration
-    gx = pp.make_arbitrary_grad("x", envelope * np.cos(angle), first=0, last=0, system=SYSTEM)
-    gy = pp.make_arbitrary_grad("y", envelope * np.sin(angle), first=0, last=0, system=SYSTEM)
-    return gx, gy
-
-
-def _gre(num_trs=3, *, rf_spoiling=False, slices=(0.0,), dummies=0):
-    """A GRE: [RF + gz, rephaser + readout prephaser, readout + ADC, spoiler] for each
-    slice of each TR. `dummies` TRs before them have no ADC."""
-    rf, gz, gzr = _sinc("excitation")
-    gx, adc = _readout()
-    to_centre = gx.amplitude * (gx.rise_time + gx.flat_time) / 2
-    prephaser = _trap("x", -to_centre)
-    spoiler = _trap("z", CRUSHER_AREA)
-    seq = _new()
-    count = 0
-    for tr in range(dummies + num_trs):
-        for position in slices:
-            rf.freq_offset = gz.amplitude * position
-            rf.phase_offset = (
-                math.radians((117 * count * (count + 1) / 2) % 360) if rf_spoiling else 0
-            )
-            count += 1
-            seq.add_block(rf, gz)
-            seq.add_block(gzr, prephaser)
-            seq.add_block(gx, adc) if tr >= dummies else seq.add_block(gx)
-            seq.add_block(spoiler)
-    return seq
+# ---- Sequence helpers ----
 
 
 def _rotation_library_sequence():
@@ -503,7 +422,7 @@ def _spin_echo():
     rf_ex, gz_ex, _ = _sinc("excitation")
     rf_ref, gz_ref, _ = _sinc("refocusing", math.pi, phase_offset=math.pi / 2)
     gz_ref.channel = "y"
-    gx, adc = _readout()
+    gx, adc, _ = _readout()
     seq = _new()
     seq.add_block(rf_ex, gz_ex)
     seq.add_block(_trap("y", CRUSHER_AREA))

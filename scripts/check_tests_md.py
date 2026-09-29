@@ -16,8 +16,8 @@ Either way, a parametrized test is one test. The rest are JavaScript tests: each
 top-level `test("test_...")` call in a file that matches `tests/js/test_*.js`.
 JavaScript tests are found by reading the file's text, not by running Node.js. The
 entries in TESTS.md are the `#### `test_name`` headings. Each one belongs to the test
-file that the `###` heading above it names, for example `### 2.2 The bandwidth tool
-(`test_bandwidths.py`)`. Tests and entries are compared by file name and test name, so
+file that the `###` heading above it names, for example `### 2.1 Shared sequence helpers
+(`test_seq_utils.py`)`. Tests and entries are compared by file name and test name, so
 a test name that is in two files needs an entry in each file's section.
 
 Exits 1 and lists each difference when TESTS.md does not match.
@@ -86,16 +86,16 @@ JS_TEST_LINE = re.compile(r'^test\("(test_\w+)"', re.MULTILINE)
 JS_TEST_CALL = re.compile(r"^test\(.*$", re.MULTILINE)
 
 
-def javascript_tests(root: Path = ROOT / "tests" / "js") -> tuple[set[tuple[str, str]], list[str]]:
-    """(file name, test name) of each JS test in `root`, and the problems found.
+def javascript_tests() -> tuple[set[tuple[str, str]], list[str]]:
+    """(file name, test name) of each JS test in `tests/js`, and the problems found.
 
     A JS test is a top-level `test("test_name", ...)` call at the start of a line in
     a file that matches `test_*.js`. This reads the file's text; it does not run
-    Node.js. `root` may not exist yet, in which case there are no JS tests.
+    Node.js.
     """
     entries: list[tuple[str, str]] = []
     problems = []
-    for path in sorted(root.glob("test_*.js")):
+    for path in sorted((ROOT / "tests" / "js").glob("test_*.js")):
         text = path.read_text(encoding="utf-8")
         for match in JS_TEST_LINE.finditer(text):
             entries.append((path.name, match.group(1)))
