@@ -5,11 +5,10 @@
   --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.10);
   --good: #006300; --critical: #d03b3b;
   --rf: #2a78d6; --adc: #eb6834; --gx: #1baf7a; --gy: #eda100; --gz: #e87ba4;
-  --col-seq-0: #86b6ef; --col-seq-1: #5598e7; --col-seq-2: #2a78d6; --col-seq-3: #1c5cab;
   /* The map chart's color scales (assets/map_chart.js, docs/plans/rf-profiles.md
-     section 4.4). --map-seq-* is the same blue ramp as --col-seq-* (light to dark, low
-     to high). --map-div-* is a 5-stop diverging ramp for a value that can be negative
-     or positive: index 0 is the most negative (cool), index 2 is zero (neutral, close
+     section 4.4). --map-seq-* is a 4-stop blue ramp from low to high (light to dark in
+     the light theme, dark to light in the dark theme). --map-div-* is a 5-stop
+     diverging ramp for a value that can be negative or positive: index 0 is the most negative (cool), index 2 is zero (neutral, close
      to the page's own grid color), index 4 is the most positive (warm); each theme
      keeps that order and picks shades that contrast with its own background. */
   --map-seq-0: #86b6ef; --map-seq-1: #5598e7; --map-seq-2: #2a78d6; --map-seq-3: #1c5cab;
@@ -23,7 +22,6 @@
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
     --good: #0ca30c; --critical: #d03b3b;
     --rf: #3987e5; --adc: #d95926; --gx: #199e70; --gy: #c98500; --gz: #d55181;
-    --col-seq-0: #1c5cab; --col-seq-1: #2a78d6; --col-seq-2: #5598e7; --col-seq-3: #86b6ef;
     --map-seq-0: #1c5cab; --map-seq-1: #2a78d6; --map-seq-2: #5598e7; --map-seq-3: #86b6ef;
     --map-div-0: #3987e5; --map-div-1: #1c5cab; --map-div-2: #2c2c2a;
     --map-div-3: #c98500; --map-div-4: #d95926;
@@ -35,7 +33,6 @@
   --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
   --good: #0ca30c; --critical: #d03b3b;
   --rf: #3987e5; --adc: #d95926; --gx: #199e70; --gy: #c98500; --gz: #d55181;
-  --col-seq-0: #1c5cab; --col-seq-1: #2a78d6; --col-seq-2: #5598e7; --col-seq-3: #86b6ef;
   --map-seq-0: #1c5cab; --map-seq-1: #2a78d6; --map-seq-2: #5598e7; --map-seq-3: #86b6ef;
   --map-div-0: #3987e5; --map-div-1: #1c5cab; --map-div-2: #2c2c2a;
   --map-div-3: #c98500; --map-div-4: #d95926;

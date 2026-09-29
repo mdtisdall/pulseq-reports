@@ -11,11 +11,10 @@
   --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.10);
   --good: #006300; --critical: #d03b3b;
   --rf: #2a78d6; --adc: #eb6834; --gx: #1baf7a; --gy: #eda100; --gz: #e87ba4;
-  --col-seq-0: #86b6ef; --col-seq-1: #5598e7; --col-seq-2: #2a78d6; --col-seq-3: #1c5cab;
   /* The map chart's color scales (assets/map_chart.js, docs/plans/rf-profiles.md
-     section 4.4). --map-seq-* is the same blue ramp as --col-seq-* (light to dark, low
-     to high). --map-div-* is a 5-stop diverging ramp for a value that can be negative
-     or positive: index 0 is the most negative (cool), index 2 is zero (neutral, close
+     section 4.4). --map-seq-* is a 4-stop blue ramp from low to high (light to dark in
+     the light theme, dark to light in the dark theme). --map-div-* is a 5-stop
+     diverging ramp for a value that can be negative or positive: index 0 is the most negative (cool), index 2 is zero (neutral, close
      to the page's own grid color), index 4 is the most positive (warm); each theme
      keeps that order and picks shades that contrast with its own background. */
   --map-seq-0: #86b6ef; --map-seq-1: #5598e7; --map-seq-2: #2a78d6; --map-seq-3: #1c5cab;
@@ -29,7 +28,6 @@
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
     --good: #0ca30c; --critical: #d03b3b;
     --rf: #3987e5; --adc: #d95926; --gx: #199e70; --gy: #c98500; --gz: #d55181;
-    --col-seq-0: #1c5cab; --col-seq-1: #2a78d6; --col-seq-2: #5598e7; --col-seq-3: #86b6ef;
     --map-seq-0: #1c5cab; --map-seq-1: #2a78d6; --map-seq-2: #5598e7; --map-seq-3: #86b6ef;
     --map-div-0: #3987e5; --map-div-1: #1c5cab; --map-div-2: #2c2c2a;
     --map-div-3: #c98500; --map-div-4: #d95926;
@@ -41,7 +39,6 @@
   --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
   --good: #0ca30c; --critical: #d03b3b;
   --rf: #3987e5; --adc: #d95926; --gx: #199e70; --gy: #c98500; --gz: #d55181;
-  --col-seq-0: #1c5cab; --col-seq-1: #2a78d6; --col-seq-2: #5598e7; --col-seq-3: #86b6ef;
   --map-seq-0: #1c5cab; --map-seq-1: #2a78d6; --map-seq-2: #5598e7; --map-seq-3: #86b6ef;
   --map-div-0: #3987e5; --map-div-1: #1c5cab; --map-div-2: #2c2c2a;
   --map-div-3: #c98500; --map-div-4: #d95926;
@@ -98,19 +95,12 @@ button[aria-pressed="true"] { background: var(--ink); color: var(--surface); bor
 .tip .key { display: inline-block; width: 10px; height: 2px; margin-right: 6px;
   vertical-align: middle; }
 .muted { color: var(--muted); }
-#pulse-profiles .pulse-block { margin-top: 20px; }
-#pulse-profiles h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--ink-2); }
 details summary { cursor: pointer; font-weight: 600; }
-#column-cross-section table { margin-bottom: 16px; }
-#column-chart { aspect-ratio: 570 / 580; max-width: 620px; width: 100%; margin: 12px auto 0; }
-#column-canvas { position: absolute; }
-#column-axes { position: absolute; inset: 0; width: 100%; height: 100%; }
-.chart .nominal { fill: none; stroke: var(--axis); stroke-width: 1.5; stroke-dasharray: 5,4; }
 /* PulseqReport.mapChart (assets/map_chart.js): a canvas raster with an SVG overlay for
    axes, legend, crosshair and tooltip. The caller's container has class="chart
    map-chart", so it also gets the .chart rules above (position: relative, the .lbl,
    .tick, .grid, .base, .cross and .tip rules). Class selectors only, following the
-   .chart / #column-* rules above. */
+   .chart rules above. */
 .map-chart { aspect-ratio: 570 / 580; max-width: 620px; width: 100%; margin: 12px auto 0; }
 .map-chart canvas { position: absolute; }
 .map-chart svg { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -485,9 +475,10 @@ const PulseqReport = (() => {
   // `lanesFor(view, bins, visibleGroupIds)`, when given, is called at the start of each
   // render, with the current view, `bins = PLOT_W` and the third argument described below,
   // and its result is drawn instead of `lanes`; without `groups`, it must always return the
-  // same number of lanes. `lanes` is then only the initial lanes, shown by the first render
-  // before a view change. Without `lanesFor`, `lanes` is drawn as given to `laneChart` or to
-  // `setLanes`/`setWindow`, as before.
+  // same number of lanes. `lanes` is then never drawn: without `groups`, it only sets the SVG
+  // height (so it must have as many lanes as a `lanesFor` result); with `groups`, each render
+  // sets the height. `setLanes` then has no effect. Without `lanesFor`, `lanes` is drawn as
+  // given to `laneChart` or to `setLanes`/`setWindow`.
   // `groups`, when given, is a list of lane groups: {id, label, laneIds: [...], visible}.
   // Each lane (of `lanes`, and of a `lanesFor` result) has an `id`; a lane whose id is in no
   // group's `laneIds` is always drawn. `visibleGroupIds`, the third argument `lanesFor` gets,

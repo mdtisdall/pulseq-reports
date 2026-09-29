@@ -606,6 +606,19 @@ raises `ValueError` for an `extra_css` text that contains that text.
 
 **Assumptions:** None.
 
+#### `test_str_in_place_of_a_list_raises`
+
+**Checks:** `render_page` raises `TypeError` when `extra_scripts` or
+`extra_css` is one `str` in place of a list of texts. A `str` is a sequence
+of one-character texts, so without the check each character becomes its own
+`<script>` element or CSS text, with no error.
+
+**How:** The test runs once for `extra_scripts` and once for `extra_css`. It
+gives that argument the `str` `"p { color: red; }"` and checks that
+`render_page` raises `TypeError` with the argument's name in the message.
+
+**Assumptions:** None.
+
 #### `test_library_css_selects_no_element_id`
 
 **Checks:** The library's `report.css` has no `#id` selector. The caller of

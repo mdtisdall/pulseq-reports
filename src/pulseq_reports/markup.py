@@ -21,9 +21,9 @@ def fmt(v: float) -> str:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Lane:
-    """One line lane of a `PulseqReport.laneChart` chart (a waveform, an RF pulse profile,
-    a spectrum trace or a PNS trace). `docs/usage.md` ("Lane JSON format") gives the meaning
-    of each field. Field order is the JSON key order that `dataclasses.asdict` gives."""
+    """One line lane of a `PulseqReport.laneChart` chart, for example a waveform or a
+    spectrum trace. `docs/usage.md` ("Lane JSON format") gives the meaning of each field.
+    Field order is the JSON key order that `dataclasses.asdict` gives."""
 
     id: str
     title: str
@@ -55,13 +55,6 @@ def html_table(headers: list[str], rows: list[list]) -> str:
 
 
 _AXIS_COLOR = {"x": "gx", "y": "gy", "z": "gz"}
-
-
-def _blocks_cell(blocks: list[int]) -> str:
-    shown = ", ".join(str(b) for b in blocks[:4])
-    if len(blocks) > 4:
-        shown += f" … ({len(blocks)} blocks)"
-    return shown
 
 
 def _sig(v: float) -> float:

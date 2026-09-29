@@ -183,6 +183,15 @@ def test_extra_css_with_close_tag_raises(closer):
         page.render_page("Title", "Subtitle", cards, extra_css=[f"p {{}} {closer} here"])
 
 
+@pytest.mark.parametrize("argument", ["extra_scripts", "extra_css"])
+def test_str_in_place_of_a_list_raises(argument):
+    """A `str` is a sequence of one-character texts, so without the check each character
+    would become its own script element or CSS text."""
+    cards = [page.Card(id="a", title="A", body_html="<p>a</p>")]
+    with pytest.raises(TypeError, match=argument):
+        page.render_page("Title", "Subtitle", cards, **{argument: "p { color: red; }"})
+
+
 def test_library_css_selects_no_element_id():
     """The caller gives each card its id (`card_id`), so a `#id` selector in the library's
     CSS either styles nothing or styles one project's own card."""
