@@ -11,6 +11,17 @@
 // module is pure and synchronous: the long work (`simulation`, `combinedProfile`) is an
 // object whose `step(budgetMs)` the card calls in slices.
 //
+// The line cache. `simulation`, `simulate` and `combinedProfile` take an optional
+// `cache`: a Map that the caller owns, one for each file. They read and add the `a` and
+// `b` of a pulse along a 1D line of points (the "profile" view of a pulse along a
+// spatial axis, and the lines of a combined profile), keyed by the pulse key and the
+// points, so the combined profile reuses the profiles of its pulses and a pulse that
+// takes part two times is simulated one time. The pulse key leaves out the phase
+// offsets of the RF, so an entry can come from another block with the same key: the
+// same |Mxy|, Mz, |beta|^2, widths and echo phase (all relative to a constant phase),
+// but `b` can differ by that constant phase. Without a cache, each call simulates, as
+// the Python reference does.
+//
 // Names are camelCase; arrays of numbers are Float64Array (C order for grids). One
 // global `RfProfiles` in the browser (a classic script), `module.exports` in Node.
 const RfProfiles = (() => {
@@ -1544,14 +1555,53 @@ const RfProfiles = (() => {
     return Math.max(1, Math.floor(CHECK_WORK / Math.max(1, samples)));
   }
 
+  // The part of a line cache key (module comment) that names the points of a 1D line:
+  // the axis ("x", "y" or "z": the points do not depend on the sign of the direction),
+  // or "select" with the unit vector along which the points lie, and the grid. String()
+  // of a number is the shortest text that gives the same double, so two lines have the
+  // same key exactly when their points are equal.
+  function _lineKey(kind, unit, lo, hi, n) {
+    const where = AXIS_NAMES.includes(kind) ? kind : `select:${unit[0]},${unit[1]},${unit[2]}`;
+    return `${where}|${lo}|${hi}|${n}`;
+  }
+
+  // The line cache key of a simulation of `pulse` on `spec`, or null when the spec is
+  // not a 1D line of spatial points (a "df" axis, more than one axis, or `at` values).
+  function _simulationKey(pulse, spec) {
+    const axes = spec.axes;
+    if (axes.length !== 1 || Object.keys(spec.at || {}).length !== 0) return null;
+    const {kind, lo, hi, n} = axes[0];
+    if (kind === "df") return null;
+    return `${pulse.key}|${_lineKey(kind, pulse.direction, lo, hi, n)}`;
+  }
+
   // `rf_profiles.simulate` as sliced work: {step(budgetMs), done, result()}. `step`
   // computes points until the clock passes its start plus `budgetMs` (at least one
   // chunk of points in each call, so step(0) makes progress) and returns the fraction
   // done (1 when done). Each point is computed on its own, so the result does not
-  // depend on the slices. `result()` throws before the work is done.
-  function simulation(pulse, spec) {
+  // depend on the slices. `result()` throws before the work is done. With `cache` (the
+  // line cache of the module comment), a 1D line that is in the cache is done at once,
+  // and a 1D line that this work computes is added to it when it is done.
+  function simulation(pulse, spec, {cache = null} = {}) {
     _checkSpec(pulse, spec);
     const {grid, shape, count, values} = _gridValues(spec);
+    const cacheKey = cache === null ? null : _simulationKey(pulse, spec);
+    const hit = cacheKey === null ? undefined : cache.get(cacheKey);
+    if (hit !== undefined) {
+      const profile = Object.freeze({spec, grid: Object.freeze(grid),
+        shape: Object.freeze(shape), aRe: hit.aRe, aIm: hit.aIm, bRe: hit.bRe, bIm: hit.bIm});
+      return {
+        step() {
+          return 1;
+        },
+        get done() {
+          return true;
+        },
+        result() {
+          return profile;
+        },
+      };
+    }
     const shear = _shearPlan(pulse, spec);
     let positions, df, m;
     if (shear !== null) {
@@ -1578,6 +1628,7 @@ const RfProfiles = (() => {
             j, j1, out);
           j = j1;
         } while (j < m && _now() < end);
+        if (j >= m && cacheKey !== null) cache.set(cacheKey, Object.freeze({...out}));
         return j / m;
       },
       get done() {
@@ -1600,8 +1651,8 @@ const RfProfiles = (() => {
   }
 
   // `rf_profiles.simulate`: the whole simulation in one call.
-  function simulate(pulse, spec) {
-    const work = simulation(pulse, spec);
+  function simulate(pulse, spec, {cache = null} = {}) {
+    const work = simulation(pulse, spec, {cache});
     work.step(Infinity);
     return work.result();
   }
@@ -1744,9 +1795,17 @@ const RfProfiles = (() => {
 
   // `_pulse_values` as sliced work: |Mxy| of an excitation, or |beta|^2 of a refocusing
   // pulse, at `positions` (m * 3) and df = 0. It yields before each chunk of points,
-  // and counts the point-samples in `state.done`.
-  function* _pulseValuesGen(p, positions, state) {
+  // and counts the point-samples in `state.done`. `lineKey` is the `_lineKey` of the
+  // points when they are a 1D line, else null: with `state.cache`, such a line comes
+  // from the cache (all its point-samples count as done), or goes into it.
+  function* _pulseValuesGen(p, positions, state, lineKey) {
     const m = positions.length / 3;
+    const cacheKey = state.cache === null || lineKey === null ? null : `${p.key}|${lineKey}`;
+    const hit = cacheKey === null ? undefined : state.cache.get(cacheKey);
+    if (hit !== undefined) {
+      state.done += m * p.sigRe.length;
+      return _valuesOf(p, hit);
+    }
     const out = {aRe: new Float64Array(m), aIm: new Float64Array(m),
       bRe: new Float64Array(m), bIm: new Float64Array(m)};
     const chunk = _chunkPoints(p.sigRe.length);
@@ -1756,6 +1815,7 @@ const RfProfiles = (() => {
       spinDomainRange(p.sigRe, p.sigIm, p.dtS, p.grad, positions, null, null, j, j1, out);
       state.done += (j1 - j) * p.sigRe.length;
     }
+    if (cacheKey !== null) state.cache.set(cacheKey, Object.freeze(out));
     return _valuesOf(p, out);
   }
 
@@ -1811,14 +1871,21 @@ const RfProfiles = (() => {
     return pos;
   }
 
-  // `rf_profiles._direction_product`: the product of the values of the pulses of `d`.
-  function* _directionProductGen(d, positions, state) {
+  // `rf_profiles._direction_product`: the product of the values of the pulses of `d`
+  // at `positions`; `lineKey` as for `_pulseValuesGen`.
+  function* _directionProductGen(d, positions, state, lineKey) {
     let values = new Float64Array(positions.length / 3).fill(1);
     for (const p of d.pulses) {
-      const v = yield* _pulseValuesGen(p, positions, state);
+      const v = yield* _pulseValuesGen(p, positions, state, lineKey);
       values = Float64Array.from(values, (x, i) => x * v[i]);
     }
     return values;
+  }
+
+  // The `_lineKey` of the line of `n` points from `lo` to `hi` along the direction `d`
+  // (`_directionPoints(d, linspace(lo, hi, n))`).
+  function _directionLineKey(d, lo, hi, n) {
+    return _lineKey(d.kind, d.unit, lo, hi, n);
   }
 
   // The select range of the "profile" view of a pulse (`view_spec(p, "profile")`),
@@ -1870,10 +1937,13 @@ const RfProfiles = (() => {
     const [lo, hi] = yield* _rangeGen(first, c.ranges);
     const u = linspace(lo, hi, n || NUM_POSITIONS);
     const positions = _directionPoints(d, u);
+    const lineKey = _directionLineKey(d, lo, hi, u.length);
     let combined = new Float64Array(u.length).fill(1);
     let reference = null;
+    const linePulses = [];
     for (const p of d.pulses) {
-      const values = yield* _pulseValuesGen(p, positions, state);
+      const values = yield* _pulseValuesGen(p, positions, state, lineKey);
+      linePulses.push(Object.freeze({block: p.block, values}));
       if (p === excitation) reference = values;
       combined = Float64Array.from(combined, (x, i) => x * values[i]);
     }
@@ -1890,7 +1960,7 @@ const RfProfiles = (() => {
     };
     if (c.nominal !== null) numbers.fraction_inside = _fractionInside(u, combined, centre, c.nominal);
     numbers.centre_signal = _interp(centre, u, combined);
-    return {line: Object.freeze({u, values: combined}), numbers};
+    return {line: Object.freeze({u, values: combined}), linePulses, numbers};
   }
 
   // `rf_profiles._several_directions`.
@@ -1899,7 +1969,8 @@ const RfProfiles = (() => {
     for (const d of c.directions) {
       const [lo, hi] = yield* _directionRangeGen(d, c.ranges);
       const u = linspace(lo, hi, n || NUM_POSITIONS);
-      const values = yield* _directionProductGen(d, _directionPoints(d, u), state);
+      const values = yield* _directionProductGen(d, _directionPoints(d, u), state,
+        _directionLineKey(d, lo, hi, u.length));
       const centre = d.pulses[0].sliceCentreM;
       if (c.nominal !== null) fraction *= _fractionInside(u, values, centre, c.nominal);
       centreSignal *= _interp(centre, u, values);
@@ -1933,7 +2004,8 @@ const RfProfiles = (() => {
         const [lo, hi] = yield* _directionRangeGen(d, c.ranges);
         axes.push(_axis(d.kind, lo, hi, points));
         const u = linspace(lo, hi, points);
-        lines.push(yield* _directionProductGen(d, _directionPoints(d, u), state));
+        lines.push(yield* _directionProductGen(d, _directionPoints(d, u), state,
+          _directionLineKey(d, lo, hi, points)));
       }
       if (ordered.length === 2) {
         return [Object.freeze({axes: Object.freeze([axes[0], axes[1]]),
@@ -1943,7 +2015,8 @@ const RfProfiles = (() => {
       for (const [first, second, third] of [[0, 1, 2], [0, 2, 1], [1, 2, 0]]) {
         const d = ordered[third];
         const centre = Float64Array.of(d.pulses[0].sliceCentreM);
-        const through = (yield* _directionProductGen(d, _directionPoints(d, centre), state))[0];
+        const through =
+          (yield* _directionProductGen(d, _directionPoints(d, centre), state, null))[0];
         maps.push(Object.freeze({axes: Object.freeze([axes[first], axes[second]]),
           values: _outer(lines[first], lines[second], through, c.factor)}));
       }
@@ -1974,7 +2047,7 @@ const RfProfiles = (() => {
     }
     let values = new Float64Array(points * points).fill(1);
     for (const d of directions) {
-      const v = yield* _directionProductGen(d, positions, state);
+      const v = yield* _directionProductGen(d, positions, state, null);
       values = Float64Array.from(values, (x, i) => x * v[i]);
     }
     values = Float64Array.from(values, x => x * c.factor);
@@ -1985,17 +2058,17 @@ const RfProfiles = (() => {
   // The work of a combined profile after its setup: the line or the numbers, then the
   // maps.
   function* _combinedGen(c, view, n, state) {
-    let line = null, maps = [], numbers;
+    let line = null, linePulses = [], maps = [], numbers;
     if (c.directions.length === 1) {
-      ({line, numbers} = yield* _oneDirectionGen(c, n, state));
+      ({line, linePulses, numbers} = yield* _oneDirectionGen(c, n, state));
     } else {
       numbers = yield* _severalDirectionsGen(c, n, state);
       if (view === "2d") maps = yield* _combinedMapsGen(c, n, state);
     }
-    return _combinedResult(c, line, maps, numbers);
+    return _combinedResult(c, line, linePulses, maps, numbers);
   }
 
-  function _combinedResult(c, line, maps, numbers) {
+  function _combinedResult(c, line, linePulses, maps, numbers) {
     return Object.freeze({
       reason: null,
       excitationBlock: c.excitationBlock,
@@ -2003,6 +2076,7 @@ const RfProfiles = (() => {
       factor: c.factor,
       directions: Object.freeze(c.directions.map(d => d.kind)),
       line,
+      linePulses: Object.freeze(linePulses),
       maps: Object.freeze(maps),
       numbers: Object.freeze(numbers),
     });
@@ -2016,6 +2090,7 @@ const RfProfiles = (() => {
       factor: NaN,
       directions: Object.freeze([]),
       line: null,
+      linePulses: Object.freeze([]),
       maps: Object.freeze([]),
       numbers: Object.freeze({}),
     });
@@ -2086,8 +2161,11 @@ const RfProfiles = (() => {
   // done, result()}. `per` is a result of `period`. A period with a reason, or without
   // a direction, is done at once. The pulses come from the blocks without their echo
   // pathway. `result()`: {reason, excitationBlock, refocusingBlocks, factor,
-  // directions, line ({u, values} or null), maps ([{axes, values}]), numbers}.
-  function combinedProfile(seqView, file, per, {view = "profile", n = null} = {}) {
+  // directions, line ({u, values} or null), linePulses ([{block, values}]: each pulse
+  // of the line's direction, in play order, `line_pulses` of the reference), maps
+  // ([{axes, values}]), numbers}. `cache`: the line cache of the module comment, for the
+  // lines of the directions (not the oblique map, whose points are not a line).
+  function combinedProfile(seqView, file, per, {view = "profile", n = null, cache = null} = {}) {
     if (view !== "profile" && view !== "2d") {
       throw new Error(`view must be 'profile' or '2d': ${_pyRepr(view)}`);
     }
@@ -2095,16 +2173,18 @@ const RfProfiles = (() => {
     const c = _combinedSetup(seqView, file, per);
     let result = null;
     let gen = null;
-    const state = {done: 0, total: 0};
+    const state = {done: 0, total: 0, cache};
     if (c.reason !== undefined) {
       result = c;
     } else if (c.directions.length === 0) {
-      result = _combinedResult(c, null, [], {centre_signal: c.factor});
+      result = _combinedResult(c, null, [], [], {centre_signal: c.factor});
     } else {
       state.total = _combinedTotal(c, view, n);
       gen = _combinedGen(c, view, n, state);
-      // Run to the first yield, which comes before the first piece of work.
-      gen.next();
+      // Run to the first yield, which comes before the first piece of work. With the
+      // lines in the cache, there can be no piece of work, and the work ends here.
+      const first = gen.next();
+      if (first.done) result = first.value;
     }
     return {
       step(budgetMs) {

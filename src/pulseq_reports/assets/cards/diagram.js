@@ -36,7 +36,8 @@
 // per animation frame); `anchor` when a click, the arrow keys or a `goto` message set
 // or clear the zoom marker; and `view` after every change of the chart's time window.
 // It also subscribes to `goto`, to move its own chart to a block that another card
-// names. `docs/usage.md`, section "Messages between cards", documents all of this.
+// names, in a file that the card names by this card's file index or by its file name.
+// `docs/usage.md`, section "Messages between cards", documents all of this.
 PulseqReport.registerCard("diagram", async (section, data) => {
   const buttons = section.querySelectorAll("[data-window]");
   const statusEl = document.getElementById(`${section.id}-mode`);
@@ -332,7 +333,11 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   }
 
   // `goto` (plan section 4.1): another card asks this diagram to show one block of
-  // one of its files. It shows the first window of that file (switching files first,
+  // one of its files, named by `name` (a string: the first file of this card with that
+  // name) when the message has one, else by `file` (this card's file index). A card
+  // that learns this card's file indexes only from `sequence` messages cannot know the
+  // index of a file that this card has not decoded yet, but it can know the file's
+  // name. It shows the first window of that file (switching files first,
   // exactly as a click on that window's button does, through the shared
   // `showWindow`), then sets the view to that block with half its own duration as
   // padding on each side (so the window is twice the block's duration), widened to
@@ -352,22 +357,29 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     }
   }
   async function gotoBlock(message) {
+    const byName = typeof message.name === "string";
+    const fileIndex = byName ? files.findIndex(f => f.name === message.name) : message.file;
+    const fileText = byName ? `"${message.name}"` : String(message.file);
+    if (byName && fileIndex === -1) {
+      console.warn(`diagram card "${section.id}": goto ignored, no file named ${fileText}`);
+      return;
+    }
     // A block that the file cannot have is refused before any file switch. The upper
     // bound needs the file's decoded model: checked here when the file is already
     // decoded, else after `showWindow` decodes it.
-    const cached = models[message.file];
+    const cached = models[fileIndex];
     if (!Number.isInteger(message.block) || message.block < 0 ||
         (cached && message.block >= cached.view.numBlocks)) {
       console.warn(
-        `diagram card "${section.id}": goto ignored, file ${message.file} has no block ` +
+        `diagram card "${section.id}": goto ignored, file ${fileText} has no block ` +
           `${message.block}`
       );
       return;
     }
-    const i = windows.findIndex(w => w.file === message.file);
+    const i = windows.findIndex(w => w.file === fileIndex);
     if (i === -1) {
       console.warn(
-        `diagram card "${section.id}": goto ignored, file ${message.file} has no window`
+        `diagram card "${section.id}": goto ignored, file ${fileText} has no window`
       );
       return;
     }
@@ -375,7 +387,7 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     const seqView = current.view;
     if (message.block >= seqView.numBlocks) {
       console.warn(
-        `diagram card "${section.id}": goto ignored, file ${message.file} has no block ` +
+        `diagram card "${section.id}": goto ignored, file ${fileText} has no block ` +
           `${message.block}`
       );
       return;

@@ -7,8 +7,10 @@ Status: in progress. The plan was written on 2026-09-28 (PR #51) and revised on
 the same day with the user's answers (decisions 8 to 22 of section 2.2). On the
 same day the user replaced parity with vb-pulseq by external references
 (decision 5, phase 2b), split phase 5 into 5a and 5b around phase 3
-(decision 23), and decided the tools and the SLR check of phase 2b (decision
-24). No question is open (section 7).
+(decision 23), decided the tools and the SLR check of phase 2b (decision
+24), and, at the start of phase 5b, four changes to the modules of phases 1, 3
+and 4 that the card script needs, in a phase 5b-prep (decision 25). No question
+is open (section 7).
 
 ## 1. Goal
 
@@ -252,6 +254,30 @@ Do not open these decisions again. The user made them or approved them.
       ripples are measured information, not a check. `abrm` gets the design as
       the `.seq` file stores it: pypulseq writes RF shapes with about 7
       significant digits (7.5e-7 of the peak for this design).
+25. **Phase 5b-prep: four changes for the card script** (the user, 2026-09-28,
+    at the start of phase 5b; phase 5b found each gap). They go in their own
+    PR (branch `feature/rf-profile-card-prep`) before the card script.
+    - **`mapChart` gets `destroy()`.** A map chart adds a listener for the
+      system color scheme and an observer of the page's `data-theme`, and no
+      call removed them. The card replaces its maps when the period changes, so
+      each removed chart stayed in memory. `destroy()` removes both
+      (section 4.4, item 2).
+    - **`goto` can name a file by `name`.** The diagram decodes a file the
+      first time it shows it, and publishes `sequence` for a file only then.
+      So the card knows the diagram's file index of the shown files only, but
+      it knows every file's name (section 4.1).
+    - **The combined profile gives each pulse's values on its line**
+      (`line_pulses`, Python and JavaScript, compared by the golden test), for
+      the combined chart's lane of each pulse (section 4.5, item 4). The
+      reference gave only the product.
+    - **A line cache in `RfProfiles`.** Phase 5b measured the combined profile
+      of a spin echo with pulses of 3000 and 2000 RF samples in Node: 29 to
+      39 ms, against the budget of 16 ms (section 2.4), because it simulated
+      its pulses again. `simulation` and `combinedProfile` take an optional
+      cache of 1D lines, keyed by the pulse key and the points, so the
+      combined profile reuses the profiles of its pulses (section 4.6,
+      item 5). The Python reference does not change: the cache gives the same
+      values.
 
 ### 2.3 Facts (2026-09-28)
 
@@ -488,6 +514,8 @@ Phase 0 (TESTS.md) ─┬─► Phase 1 (messages) ─────────�
                     └─► Phase 4 (map chart) ────────────────────────────────────────────────┘
 ```
 
+Phase 5b-prep (decision 25) comes before phase 5b: 5b-prep ─► 5b.
+
 - Phase 0 first. Then phases 1, 2 and 4 at the same time: they edit
   different files (section 3.4).
 - Phase 5a after phase 2 (decision 23): the card builder and its data.
@@ -496,7 +524,8 @@ Phase 0 (TESTS.md) ─┬─► Phase 1 (messages) ─────────�
   order of `page.py` after the line of phase 4.
 - Phase 2b after phase 2, at the same time as phases 5a, 3 and 5b: it adds
   only its own files.
-- Phase 5b after phases 1, 3, 4 and 5a. Phase 6 last.
+- Phase 5b-prep after phases 1, 3 and 4 (decision 25). Phase 5b after phases
+  1, 3, 4, 5a and 5b-prep. Phase 6 last.
 
 ### 3.4 File ownership
 
@@ -511,6 +540,7 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 | 3 | `assets/rf_profiles.js` (new), `page.py` (only the script order), `tests/js/test_rf_profiles.js` (new), `tests/test_rf_profiles_golden.py` (new), `tests/js/golden_rf_profiles.js` (new), `tests/test_page.py` (only `test_script_order`), `TESTS.md` sections 2.3 (that entry only), 2.32 and 2.33 |
 | 4 | `assets/map_chart.js` (new), `assets/chart_math.js` (new pure functions only), `assets/report.css` (new map chart rules only), `page.py` (only the script order), `tests/js/test_chart_math.js` (new tests only), `tests/test_page.py` (only `test_script_order`), `docs/usage.md` (a new subsection of section 4 only), `TESTS.md` sections 2.3 (that entry only) and 2.4 (new entries only) |
 | 5a | `cards/rf_profile.py` (new), `tests/test_rf_profile_card.py` (new), `TESTS.md` section 2.34, this plan file (decision 23, the order of the phases, and the notes on the RF table in section 4.5, item 2, and task 3.4 only) |
+| 5b-prep | `assets/map_chart.js` (`destroy()` only), `assets/cards/diagram.js` (`goto` by `name` only), `rf_profiles.py` (`line_pulses` only), `assets/rf_profiles.js` (`linePulses` and the line cache only), `tests/test_rf_profiles.py`, `tests/js/test_rf_profiles.js`, `tests/test_rf_profiles_golden.py`, `tests/js/golden_rf_profiles.js`, `docs/usage.md` (the `mapChart` and `goto` text only), `TESTS.md` sections 2.31, 2.32 and 2.33, this plan file (decision 25 and the design text of its changes) |
 | 5b | `cards/rf_profile.py`, `assets/cards/rf-profile.js` (new), `tests/test_rf_profile_card.py`, `examples/gre_report.py`, `docs/examples/gre.html` (rebuilt), `docs/usage.md` (sections 2 and 5, and a new subsection), `README.md` (the card table of "The cards" only), `TESTS.md` section 2.34 |
 | 6 | `scripts/cards_scale.py` (only a new card name), `TODO.md`, `docs/usage.md` (the scale table, and the references paragraph of the card's subsection), `docs/plans/pulseq-reports.md` (one note on decision 7 of section 2.2 and one on item 2 of section 2.3 only), this plan file (status and results only) |
 
@@ -584,7 +614,7 @@ of the file in the card's list.
 
 | Topic | Message | What the diagram does |
 |---|---|---|
-| `goto` | `{target: D, file, block}` | It shows the first window of that file (if the file is not shown), sets the view to the block with half its duration on each side (at least 1 ms in all), and sets the anchor at the middle of the block. Then it publishes `view` and `anchor`. A file with no window: it writes a warning to the console and does nothing. |
+| `goto` | `{target: D, file, block}`, or `{target: D, name, block}` | It shows the first window of that file (if the file is not shown), sets the view to the block with half its duration on each side (at least 1 ms in all), and sets the anchor at the middle of the block. Then it publishes `view` and `anchor`. `name` (decision 25) names the first file of the diagram with that name, for a card that has no `sequence` message of the file yet. A file with no window, or a name that no file has: it writes a warning to the console and does nothing. |
 
 **The sequence view** (`SeqLanes.sequenceView(model)`, pure, Node tests). A
 read-only object over the decoded tables of one file. A subscriber uses it,
@@ -759,7 +789,9 @@ def pulse_list(seq: pp.Sequence) -> list[PulseSummary]
 `Profile` holds the spec, the grid values of each axis, and `a` and `b`.
 `CombinedProfile` holds the pulses that take part, the directions, the grids,
 the combined values (1D for each direction, and the maps for `view="2d"`),
-the numbers of section 4.3, item 7, or the reason when there is none. The
+the numbers of section 4.3, item 7, or the reason when there is none. For one
+direction it also holds `line_pulses` (decision 25): the block and the values
+of each pulse on the line, in play order. The
 signatures are proposals. Task 2.1 (tier O) fixes them before a worker
 starts.
 
@@ -895,8 +927,10 @@ to the pulse (the card then shows the reason).
    drawn dashed). It draws the raster on the canvas, the axes with
    `niceTicks`, a color legend, a crosshair with a tooltip, arrow keys that
    move the cursor by one grid step, and the colors of the current theme
-   (again after a theme change, as vb-pulseq does). It returns `{setData}`,
-   which replaces the axes and values without a new chart. No zoom.
+   (again after a theme change, as vb-pulseq does). It returns `{setData,
+   destroy}`: `setData` replaces the axes and values without a new chart, and
+   `destroy` removes the theme listeners of a chart that the caller removes
+   (decision 25). No zoom.
 3. **CSS** in `report.css`: class selectors only (`.map-chart` and its
    children). No id selectors.
 4. **`page.py`**: `map_chart.js` after `lane_chart.js`.
@@ -1005,6 +1039,17 @@ Node), pure functions only:
    points until the budget ends; it returns the fraction done) and `result()`.
    The card calls `step` in its slices. A z × Δf spec with a constant
    gradient is one 1D simulation.
+5. **The line cache** (decision 25). `simulation`, `simulate` and
+   `combinedProfile` take an optional `cache`, a `Map` of the caller (one for
+   each file), of the `a` and `b` of a pulse along a 1D line of spatial
+   points, keyed by the pulse key and the points. `combinedProfile` then
+   reuses the "profile" view of each pulse whose line is the combined line,
+   and simulates a pulse that takes part two times one time. With the
+   `SliceThickness` definition, each line of a combined profile is the grid of
+   a pulse's own view (c ± 2W): the combined profile needs no simulation after
+   the profiles of its pulses. An entry can come from another block with the
+   same key: its `b` can differ by the constant phase that the key leaves out,
+   and nothing that the card shows changes.
 
 ### 4.7 What vb-pulseq can do after this plan (not in this plan)
 
@@ -1346,8 +1391,11 @@ Acceptance: `scripts/check` passes. The browser check passes.
 ### Phase 5: the RF profile card
 
 Two parts (decision 23). **Phase 5a** (branch `feature/rf-profile-card-data`,
-after phase 2): tasks 5.1 and 5.3, without the card script. **Phase 5b**
-(branch `feature/rf-profile-card`, after phases 1, 3, 4 and 5a): tasks 5.2,
+after phase 2): tasks 5.1 and 5.3, without the card script. **Phase 5b-prep**
+(branch `feature/rf-profile-card-prep`, after phases 1, 3 and 4): the four
+changes of decision 25, with their tests and documents, and a browser check of
+`destroy()` and `goto` by `name`. **Phase 5b** (branch
+`feature/rf-profile-card`, after phases 1, 3, 4, 5a and 5b-prep): tasks 5.2,
 5.4, 5.5 and 5.6, and the tests of task 5.3 that the card script needs.
 Tier: S. Review and browser check: O.
 
@@ -1459,7 +1507,7 @@ make a tag without the user's approval.
 | 2 | 1, 2, 4 | Phase 0 merged. |
 | 3 | 5a, 2b | Phase 2 merged (decision 23 moved phase 3 after phase 5a). |
 | 4 | 3 | Phases 2, 4 and 5a merged. |
-| 5 | 5b | Phases 1, 3, 4 and 5a merged. |
+| 5 | 5b-prep, then 5b | Phases 1, 3, 4 and 5a merged; 5b after 5b-prep (decision 25). |
 | 6 | 6 | Phases 5b and 2b merged. |
 
 Workers inside a phase:

@@ -709,9 +709,9 @@ def test_rf_uses_labeled_and_unlabeled_sequences():
 def test_combined_profile_one_direction():
     """A spin echo with the refocusing pulse on z, 1.5 times as wide as the excitation:
     one direction, and the combined line equals the product of the two "profile" views
-    at the same points (exact: the same points and the same simulation). The signal kept
-    is below 1, and the numbers follow their definitions (exact or 1e-15: the same
-    formulas)."""
+    at the same points (exact: the same points and the same simulation). `line_pulses`
+    holds each pulse's block and those same values (exact). The signal kept is below 1,
+    and the numbers follow their definitions (exact or 1e-15: the same formulas)."""
     seq = _spin_echo("z", 1.5 * W)
     combined = rp.combined_profile(seq, rp.period(seq, 0))
     assert combined.reason is None
@@ -725,6 +725,9 @@ def test_combined_profile_one_direction():
     u, values = combined.line
     np.testing.assert_array_equal(u, exc_profile.grid[0])
     np.testing.assert_array_equal(values, product)
+    assert [block for block, _ in combined.line_pulses] == [0, 3]
+    np.testing.assert_array_equal(combined.line_pulses[0][1], mxy)
+    np.testing.assert_array_equal(combined.line_pulses[1][1], rp.quantity(ref_profile, "beta_sq"))
     numbers = combined.numbers
     kept = np.trapezoid(product, u) / np.trapezoid(mxy, u)
     assert numbers["signal_kept"] == pytest.approx(kept, rel=1e-15)
@@ -750,6 +753,7 @@ def test_combined_profile_two_logical_directions():
     per = rp.period(seq, 0)
     combined = rp.combined_profile(seq, per, view="2d")
     assert combined.reason is None and combined.line is None
+    assert combined.line_pulses == ()
     assert combined.directions == ("z", "y")
     exc, ref = rp.block_pulse(seq, 0), rp.block_pulse(seq, 3)
     z_profile, y_profile = _profile(exc), _profile(ref)
@@ -863,7 +867,8 @@ def test_combined_profile_oblique_direction():
 
 def test_combined_profile_non_selective_refocusing_is_a_factor():
     """A hard refocusing pulse (kind "none") is a factor: its |beta|^2 at r = 0, df = 0.
-    The line is the excitation |Mxy| times that factor (exact: the same product)."""
+    The line is the excitation |Mxy| times that factor (exact: the same product), and
+    `line_pulses` has the excitation only: the factor is not on the line."""
     seq = _spin_echo("y", hard_ref=True)
     combined = rp.combined_profile(seq, rp.period(seq, 0))
     assert combined.reason is None and combined.directions == ("z",)
@@ -875,6 +880,9 @@ def test_combined_profile_non_selective_refocusing_is_a_factor():
     exc_profile = _profile(rp.block_pulse(seq, 0))
     _, values = combined.line
     np.testing.assert_array_equal(values, rp.quantity(exc_profile, "mxy_abs") * factor)
+    ((block, exc_values),) = combined.line_pulses
+    assert block == 0
+    np.testing.assert_array_equal(exc_values, rp.quantity(exc_profile, "mxy_abs"))
 
 
 def _gre_one_tr():
@@ -944,6 +952,7 @@ def test_no_combined_profile_reasons(build, reason):
     assert combined.reason == reason
     assert combined.excitation_block is None and combined.refocusing_blocks == ()
     assert combined.line is None and combined.maps == () and combined.numbers == {}
+    assert combined.line_pulses == ()
     assert math.isnan(combined.factor)
 
 

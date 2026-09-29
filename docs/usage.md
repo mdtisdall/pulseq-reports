@@ -416,6 +416,13 @@ crosshair are hidden after a `setData` call. `scale`, `valueLabel`,
 `cursorText` and `outlines` are not replaced; they stay as given to
 `mapChart`.
 
+The returned `destroy()` removes the two listeners that the chart adds
+outside its own elements: one for a change of the system's color scheme,
+and one for a change of the page's `data-theme`. A card that removes a map
+chart from the page, for example to draw another one, calls `destroy()`
+first; otherwise the listeners keep the removed chart in memory for the
+life of the page. Do not use a chart after `destroy()`.
+
 The hover cursor and the arrow keys (when the `svg` has focus) both snap to
 the nearest grid point; Escape hides the cursor. The chart redraws its
 raster with the new theme's colors after a change to
@@ -493,7 +500,7 @@ The diagram card also subscribes to one topic:
 
 | Topic | Message | What the diagram does |
 |---|---|---|
-| `goto` | `{source, target, file, block}` | When `target` is that diagram card's id: shows the first window of `file` (switching files first, if it is showing another file), then sets the view to that block, with half the block's own duration as padding on each side, widened to at least 1 ms and moved inside the file if the padding would reach past an end, then sets the anchor to the middle of the block. A file with no window, or a block that the file does not have: a console warning, and no change. A message for another `target` is ignored. |
+| `goto` | `{source, target, file, block}`, or `{source, target, name, block}` | When `target` is that diagram card's id: shows the first window of the file (switching files first, if it is showing another file), then sets the view to that block, with half the block's own duration as padding on each side, widened to at least 1 ms and moved inside the file if the padding would reach past an end, then sets the anchor to the middle of the block. `file` is the diagram's own file index (as in its messages); `name` is a file name, for the first file of the diagram with that name, and is used when the message has it. A card that has not had the `sequence` message of a file yet (the diagram decodes a file the first time it shows it) can name it by `name`. A file with no window, a name that no file has, or a block that the file does not have: a console warning, and no change. A message for another `target` is ignored. |
 
 **The sequence view.** `SeqLanes.sequenceView(model)` returns a frozen,
 read-only view of one decoded file, for the `view` field of a `sequence`

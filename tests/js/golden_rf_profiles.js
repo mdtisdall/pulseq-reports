@@ -156,6 +156,7 @@ function combinedJson(r) {
     factor: r.factor,
     directions: Array.from(r.directions),
     line: r.line === null ? null : {u: Array.from(r.line.u), values: Array.from(r.line.values)},
+    linePulses: r.linePulses.map(p => ({block: p.block, values: Array.from(p.values)})),
     maps: r.maps.map(mapJson),
     numbers: r.numbers,
   };
