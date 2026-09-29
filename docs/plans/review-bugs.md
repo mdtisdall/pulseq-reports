@@ -3,10 +3,11 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: ready. The plan was written on 2026-09-29. The user answered the
-questions of section 7 on the same day (decisions 9 to 14 of section 2.2).
-The same day, the user revised decision 9: a new pypulseq pin fixes B4, and
-phase 4 adds its regression tests.
+Status: complete (2026-09-29). The results are in section 8. The plan was
+written on 2026-09-29. The user answered the questions of section 7 on the
+same day (decisions 9 to 14 of section 2.2). The same day, the user revised
+decision 9: a new pypulseq pin fixes B4, and phase 4 adds its regression
+tests.
 
 ## 1. Goal
 
@@ -960,7 +961,88 @@ None. The user answered all six questions on 2026-09-29:
 
 ## 8. Results
 
-This section is empty until phase 7.
+All phases were done on 2026-09-29.
+
+### 8.1 Pull requests
+
+| Phase | Bug | PR | Merge commit |
+|---|---|---|---|
+| Plan | | #66, revised by #68 | `e8358a6`, `c025570` |
+| Pin (decision 9) | B4 | #67 | `bcf1f23` |
+| 1 | B1 | #69 | `b318bcb` |
+| 2 | B2 | #70 | `6e57c58` |
+| 3 | B3 | #71 | `d05a708` |
+| 4 | B4 (tests) | #72 | `0f6d214` |
+| 5 | B5 | #73 | `2b369ec` |
+| 6 | B6 | #74 | `b985209` |
+| 7 | results | this PR | |
+
+Before the plan: #64 committed the review, and #65 (step 1 of the review's
+order) made the card helpers public and fixed D1, D2, A9, A10, C1 and C2.
+
+### 8.2 Decisions made during the work
+
+1. **B4: the pin, not a change in this library** (decision 9, revised). The
+   fork's tag `pulseq-reports-pin-1` (`a74ab06`, #67) is the release
+   1.5.0.post1 with four cherry-picks: the two PNS commits, the fix of
+   pypulseq PR #424 and upstream #359. The pin is on the release, so a
+   project that uses uv also builds its sequences with the release. The user
+   left out upstream #386 (hexadecimal values in `readasc`): on the release, a
+   hexadecimal line of an `.asc` file is skipped, and the SAFE fields are
+   decimal, so the PNS values do not change. #67 also corrected review
+   finding C9 in `docs/usage.md`: uv applies the `[tool.uv.sources]` of a git
+   dependency (checked with uv 0.12.11).
+2. **B6: no test** (the user). A test that only checks that a fixed sentence
+   is in the note tests no computation, and it fails on any rewording. The
+   second commit of #74 removed it. Decision 1 ("one regression test for each
+   bug") does not apply to a text bug.
+3. **Phases 4 and 5 ran at the same time as phases 1 to 3** (the user). Five
+   PRs were open at one time, more than the three of decision 3.
+4. **B3:** the status sentence uses `gError.message || String(gError)`, so a
+   thrown value that is not an `Error` also gives a message.
+5. **Merges:** the PRs of a wave all edit `TESTS.md`, in different sections.
+   GitHub merged them in order with no conflict. After each later merge,
+   `cleanup-merged.sh` reports that `TESTS.md` differs from the PR head; each
+   PR's added lines were checked on `main`.
+
+### 8.3 Measurements
+
+- **B3, time** (task 3.4): `GLanes.decode` for 10^7 repeating blocks, in
+  Node, three runs each: 222, 168 and 168 ms on `main`; 224, 227 and 230 ms
+  with the fix. The peak is the same (26.627). The PNS and |G| lanes then add
+  about 1.5 s before the first chart, inside the 3 s budget of section 2.4.
+- **B3, browser** (task 3.5): pages with the diagram and the RF profile cards
+  for the example GRE and a synthetic spin echo.
+  - With no stub, both files draw the |G| lane.
+  - With `GLanes.decode` forced to fail from its second call, the second file
+    has no |G| lane and the status sentence, through a window button and
+    through "Show" (`goto`). No button stays disabled, and the first file
+    keeps its |G| lane.
+  - With every call failing, the card draws the first file without |G|. The
+    same page from `main` shows "This card could not be drawn".
+  - The dark theme renders. The only console errors are the logged failures.
+- **B4 on the old pin** (`20b9e5e`): the sampler test has 1012 of 3999
+  samples outside the tolerance (about 40 % of the peak), and the
+  `rf_profiles` test gets the gradient kind "one". On the new pin, sections
+  9.4 and 9.6 print the correct values of section 2.3.
+- **The pin** (#67): the fork's suite gives 1477 passed and 24 skipped (1375
+  and 21 on plain `v1.5.0.post1`). This project's 917 tests pass, the example
+  report is byte-identical, and the PNS card of the 370 s ex-vivo file gives
+  the same output in 2.9 s and 0.15 GB on both pins.
+- **`main` after phase 6:** `scripts/check` passes with 921 pytest tests,
+  166 node tests and 503 `TESTS.md` entries.
+- **The example report** (task 7.1): the rebuild changes only the scripts of
+  B2 and B3 and the slew note of B6; no card data changes. In the browser,
+  the nine cards draw, the diagram has the |G| and PNS lanes, and the console
+  has no error.
+
+### 8.4 Not in this plan
+
+- The default `Sequence.write` and `Sequence.read` still raise `KeyError` for
+  an oversampled arbitrary gradient (draft 04 of
+  `github.com/mdtisdall/pypulseq-issues`; not in the pin).
+- The other findings of the review (A, F, D, S, P, C and L), except those
+  that #65 fixed.
 
 ## 9. Repro scripts
 
