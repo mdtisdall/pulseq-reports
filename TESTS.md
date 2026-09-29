@@ -7263,4 +7263,156 @@ Phase 3 of `docs/plans/rf-profiles.md` adds the entries.
 
 ### 2.34 RF profile card (`test_rf_profile_card.py`)
 
-Phase 5 of `docs/plans/rf-profiles.md` adds the entries.
+`test_rf_profile_card.py` tests `cards/rf_profile.py` (`docs/plans/rf-profiles.md`,
+section 4.5, items 1 and 2; task 5.3, items 1 to 7): `rf_table` (the RF table of a file,
+its pools and its label check), `rf_profile_data` (one file entry, labeled or not) and
+`rf_profile_card` (the options, the checks and the body). Each test builds its own
+sequences with pypulseq, with the same helpers as `test_rf_profiles.py` (copied, not
+imported). This card copies values from `rf_profiles` and `diagram_data`, so most checks
+compare with `==` or `np.array_equal` (exact); a comparison that is not exact says why.
+
+#### `test_rf_table_matches_hold_samples_and_definitions`
+
+**Checks:** `rf_table`'s dtypes are those of its column table; after encoding and
+decoding (`diagram_data.encode_tables`/`decode_tables`), each dense RF index's pool
+slice equals `hold_samples` of the RF event as pypulseq rebuilds it, and `dt`, `delay`,
+`shape_dur`, `center`, `use`, `freq_hz` and `phase_rad` equal their definitions;
+`freq_hz` also equals `rf_profiles.block_pulse(seq, block).freq_offset_hz` at the first
+block of the event.
+
+**How:** A sinc excitation with a slice-select gradient and all four RF offsets
+(`freq_offset`, `phase_offset`, `freq_ppm`, `phase_ppm`, on a system with `B0` set), a
+sinc refocusing pulse, and a block pulse (`hold_samples` interpolates its shape). The
+expected values are computed from `seq.get_block(...).rf`, the RF event as pypulseq
+stores and rebuilds it, not the object given to `add_block`: the rebuilt samples can
+differ from the given ones by float rounding. The rebuilt event is the same "rf" that
+`rf_table` itself reads, so the comparison is exact.
+
+**Assumptions:**
+
+- `hold_samples` and `pp.calc_rf_center` are correct: `test_seq_utils.py` and pypulseq
+  itself test them. This test checks how `rf_table` reads and encodes their results.
+
+#### `test_rf_table_shares_one_shape_for_an_rf_spoiled_gre`
+
+**Checks:** An RF-spoiled GRE gives more than one dense RF index, one shape in the pools
+(every `shape_at` is 0, and `shape_re`/`shape_im` hold exactly one shape's samples), and
+one `key` value, because the pulse key excludes the phase offset. The same GRE with two
+slices (two frequency offsets) gives two `key` values and still one shape.
+
+**How:** `_gre(24, rf_spoiling=True)` (a new phase offset each TR) and
+`_gre(1, slices=(-5e-3, 5e-3))` (two frequency offsets, no spoiling).
+
+**Assumptions:** None.
+
+#### `test_rf_table_of_a_sequence_without_rf_is_empty`
+
+**Checks:** A sequence without RF gives every `rf_table` column length 0.
+
+**How:** A sequence with one trapezoid and one delay block, no RF.
+
+**Assumptions:** None.
+
+#### `test_rf_table_raises_without_labels`
+
+**Checks:** `rf_table` raises `ValueError` (matching "rf_uses_labeled") when an RF event
+has no use label, because `use` has no index for "undefined".
+
+**How:** A block pulse added without a `use` argument (the pypulseq default,
+"undefined").
+
+**Assumptions:** None.
+
+#### `test_pulse_list_and_file_entry_keys`
+
+**Checks:** `rf_profile_data`'s `pulses` equals `dataclasses.asdict` of
+`rf_profiles.pulse_list(seq)`, and its other keys (`slice_thickness_m`, `fov_m`, `b0_t`,
+`gamma_hz_per_t`, `first_rf_block`) match their definitions, with and without an `FOV`
+definition. The card body has one "Show" button for each pulse, with its `data-block`.
+
+**How:** A sequence with an excitation and a refocusing pulse (sincs with gradients), a
+block pulse, and a pulse with a turning gradient (`_turning_gradients`), and an `FOV`
+definition; a second sequence without one.
+
+**Assumptions:** None.
+
+#### `test_options_appear_in_the_data_as_given_and_the_defaults`
+
+**Checks:** `views`, `plane` and `extent_m` appear in the card data exactly as given;
+without them, the data has `["profile"]`, `None` and `None`.
+
+**How:** One card built with `views=("profile", "z_df", "2d")`, `plane=("x", "y")`,
+`extent_m=0.2`, and one built with the defaults.
+
+**Assumptions:** None.
+
+#### `test_value_error_cases`
+
+**Checks:** `rf_profile_card` raises `ValueError` for: empty `seqs`; two files with the
+same name; `views` without `"profile"`; an unknown view; a view given twice; `plane`
+with one name, with the same name twice, or with an axis that is not `x`, `y` or `z`;
+`extent_m` of 0, −1, NaN or infinity; and a `diagram_card_id` that does not match
+`[a-z][a-z0-9-]*` ("Diagram").
+
+**How:** A parametrized test over the 13 cases, each with one sequence (or none, for the
+empty case) and the one bad keyword argument.
+
+**Assumptions:** None.
+
+#### `test_rf_profile_card_refuses_rotations`
+
+**Checks:** A sequence with the Pulseq rotation extension makes `rf_profile_card` raise
+`NotImplementedError`, as the other gradient cards do.
+
+**How:** A GRE sequence with a `rotation_library` attached by hand, the way pypulseq
+draft PR #372 stores a rotation in memory (as `test_extensions.py` does).
+
+**Assumptions:** None.
+
+#### `test_two_cards_on_one_page_have_unique_ids`
+
+**Checks:** Two RF profile cards on one page, with different `card_id`s and
+`diagram_card_id`s but the same two files, give a page with no `id="..."` value used
+twice.
+
+**How:** `page.render_page` with two cards (`card_id` "rf-a"/"rf-b",
+`diagram_card_id` "diag-a"/"diag-b"); every `id="..."` value in the result is found with
+a regular expression and checked for duplicates.
+
+**Assumptions:** None.
+
+#### `test_unlabeled_file_gets_a_note_and_the_labeled_file_still_works`
+
+**Checks:** A report with a labeled file and a file with one unlabeled RF event (and one
+labeled event, so the counts are "1 of 2") raises nothing: the labeled file's data is its
+full entry, and the other file's data is only its name and the counts. The body has the
+note with the counts and the escaped file name; the raw (unescaped) name is not in the
+body.
+
+**How:** A file name with a character that `html.escape` changes (`"a<b"`).
+
+**Assumptions:** None.
+
+#### `test_primary_echo_note_matches_the_plan_text`
+
+**Checks:** `PRIMARY_ECHO_NOTE` equals the text of section 4.3, item 7, of the plan
+(without its title), written in the test as a literal so that a change of the constant
+fails the test; and the card body's combined-profile element holds the title and the
+note word for word.
+
+**How:** The literal expected text is compared with the constant. In a one-file card's
+body, the part from the start of the element `{card_id}-combined` to the element
+`{card_id}-combined-body` (which the card script fills) must hold the `<strong>` title
+and the escaped note.
+
+**Assumptions:** None.
+
+#### `test_sequence_without_rf_has_an_empty_entry_and_no_pulses_note`
+
+**Checks:** A sequence without RF gives a file entry with `first_rf_block` None, an RF
+table with length 0 in every column (after decoding), and an empty `pulses` list; the
+card body says "No RF pulses." for that file.
+
+**How:** A sequence with one trapezoid and one delay block, no RF.
+
+**Assumptions:** None.

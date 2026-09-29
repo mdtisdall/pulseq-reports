@@ -6,7 +6,8 @@ direction of travel, not a verified dictionary match.
 Status: in progress. The plan was written on 2026-09-28 (PR #51) and revised on
 the same day with the user's answers (decisions 8 to 22 of section 2.2). On the
 same day the user replaced parity with vb-pulseq by external references
-(decision 5, phase 2b). No question is open (section 7).
+(decision 5, phase 2b), and split phase 5 into 5a and 5b around phase 3
+(decision 23). No question is open (section 7).
 
 ## 1. Goal
 
@@ -222,6 +223,16 @@ Do not open these decisions again. The user made them or approved them.
     file, so that a caller (or a command line) can leave the card out. The
     card does not raise an error: the other files of the report still get
     their cards.
+23. **Phase 5 in two parts** (the user, 2026-09-28, at the start of phase 3).
+    The JavaScript of phase 3 reads the RF table of the card (section 4.5,
+    item 2), so the Python half of phase 5 comes first: phase 5a (the card
+    builder, its data and its tests), then phase 3 (its golden test reads the
+    data of `cards.rf_profile.rf_profile_data`), then phase 5b (the card
+    script, the documents, the example and the browser check). Phase 5a fixes
+    the RF table (section 4.5, item 2) and adds one rule: the file names of
+    the card must be unique, because the card script matches the files of the
+    diagram's `sequence` messages by name (the diagram's own file index can
+    be in another order).
 
 ### 2.3 Facts (2026-09-28)
 
@@ -452,20 +463,21 @@ O (the executing agent). Give each worker the exactness and reference rule
 ### 3.3 Order and parallel work
 
 ```
-Phase 0 (TESTS.md) ─┬─► Phase 1 (messages) ──────────────────────────────────┐
-                    ├─► Phase 2 (Python reference) ─┬► Phase 3 (JavaScript) ──┼─► Phase 5 (card) ─► Phase 6
+Phase 0 (TESTS.md) ─┬─► Phase 1 (messages) ─────────────────────────────────────────────────┐
+                    ├─► Phase 2 (Python reference) ─┬► Phase 5a (card data) ─► Phase 3 (JS) ─┼─► Phase 5b (card script) ─► Phase 6
                     │                               └► Phase 2b (external references) ─► Phase 6
-                    └─► Phase 4 (map chart) ─────────────────────────────────┘
+                    └─► Phase 4 (map chart) ────────────────────────────────────────────────┘
 ```
 
 - Phase 0 first. Then phases 1, 2 and 4 at the same time: they edit
   different files (section 3.4).
-- Phase 3 after phases 2 and 4: its golden test needs the reference of phase
-  2, and it adds a line to the script order of `page.py` after the line of
-  phase 4.
-- Phase 2b after phase 2, at the same time as phases 3 and 5: it adds only
-  its own files.
-- Phase 5 after phases 1, 3 and 4. Phase 6 last.
+- Phase 5a after phase 2 (decision 23): the card builder and its data.
+- Phase 3 after phases 2, 4 and 5a: its golden test needs the reference of
+  phase 2 and the card data of phase 5a, and it adds a line to the script
+  order of `page.py` after the line of phase 4.
+- Phase 2b after phase 2, at the same time as phases 5a, 3 and 5b: it adds
+  only its own files.
+- Phase 5b after phases 1, 3, 4 and 5a. Phase 6 last.
 
 ### 3.4 File ownership
 
@@ -479,7 +491,8 @@ Package root: `src/pulseq_reports/`. Tests: `tests/`.
 | 2b | `scripts/rf_references.py` (new), `tests/fixtures/rf_references/` (new), `tests/test_rf_references.py` (new), `TESTS.md` (a new section 2.35 at the end) |
 | 3 | `assets/rf_profiles.js` (new), `page.py` (only the script order), `tests/js/test_rf_profiles.js` (new), `tests/test_rf_profiles_golden.py` (new), `tests/js/golden_rf_profiles.js` (new), `tests/test_page.py` (only `test_script_order`), `TESTS.md` sections 2.3 (that entry only), 2.32 and 2.33 |
 | 4 | `assets/map_chart.js` (new), `assets/chart_math.js` (new pure functions only), `assets/report.css` (new map chart rules only), `page.py` (only the script order), `tests/js/test_chart_math.js` (new tests only), `tests/test_page.py` (only `test_script_order`), `docs/usage.md` (a new subsection of section 4 only), `TESTS.md` sections 2.3 (that entry only) and 2.4 (new entries only) |
-| 5 | `cards/rf_profile.py` (new), `assets/cards/rf-profile.js` (new), `tests/test_rf_profile_card.py` (new), `examples/gre_report.py`, `docs/examples/gre.html` (rebuilt), `docs/usage.md` (sections 2 and 5, and a new subsection), `README.md` (the card table of "The cards" only), `TESTS.md` section 2.34 |
+| 5a | `cards/rf_profile.py` (new), `tests/test_rf_profile_card.py` (new), `TESTS.md` section 2.34, this plan file (decision 23, the order of the phases, and the notes on the RF table in section 4.5, item 2, and task 3.4 only) |
+| 5b | `cards/rf_profile.py`, `assets/cards/rf-profile.js` (new), `tests/test_rf_profile_card.py`, `examples/gre_report.py`, `docs/examples/gre.html` (rebuilt), `docs/usage.md` (sections 2 and 5, and a new subsection), `README.md` (the card table of "The cards" only), `TESTS.md` section 2.34 |
 | 6 | `scripts/cards_scale.py` (only a new card name), `TODO.md`, `docs/usage.md` (the scale table, and the references paragraph of the card's subsection), `docs/plans/pulseq-reports.md` (one note on decision 7 of section 2.2 and one on item 2 of section 2.3 only), this plan file (status and results only) |
 
 Rules: as in `docs/plans/cards-at-scale.md`, section 3.3, items 1 to 3.
@@ -907,7 +920,11 @@ def rf_profile_card(
      `phase_rad` (the totals), and the pool `shape_re`, `shape_im` (the
      baseband samples of `hold_samples`, each shape stored one time). The
      GRE example has 24 RF events and one shape: about 48 KB before
-     compression.
+     compression. Phase 5a added `key` (the RF event without its phase
+     offsets, for the pulse key), `shape_dur` and `center` (the RF centre
+     of the echo walk), and the file entry key `first_rf_block`;
+     `cards.rf_profile.rf_table` and `rf_profile_data` have the exact
+     columns (decision 23).
    - The pulse list (`pulse_list`): for each distinct pulse (the RF event
      without its offsets, and the gradient events during the RF, section
      2.3, item 2): the first block, the number of blocks, the use, the
@@ -1251,7 +1268,7 @@ Octave nor sigpy.
 ### Phase 3: the reference in JavaScript
 
 Branch: `feature/rf-profiles-js`. Tier: S. Review: O (the inner loop line by
-line). After phases 2 and 4.
+line). After phases 2, 4 and 5a (decision 23).
 
 **Task 3.1: `assets/rf_profiles.js`.** Tier S. Section 4.6.
 
@@ -1270,10 +1287,11 @@ z × Δf. `TESTS.md` section 2.32.
 `tests/test_rf_profiles_golden.py` with `tests/js/golden_rf_profiles.js`, as
 the golden tests of the diagram and the PNS lane do. For each period of the
 phase 2 test sequences and the two vb-pulseq-like sequences, and each view:
-Python writes the diagram tables, the RF table and the reference values (the
-period, each pulse, each profile, the widths and the combined profile); Node
-computes the same with `RfProfiles`. Section 3.5, item 2. `TESTS.md` section
-2.33.
+Python writes the diagram tables, the card data of the file
+(`cards.rf_profile.rf_profile_data`, with the RF table) and the reference
+values (the period, each pulse, each profile, the widths and the combined
+profile); Node computes the same with `RfProfiles`. Section 3.5, item 2.
+`TESTS.md` section 2.33.
 
 **Task 3.5: Measure.** Tier S. The times of section 2.4 (browser part) in
 Node for the pulses of section 2.3.
@@ -1307,8 +1325,11 @@ Acceptance: `scripts/check` passes. The browser check passes.
 
 ### Phase 5: the RF profile card
 
-Branch: `feature/rf-profile-card`. Tier: S. Review and browser check: O.
-After phases 1, 3 and 4.
+Two parts (decision 23). **Phase 5a** (branch `feature/rf-profile-card-data`,
+after phase 2): tasks 5.1 and 5.3, without the card script. **Phase 5b**
+(branch `feature/rf-profile-card`, after phases 1, 3, 4 and 5a): tasks 5.2,
+5.4, 5.5 and 5.6, and the tests of task 5.3 that the card script needs.
+Tier: S. Review and browser check: O.
 
 **Task 5.1: `cards/rf_profile.py`.** Tier S. Section 4.5, items 1 and 2.
 
@@ -1416,9 +1437,10 @@ make a tag without the user's approval.
 |---|---|---|
 | 1 | 0 | This plan is merged. |
 | 2 | 1, 2, 4 | Phase 0 merged. |
-| 3 | 3, 2b | Phase 3: phases 2 and 4 merged. Phase 2b: phase 2 merged. |
-| 4 | 5 | Phases 1, 3 and 4 merged. |
-| 5 | 6 | Phases 5 and 2b merged. |
+| 3 | 5a, 2b | Phase 2 merged (decision 23 moved phase 3 after phase 5a). |
+| 4 | 3 | Phases 2, 4 and 5a merged. |
+| 5 | 5b | Phases 1, 3, 4 and 5a merged. |
+| 6 | 6 | Phases 5b and 2b merged. |
 
 Workers inside a phase:
 
@@ -1429,7 +1451,7 @@ Workers inside a phase:
 | 2b | The executing agent chooses the pinned MATLAB Pulseq commit and runs task 2b.1's tools. One S worker for tasks 2b.1 and 2b.2, then one S worker for task 2b.3; the executing agent sets the tolerances and does task 2b.4. |
 | 3 | One S worker for tasks 3.1 and 3.3, and one H worker for task 3.2, at the same time. The executing agent designs task 3.4 and gives the code to an S worker. |
 | 4 | One S worker for tasks 4.1 and 4.2, and one S worker for task 4.3, at the same time. |
-| 5 | One S worker for tasks 5.1 and 5.3, and one S worker for task 5.2, at the same time. Task 5.4 after both. |
+| 5 | Phase 5a: one S worker for tasks 5.1 and 5.3. Phase 5b: one S worker for task 5.2; task 5.4 after it. |
 | 6 | The executing agent. One H worker for the documents with the exact text. |
 
 ## 7. Questions still open
