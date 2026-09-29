@@ -80,9 +80,11 @@ from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.cards.rf_exposure import rf_exposure_card
+from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.cards.timing import timing_card
 from pulseq_reports.page import write_page
+from pulseq_reports.rf_profiles import rf_uses_labeled
 from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import TimeWindow, first_adc_window, full_window
 
@@ -102,6 +104,10 @@ cards = [
     timing_card(seqs),
     rf_exposure_card(seqs),
     diagram_card(seqs, windows, pns=True),
+]
+if rf_uses_labeled(seq):
+    cards.append(rf_profile_card(seqs, views=("profile", "z_df")))
+cards += [
     spectrum_card(seqs),
     pns_card(named),
     gradient_limits_card(seqs),
@@ -124,6 +130,12 @@ takes the list `seqs`.
 `pns_card` and `diagram_card`'s PNS lane (`pns=True` here) share one PNS
 computation for each sequence (`pns.pns_levels_for`), so this page runs the
 SAFE model once for `named`, not twice.
+
+`rf_profile_card` shows the RF pulses of the period at the cursor of the
+diagram card, so it goes on a page with that diagram card, and it needs a use
+label on each RF pulse: `rf_uses_labeled` checks that first. Without the
+labels, the card shows a note in place of the profiles (see "The RF profile
+card" in section 5).
 
 The card order above is a suggestion, not a requirement: `write_page` puts
 the cards on the page in the order of the `cards` list.
@@ -226,11 +238,12 @@ the next render.
 for a 370 s file, about 100 s at 10^7 blocks. The stored level added to the
 page is small after compression, even at that size.
 
-The diagram, PNS, RF exposure, gradient limits and gradient spectrum cards
-work for a file of up to 10^7 blocks. The time and the added memory of each,
-measured on 2026-09-28 (a Mac with 10 cores and 64 GB,
-`scripts/cards_scale.py`, synthetic repeating sequences; building the
-sequence of 10^7 blocks in pypulseq itself takes about 90 s and 3.8 GB):
+The diagram, PNS, RF exposure, gradient limits, gradient spectrum and RF
+profile cards work for a file of up to 10^7 blocks. The time and the added
+memory of each, measured on 2026-09-28 (the RF profile card on 2026-09-29; a
+Mac with 10 cores and 64 GB, `scripts/cards_scale.py`, synthetic repeating
+sequences; building the sequence of 10^7 blocks in pypulseq itself takes about
+90 s and 3.8 GB):
 
 | Card | 370 s file (4 × 10^4 blocks) | 10^7 blocks (3.3 h) |
 |---|---|---|
@@ -239,6 +252,7 @@ sequence of 10^7 blocks in pypulseq itself takes about 90 s and 3.8 GB):
 | RF exposure | 0.03 s, 2 MB | 6.7 s, 0.85 GB |
 | Gradient limits | 0.04 s, 5 MB | 7.6 s, 1.34 GB |
 | Gradient spectrum | 3.9 s, 0.16 GB | 131 s, 0.31 GB |
+| RF pulse profiles | 0.03 s, 1 MB | 6.5 s, 0.54 GB |
 
 The PNS computation is shared: the PNS card and the PNS lane of one sequence
 run it one time. The blocks card reads only the rows that it shows, and the
@@ -373,8 +387,9 @@ an id that starts with `section.id`, and scope any `querySelectorAll` for
 buttons or other controls to `section`, not to the whole document, so a
 second copy of the same card does not answer to the first one's controls.
 
-Script order on the page: `chart_math.js`, `lane_chart.js`, `seq_lanes.js`,
-`pns_lanes.js`, `g_lanes.js`, the library's own card scripts (each included once, by
+Script order on the page: `chart_math.js`, `lane_chart.js`, `map_chart.js`,
+`rf_profiles.js`, `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, the library's own card
+scripts (each included once, by
 name, from `assets/cards/`), then `extra_scripts` in the order given, then `page.js`.
 `page.js` runs last and
 calls each card's registered `init` function. `PulseqReport` (from
@@ -414,6 +429,73 @@ switch to another file's model. `PulseqReport.el` and `PulseqReport.text`
 are small helpers for building SVG elements directly, for a card that does
 not use `laneChart`.
 
+### `PulseqReport.mapChart` options
+
+`mapChart(options)` draws a 2D heat map: a canvas raster (one canvas pixel
+per grid point) with an SVG overlay for the axes, a color legend, a
+crosshair and a hover tooltip. It generalizes vb-pulseq's column
+cross-section chart to any grid and any values. There is no zoom.
+
+```html
+<div class="chart map-chart" id="{card_id}-map">
+  <canvas id="{card_id}-map-canvas"></canvas>
+  <svg id="{card_id}-map-axes" tabindex="0" role="img"
+    aria-label="Excitation |Mxy| map"></svg>
+  <div class="tip" id="{card_id}-map-tip" hidden></div>
+</div>
+```
+
+```javascript
+PulseqReport.mapChart({
+  canvas: document.getElementById(`${section.id}-map-canvas`),
+  svg: document.getElementById(`${section.id}-map-axes`),
+  chart: document.getElementById(`${section.id}-map`),
+  tip: document.getElementById(`${section.id}-map-tip`),
+  x: {lo: -0.02, hi: 0.02, n: 128, label: "x (m)"},
+  y: {lo: -0.02, hi: 0.02, n: 128, label: "y (m)"},
+  values: data.mxy, // a Float32Array of length 128 * 128, row-major over (y, x)
+  domain: [0, 1],
+  scale: "sequential",
+  valueLabel: "|Mxy|",
+});
+```
+
+| Option | Meaning |
+|---|---|
+| `canvas`, `svg`, `chart`, `tip` | Existing DOM elements: the chart's `<canvas>`, its `<svg>` overlay (needs `tabindex="0"`, `role="img"` and an `aria-label`, as above), its wrapping element, and the tooltip element. `mapChart` makes no ids of its own for the caller's elements, so several maps can be on one page. |
+| `x`, `y` | The two axes, `{lo, hi, n, label}`: the axis value at each end of the grid, the number of grid points, and the axis label. |
+| `values` | A `Float32Array` or `Float64Array` of length `x.n * y.n`, row-major over `(y.n, x.n)`: `values[iy * x.n + ix]` is the value at grid point `(x` index `ix`, `y` index `iy)`. |
+| `domain` | `[lo, hi]` for the color scale. A value outside it is clamped to the nearer end; `NaN` is drawn transparent. |
+| `scale` | `"sequential"` or `"diverging"` (default `"sequential"`); which of `report.css`'s color ramps (`--map-seq-*`, a single-hue ramp, or `--map-div-*`, a ramp with a neutral middle for a value that can be negative or positive) the raster and the legend are drawn with. |
+| `valueLabel` | The legend's label, for example `"\|Mxy\|"`. |
+| `cursorText(x, y, v)` | Formats the tooltip text at the grid point nearest the pointer. Default: the two axis labels and `valueLabel`, each with its value formatted by `ChartMath.fmt`. |
+| `outlines` | A list of `[x0, x1, y0, y1]` rectangles, in axis units, drawn dashed over the raster, for example a `W × W` slice-thickness box. |
+
+The returned `setData({x, y, values, domain})` replaces the axes, the
+values and the color domain, and redraws, without making a new chart: for
+example to show another pulse or another view. The cursor and the
+crosshair are hidden after a `setData` call. `scale`, `valueLabel`,
+`cursorText` and `outlines` are not replaced; they stay as given to
+`mapChart`.
+
+The returned `destroy()` removes the two listeners that the chart adds
+outside its own elements: one for a change of the system's color scheme,
+and one for a change of the page's `data-theme`. A card that removes a map
+chart from the page, for example to draw another one, calls `destroy()`
+first; otherwise the listeners keep the removed chart in memory for the
+life of the page. Do not use a chart after `destroy()`.
+
+The hover cursor and the arrow keys (when the `svg` has focus) both snap to
+the nearest grid point; Escape hides the cursor. The chart redraws its
+raster with the new theme's colors after a change to
+`prefers-color-scheme` or to the page root's `data-theme` attribute, as
+`laneChart`'s own charts do.
+
+The caller's container needs `class="chart map-chart"`: `.chart` gives it
+the tokens, the `position: relative` and the tooltip rules that the other
+charts also use; `.map-chart` sizes the chart and positions its canvas and
+SVG absolutely over one another.
+
 ### Lane JSON format
 
 Each entry of `lanes` (and of a `Card`'s own `data`, when it holds lanes) is
@@ -430,6 +512,81 @@ one of the two kinds below. `markup.Lane` makes a line lane, and
   `ticks`, `tick_labels`, `empty`, plus `kind: "gate"` and `windows` (a list
   of `[start, end]` ranges that are "on") in place of `segments`.
 
+### Messages between cards
+
+A card never reads the data or the DOM of another card. Cards on one page
+talk only through published messages, on a small publish/subscribe bus that
+`PulseqReport` keeps:
+
+```javascript
+PulseqReport.publish(topic, message)
+PulseqReport.subscribe(topic, handler, {replay = true} = {})
+```
+
+`message` must be a plain object with a string `source` (the id of the
+publishing card), and `topic` must be a non-empty string; otherwise `publish`
+throws `TypeError`. `publish` freezes the message (`Object.freeze`, one
+level). `subscribe` returns an unsubscribe function.
+
+The bus keeps the last message of each `(topic, source)` pair. With the
+default `replay: true`, `subscribe` calls the new handler at once with each
+kept message of that topic, in the order those pairs were first published, so
+the order in which the page starts its cards does not matter. Pass `{replay:
+false}` to skip that and see only messages published after subscribing (for
+example `goto`, below, which is a one-time action, not state to catch up on).
+
+The handlers of a topic run in the order they subscribed. A handler that
+throws does not stop the other handlers or the publisher: the error goes to
+the console, with the topic and the source. A `publish` made from inside a
+handler is queued and delivered only once the current message has finished
+reaching every handler of its topic, never nested inside that delivery.
+
+`PulseqReport.createMessageBus({onError} = {})` builds a private bus with the
+same two functions, for a card (or a test) that wants one of its own; the
+page's own `PulseqReport.publish`/`PulseqReport.subscribe` are one such bus,
+shared by every card on the page.
+
+**The sequence diagram card's messages.** The sequence diagram card
+(`cards.diagram.diagram_card`) publishes these topics. `source` is the card's
+id. Times are file times in seconds. `file` is the index of the file in the
+card's own list, the same index the card's data uses. `block` is the play
+index of a block (0 is the first block).
+
+| Topic | Message | When |
+|---|---|---|
+| `sequence` | `{source, file, name, view}` | Once for each file, right after the diagram has decoded it. `view` is the sequence view, below. |
+| `cursor` | `{source, file, tS, block, pxS}`, or `{source, file: null}` | The hover cursor moves (at most one message in each animation frame), or leaves the plot. `pxS` is the time, in seconds, of one unit of the plot's width in the current view (the plot is 812 units wide, so this is about one pixel at the chart's full width). |
+| `anchor` | `{source, file, tS, block}`, or `{source, file: null}` | A click or the arrow keys set the anchor (the zoom marker), or a reset clears it. |
+| `view` | `{source, file, t0S, t1S}` | After each zoom, pan, reset, window button, change of file and `goto`. |
+
+The diagram card also subscribes to one topic:
+
+| Topic | Message | What the diagram does |
+|---|---|---|
+| `goto` | `{source, target, file, block}`, or `{source, target, name, block}` | When `target` is that diagram card's id: shows the first window of the file (switching files first, if it is showing another file), then sets the view to that block, with half the block's own duration as padding on each side, widened to at least 1 ms and moved inside the file if the padding would reach past an end, then sets the anchor to the middle of the block. `file` is the diagram's own file index (as in its messages); `name` is a file name, for the first file of the diagram with that name, and is used when the message has it. A card that has not had the `sequence` message of a file yet (the diagram decodes a file the first time it shows it) can name it by `name`. A file with no window, a name that no file has, or a block that the file does not have: a console warning, and no change. A message for another `target` is ignored. |
+
+**The sequence view.** `SeqLanes.sequenceView(model)` returns a frozen,
+read-only view of one decoded file, for the `view` field of a `sequence`
+message. A subscriber uses only this object, never a card's own tables or
+model:
+
+```javascript
+view.numBlocks, view.durationS
+view.blockAt(tS)      // the block that holds file time tS (s)
+view.blockStart(i)    // the start time (s) of block i
+view.blockDuration(i) // the duration (s) of block i
+view.events(i)        // {rf, gx, gy, gz, adc}: dense event indexes, 0 = none
+view.gradEvent(k)     // {delayS, offsetsS, values}: typed arrays, do not change them
+view.gradHzPerValue
+view.adcEvent(k)      // {delayS, lengthS}
+view.rfDelayS(k)
+```
+
+`gradEvent(k).values` are in mT/m, the same units the diagram shows;
+`gradHzPerValue` is the factor that converts them to Hz/m. The dense event
+indexes are those of `seq_index.SequenceIndex`: a card with its own data for
+the same file can use them as keys.
+
 ## 5. Card builders
 
 | Function | Shows |
@@ -442,9 +599,142 @@ one of the two kinds below. `markup.Lane` makes a line lane, and
 | `cards.gradient_limits.gradient_limits_card(seqs, window=None, limits=None)` | Peak amplitude, peak slew rate and RMS amplitude of each logical axis and of the three-axis vector, as a percent of the hardware limits. |
 | `cards.diagram.diagram_card(seqs, windows, pns=False)` | RF magnitude and phase, the ADC gate, Gx, Gy, Gz, \|G\| and, when `pns` is not `False`, a PNS lane, against time, with one button for each window and one for each lane group. |
 | `cards.blocks.blocks_card(seqs, windows=None, max_rows=500)` | A collapsed, block-by-block table: block id, start, duration and events. |
+| `cards.rf_profile.rf_profile_card(seqs, diagram_card_id="diagram", views=("profile",), plane=None, extent_m=None)` | The RF pulses of the period at the cursor of a diagram card, simulated in the browser: each distinct pulse with its 1D profile and its widths, the combined profile of the first echo, optional maps, and the distinct pulses of each file with a button that moves the diagram to each one. Needs RF use labels. |
 
-All eight functions take `card_id` with a default, so a page can hold two
+All nine functions take `card_id` with a default, so a page can hold two
 cards built by the same function.
+
+### The RF profile card
+
+```python
+from pulseq_reports.cards.rf_profile import rf_profile_card
+from pulseq_reports.rf_profiles import rf_uses_labeled
+
+cards = [diagram_card(seqs, windows)]
+if all(rf_uses_labeled(named.seq) for named in seqs):
+    cards.append(rf_profile_card(seqs, views=("profile", "z_df")))
+```
+
+`rf_profile_card` simulates the RF pulses of a sequence in the browser, as
+they play: the RF with its frequency and phase offsets, and the gradients of
+its block, with a spin-domain (Cayley-Klein) rotation for each RF sample and
+no relaxation. It sends no profiles in the page: only the RF table of each
+file, from which the browser computes the pulses that you point at.
+
+**One diagram card.** The card follows the diagram card `diagram_card_id`
+through its messages ("Messages between cards", section 4), and never reads
+its data. Give the card the same list of files as that diagram card, with
+the same names: the card matches the diagram's files by name, so the names
+must be unique (`ValueError` otherwise). The card needs that diagram card on
+the page.
+
+**The period.** The card shows the period that holds the diagram's marker (a
+click or the arrow keys set it; Escape or Reset clears it), or the hover
+cursor when there is no marker. A block starts a period when it has an RF
+pulse that is not a refocusing pulse and the last block before it with an RF
+pulse or an ADC has an ADC; the first block with an RF pulse always starts
+one. So a period of a GRE is one TR, a period of a TSE is one echo train, and
+dummy scans without an ADC are in the period of the first ADC after them. A
+move of the cursor inside the period changes nothing, and the card keeps the
+last period when the cursor leaves the diagram.
+
+**What it shows.** A status line with the file, the blocks and the time of
+the period. For each distinct pulse of the period (its blocks with the same
+RF event, without its phase offsets, and the same gradients during the RF): a
+table row (use, count, gradient, flip angle, peak B1, energy, W, slice
+centre, FWHM, 10–90 % edge, passband ripple, stopband level, and for an
+excitation the rephasing error, the non-linear residual and the centre phase)
+and a chart of its 1D profile, with the band of W shaded:
+
+| Use | Lanes |
+|---|---|
+| excitation | \|Mxy\|, Mz, and the phase at the echo |
+| refocusing | \|β\|² |
+| inversion, saturation | Mz |
+| preparation, other | \|Mxy\|, Mz |
+
+W is the `SliceThickness` definition. A pulse with a gradient in one
+direction has its profile along that direction, in mm, over c ± 2W around
+its slice centre c (without W, over twice the width of its RF spectrum over
+the gradient); a pulse without a gradient has its profile against the
+frequency offset Δf. The phase at the echo follows the primary echo pathway
+from the end of the RF to the centre of the next ADC: the gradient moments
+of the blocks between, with a change of sign at each refocusing pulse. The
+rephasing error is the linear phase across W that the sequence leaves, and
+the non-linear residual is the phase of the pulse itself after the best
+linear rephasing. Last, the card lists the distinct pulses of each file,
+with a "Show" button that moves the diagram to the first block of each one.
+
+**The combined profile of the first echo.** For a period with an excitation
+and refocusing pulses before its first ADC, the card also shows their
+combined effect, with this note:
+
+> **Primary echo pathway only.** This is the excitation |Mxy| times |β|² of
+> each refocusing pulse before the first ADC of this period, with ideal
+> crushers. It does not include the FID or stimulated-echo pathways, the
+> later echoes of an echo train, the effect of preparation pulses, or
+> relaxation.
+
+Pulses on one direction give a chart with a lane for each pulse and one for
+the product. Pulses on two or three directions give numbers (the signal
+kept, the fraction inside W, the signal at the slice centres), and with the
+`"2d"` view a map of the two directions, or the three central sections. A
+pulse without a gradient is a factor, its value at the centre. A GRE has no
+combined profile, and the card shows nothing for it.
+
+**Options.**
+
+| Option | Effect |
+|---|---|
+| `views` | `"profile"` (the 1D profiles, always; it must be in the list), `"z_df"` (for each pulse with a gradient in one direction, a map of the select coordinate against Δf), `"2d"` (a map on two spatial axes of a pulse whose gradient direction changes during the RF, and the map of a combined profile on two or three directions). The page has no control for them: the caller chooses. |
+| `plane` | The two logical axes, for example `("x", "y")`, of the `"2d"` map of a pulse whose gradient direction changes. Default: the two axes with the largest RMS gradient during the RF. |
+| `extent_m` | The width of that map on each axis, in m. Default: the `FOV` definition. Without both, the card shows the reason in place of the map. |
+| `diagram_card_id` | The id of the diagram card to follow. Default `"diagram"`. |
+
+A map computes in slices while the page stays responsive, with a progress
+text; a move to another period stops it, and it goes on when you come back.
+The card keeps the profiles and maps of the last 64 distinct pulses.
+
+**Validation.** The simulation of the browser (`assets/rf_profiles.js`) gives
+the values of a Python reference (`rf_profiles.py`, `rf_sim.py`) within
+1e-12, and the reference is checked against external programs and theory
+(`tests/test_rf_references.py`):
+
+- MATLAB Pulseq's `mr.simRf` (GNU Octave, MATLAB Pulseq at a pinned commit)
+  on the pulse as played: the same rotation to float rounding on the RF that
+  `mr.simRf` resamples itself, and within the error of that resampling (at
+  most 2.4e-4) on the RF as the `.seq` file plays it;
+- sigpy's `abrm_nd` on slice-select gradients, gradients on their ramps, an
+  oblique gradient and a gradient that turns: `a` and `b` within 1e-12;
+- an SLR excitation designed by sigpy: the profile of the pulse as the
+  `.seq` file stores it equals sigpy's `abrm` of that design within 1e-12;
+- a hyperbolic secant inversion: Mz is at most −0.9 across the inversion band
+  of its analytic formula (Silver, Joseph and Hoult; Zhang, Garwood and Park,
+  Magn. Reson. Med. 77:1630, 2017).
+
+The fixtures are in `tests/fixtures/rf_references/`, so the tests need
+neither Octave nor sigpy; `scripts/rf_references.py` makes them again in the
+`rf-references` shell of `flake.nix`.
+
+**RF use labels.** The card must know which pulses excite and which refocus.
+`rf_profiles.rf_uses_labeled(seq)` returns `False` when an RF event of `seq`
+has the use `undefined`, which is the default of each pypulseq
+`make_*_pulse` function: set `use=` there (`"excitation"`, `"refocusing"`,
+`"inversion"`, `"saturation"`, `"preparation"`). The card does not raise for
+such a file: it shows a note for the file with the count of pulses without a
+label, and the other files of the card still work. Two cases need care:
+
+- A `.seq` file older than format 1.5 has no use labels, and
+  `Sequence.read` reads each use as `undefined`. With
+  `seq.read(path, detect_rf_use=True)`, pypulseq guesses them: a flip angle
+  below 90.01° is `excitation`, any other pulse is `refocusing`, or
+  `saturation` when it is longer than 6 ms and between −3.5 and −3.4 ppm off
+  resonance. So an inversion pulse reads as `refocusing`. The library cannot
+  tell a guessed label from one that the author set: check the guesses, or
+  set the labels yourself.
+- pypulseq (1.5.0.post1, and the fork that this library pins) stores
+  `use="other"` as `undefined`, so a file with such a pulse gets the note.
+  Use another label for it.
 
 ## Notes
 
@@ -459,16 +749,12 @@ points) are in milliseconds, even though the Python functions that build
 seconds. Frequencies (the gradient spectrum) are in hertz. Other units, for
 example µT, mT/m, T/m/s and percent, are named in each card's table.
 
-When the library gets the same single sequence as vb-pulseq, the timing,
-definitions, RF exposure, gradient spectrum and PNS cards give the same
-data as vb-pulseq's own report; `scripts/vb_parity.py` checks this.
-
 ## Rotation extension
 
 The Pulseq rotation extension rotates the gradients of a block on the
 scanner. `pulseq-reports` does not support it yet: `spectrum_card`,
-`pns_card`, `gradient_limits_card` and `diagram_card` raise
-`NotImplementedError` for a sequence that uses it
+`pns_card`, `gradient_limits_card`, `diagram_card` and `rf_profile_card`
+raise `NotImplementedError` for a sequence that uses it
 (`extensions.refuse_rotations`). The RF exposure, timing, definitions and
 block table cards do not use the gradients, so they accept a sequence with
 rotations.

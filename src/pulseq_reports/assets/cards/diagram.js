@@ -25,7 +25,19 @@
 // file of the first window at start, and for another file the first time a button
 // selects one of its windows; each decoded model is kept in `models` (by file
 // index), so a file already shown is not decoded twice. While a file decodes, the
-// status line shows "Loading..." and the window buttons are disabled.
+// status line shows "Loading..." and the window buttons are disabled. Table decoding
+// (base64 -> gzip -> typed arrays) itself is `PulseqReport.decodeTable`
+// (assets/lane_chart.js), shared with any other card that sends a table the same way.
+//
+// This card also publishes its state through the page-level message bus
+// (docs/plans/rf-profiles.md, section 4.1) so another card can follow it without
+// reading this card's own data or DOM: `sequence` once for each file, right after it
+// is first decoded; `cursor` while the pointer hovers the chart (at most one message
+// per animation frame); `anchor` when a click, the arrow keys or a `goto` message set
+// or clear the zoom marker; and `view` after every change of the chart's time window.
+// It also subscribes to `goto`, to move its own chart to a block that another card
+// names, in a file that the card names by this card's file index or by its file name.
+// `docs/usage.md`, section "Messages between cards", documents all of this.
 PulseqReport.registerCard("diagram", async (section, data) => {
   const buttons = section.querySelectorAll("[data-window]");
   const statusEl = document.getElementById(`${section.id}-mode`);
@@ -51,59 +63,39 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     statusEl.textContent = text;
   }
 
-  // The typed array for one table entry {dtype, length, data}: base64 -> gzip bytes
-  // -> DecompressionStream -> the typed array for its dtype. Throws for a dtype this
-  // script does not know, and when the decompressed length does not match `length`
-  // (a sign that the table or the decode is wrong). "float32" is the PNS stored
-  // level's dtype (plan section 4.4); the six diagram tables never use it.
-  async function decodeTable(entry) {
-    // A plain loop: the text can be tens of MB, and a callback for each character
-    // (Uint8Array.from with a map function) is much slower.
-    const text = atob(entry.data);
-    const bytes = new Uint8Array(text.length);
-    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
-    const buffer = await new Response(
-      new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))
-    ).arrayBuffer();
-    const ctor = {
-      uint8: Uint8Array,
-      uint16: Uint16Array,
-      uint32: Uint32Array,
-      float64: Float64Array,
-      float32: Float32Array,
-    }[entry.dtype];
-    if (!ctor) throw new Error(`diagram card: unknown table dtype "${entry.dtype}"`);
-    const array = new ctor(buffer);
-    if (array.length !== entry.length) {
-      throw new Error(
-        `diagram card: table length ${array.length} does not match the given length ` +
-          `${entry.length}`
-      );
-    }
-    return array;
-  }
-
   // The decoded model of file `fileIndex`, from the cache when it is already there:
-  // `{seq, pns, g}`, `seq` the SeqLanes model (as before), `pns` either null (the file
-  // has no "pns" key) or `{model, laneMeta}`, the PnsLanes model and its lane object
-  // without segments (PnsLanes.laneMeta(file.pns.summary), built once here so a render
-  // never rebuilds it), and `g` the |G| lane's own `{model, laneMeta}` pair, built
-  // lazily by `lanesFor` (below) the first time a render needs it: `g` starts null
-  // here, unlike `pns`, because GLanes.decode needs no data beyond the diagram tables
-  // already decoded below, so there is nothing to fetch in parallel with them, and
-  // building it costs a pass over the file's blocks that a render with the Gradients
-  // group hidden should not pay for. Decodes every one of the file's diagram tables,
-  // and, when the file has PNS data, its two stored-level tables, all in parallel; the
-  // diagram tables are reused for both SeqLanes.decode and PnsLanes.decode (a PNS
-  // model reads grad_*/duration_* out of the same tables, module doc of
-  // pns_lanes.js).
+  // `{seq, pns, g, view}`, `seq` the SeqLanes model (as before), `pns` either null
+  // (the file has no "pns" key) or `{model, laneMeta}`, the PnsLanes model and its
+  // lane object without segments (PnsLanes.laneMeta(file.pns.summary), built once
+  // here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta}`
+  // pair, built lazily by `lanesFor` (below) the first time a render needs it: `g`
+  // starts null here, unlike `pns`, because GLanes.decode needs no data beyond the
+  // diagram tables already decoded below, so there is nothing to fetch in parallel
+  // with them, and building it costs a pass over the file's blocks that a render
+  // with the Gradients group hidden should not pay for. Decodes every one of the
+  // file's diagram tables, and, when the file has PNS data, its two stored-level
+  // tables, all in parallel; the diagram tables are reused for both SeqLanes.decode
+  // and PnsLanes.decode (a PNS model reads grad_*/duration_* out of the same tables,
+  // module doc of pns_lanes.js).
+  //
+  // `view` is `SeqLanes.sequenceView(seqModel)` (docs/plans/rf-profiles.md, section
+  // 4.1): built once here because it is exactly the payload the `sequence` message
+  // needs, and reused later (the `goto` handler) for a block's start and duration
+  // instead of reading the model's own tables, the same rule a subscriber follows.
+  // The `sequence` message publishes only the first time a file is decoded, which
+  // this function already guarantees by returning the cached model on a later call.
   async function decodeFile(fileIndex) {
     if (models[fileIndex]) return models[fileIndex];
     const file = files[fileIndex];
     const names = Object.keys(file.tables);
-    const tablesPromise = Promise.all(names.map(name => decodeTable(file.tables[name])));
+    const tablesPromise = Promise.all(
+      names.map(name => PulseqReport.decodeTable(file.tables[name]))
+    );
     const pnsLevelsPromise = file.pns
-      ? Promise.all([decodeTable(file.pns.levels.min), decodeTable(file.pns.levels.max)])
+      ? Promise.all([
+        PulseqReport.decodeTable(file.pns.levels.min),
+        PulseqReport.decodeTable(file.pns.levels.max),
+      ])
       : null;
     const [arrays, pnsLevels] = await Promise.all([tablesPromise, pnsLevelsPromise]);
     const tables = {};
@@ -120,8 +112,12 @@ PulseqReport.registerCard("diagram", async (section, data) => {
         laneMeta: PnsLanes.laneMeta(file.pns.summary),
       };
     }
-    const model = { seq: seqModel, pns, g: null };
+    const view = SeqLanes.sequenceView(seqModel);
+    const model = { seq: seqModel, pns, g: null, view };
     models[fileIndex] = model;
+    PulseqReport.publish(
+      "sequence", { source: section.id, file: fileIndex, name: file.name, view }
+    );
     return model;
   }
 
@@ -175,6 +171,62 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     current.pns ? [current.pns.laneMeta] : []
   );
 
+  // Publishes `view` (plan section 4.1) for the chart's current time window.
+  // `laneChart`'s own `setView`/`setWindow` do not call `onViewChange` (lane_chart.js),
+  // so every place below that calls them also calls this explicitly; `onViewChange`
+  // itself (a zoom, pan, reset or zoom-control click) calls it too.
+  function publishView(viewMs) {
+    PulseqReport.publish("view", {
+      source: section.id,
+      file: currentFileIndex,
+      t0S: viewMs[0] / 1000,
+      t1S: viewMs[1] / 1000,
+    });
+  }
+
+  // `cursor` (plan section 4.1): at most one message per animation frame, publishing
+  // only the latest hover position even when it moved several times within one frame.
+  let cursorFrame = null;
+  let pendingCursor = null;
+  function scheduleCursorPublish(x, pxX) {
+    pendingCursor = { x, pxX };
+    if (cursorFrame !== null) return;
+    cursorFrame = requestAnimationFrame(() => {
+      cursorFrame = null;
+      publishCursor(pendingCursor.x, pendingCursor.pxX);
+    });
+  }
+  function publishCursor(x, pxX) {
+    if (x === null) {
+      PulseqReport.publish("cursor", { source: section.id, file: null });
+      return;
+    }
+    const tS = x / 1000; // the chart's x axis is milliseconds; the message is seconds
+    PulseqReport.publish("cursor", {
+      source: section.id,
+      file: currentFileIndex,
+      tS,
+      block: SeqLanes.blockAt(current.seq, tS),
+      pxS: pxX / 1000,
+    });
+  }
+
+  // `anchor` (plan section 4.1): published directly, with no throttle -- a click or
+  // the arrow keys change the anchor far less often than the cursor moves.
+  function publishAnchor(x) {
+    if (x === null) {
+      PulseqReport.publish("anchor", { source: section.id, file: null });
+      return;
+    }
+    const tS = x / 1000;
+    PulseqReport.publish("anchor", {
+      source: section.id,
+      file: currentFileIndex,
+      tS,
+      block: SeqLanes.blockAt(current.seq, tS),
+    });
+  }
+
   const chart = PulseqReport.laneChart({
     svg: document.getElementById(`${section.id}-diagram`),
     chart: document.getElementById(`${section.id}-chart`),
@@ -205,59 +257,156 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     minSpan: 0.01,
     xLabel: "Time (ms)",
     cursorText: v => `t = ${v.toFixed(3)} ms`,
+    onCursor: scheduleCursorPublish,
+    onAnchor: publishAnchor,
     // A zoom or pan leaves no button pressed; a reset (isInitial) presses the button
-    // of the window whose view is the current xDomain.
+    // of the window whose view is the current xDomain. Every change also publishes
+    // `view` (plan section 4.1).
     onViewChange: (view, isInitial) => {
       if (isInitial) {
         press(initialWindow);
       } else {
         for (const button of buttons) button.setAttribute("aria-pressed", "false");
       }
+      publishView(view);
     },
   });
 
+  // `setView`/`setWindow` do not call `onViewChange` (lane_chart.js), and the chart's
+  // very first window is itself a `view` a later subscriber should learn (plan
+  // section 4.1), so it is published explicitly here.
+  publishView(windows[0].view_ms);
+
+  // Shows window `i`: switches to its file first if needed (decoding it, the first
+  // time), then sets the chart's view -- the same steps a window button always ran
+  // inline, before `goto` (plan section 4.1) needed them too. Returns true once the
+  // window is shown, false when the file failed to decode (the status line already
+  // explains why, and the chart keeps showing whatever it had before).
+  async function showWindow(i) {
+    const w = windows[i];
+    if (w.file === currentFileIndex) {
+      press(i);
+      chart.setView(w.view_ms);
+      publishView(w.view_ms);
+      return true;
+    }
+    setButtonsDisabled(true);
+    statusEl.textContent = "Loading…";
+    let model;
+    try {
+      model = await decodeFile(w.file);
+    } catch (error) {
+      // A later file's decode failure is shown in the status line instead of
+      // being rethrown: the chart already has a model and a view to keep showing,
+      // so the card stays usable instead of being replaced by the "could not be
+      // drawn" note.
+      statusEl.textContent = `Could not load "${files[w.file].name}": ${error.message}`;
+      setButtonsDisabled(false);
+      return false;
+    }
+    press(i);
+    current = model;
+    currentFileIndex = w.file;
+    // As for the first render, only the number of lanes is read before the render
+    // replaces them with the provider's lanes (a `{id: "gmag"}` placeholder for the
+    // |G| lane, as `initialLanes` above has, for the same reason). A file without
+    // PNS data draws no PNS lane even with the PNS group on (`current.pns` is
+    // null, so `lanesFor` above never appends one), whatever file was shown before
+    // it.
+    chart.setWindow({
+      lanes: current.seq.lanesMeta.concat(
+        [{ id: "gmag" }],
+        current.pns ? [current.pns.laneMeta] : []
+      ),
+      xDomain: w.view_ms,
+      extent: [0, current.seq.durationS * 1000],
+    });
+    publishView(w.view_ms);
+    initialWindow = i;
+    setButtonsDisabled(false);
+    return true;
+  }
+
   for (const button of buttons) {
     const i = Number(button.dataset.window);
-    button.addEventListener("click", async () => {
-      const w = windows[i];
-      if (w.file === currentFileIndex) {
-        press(i);
-        chart.setView(w.view_ms);
-        return;
-      }
-      setButtonsDisabled(true);
-      statusEl.textContent = "Loading…";
-      let model;
-      try {
-        model = await decodeFile(w.file);
-      } catch (error) {
-        // A later file's decode failure is shown in the status line instead of
-        // being rethrown: the chart already has a model and a view to keep showing,
-        // so the card stays usable instead of being replaced by the "could not be
-        // drawn" note.
-        statusEl.textContent = `Could not load "${files[w.file].name}": ${error.message}`;
-        setButtonsDisabled(false);
-        return;
-      }
-      press(i);
-      current = model;
-      currentFileIndex = w.file;
-      // As for the first render, only the number of lanes is read before the render
-      // replaces them with the provider's lanes (a `{id: "gmag"}` placeholder for the
-      // |G| lane, as `initialLanes` above has, for the same reason). A file without
-      // PNS data draws no PNS lane even with the PNS group on (`current.pns` is
-      // null, so `lanesFor` above never appends one), whatever file was shown before
-      // it.
-      chart.setWindow({
-        lanes: current.seq.lanesMeta.concat(
-          [{ id: "gmag" }],
-          current.pns ? [current.pns.laneMeta] : []
-        ),
-        xDomain: w.view_ms,
-        extent: [0, current.seq.durationS * 1000],
-      });
-      initialWindow = i;
-      setButtonsDisabled(false);
-    });
+    button.addEventListener("click", () => { showWindow(i); });
   }
+
+  // `goto` (plan section 4.1): another card asks this diagram to show one block of
+  // one of its files, named by `name` (a string: the first file of this card with that
+  // name) when the message has one, else by `file` (this card's file index). A card
+  // that learns this card's file indexes only from `sequence` messages cannot know the
+  // index of a file that this card has not decoded yet, but it can know the file's
+  // name. It shows the first window of that file (switching files first,
+  // exactly as a click on that window's button does, through the shared
+  // `showWindow`), then sets the view to that block with half its own duration as
+  // padding on each side (so the window is twice the block's duration), widened to
+  // at least 1 ms and moved inside the file if the padding would reach past an end
+  // (`ChartMath.clampView` does both: widen about the same centre, then shift to
+  // fit), then sets the anchor to the middle of the block (the `anchor` message
+  // itself comes from `onAnchor`, above), then publishes `view`.
+  // A `goto` for a block that the file does not have is ignored with a warning; any
+  // other failure is written to the console, because the bus cannot catch an error
+  // that an async handler throws after its first `await`.
+  async function handleGoto(message) {
+    if (message.target !== section.id) return;
+    try {
+      await gotoBlock(message);
+    } catch (error) {
+      console.error(`diagram card "${section.id}": goto failed:`, error);
+    }
+  }
+  async function gotoBlock(message) {
+    const byName = typeof message.name === "string";
+    const fileIndex = byName ? files.findIndex(f => f.name === message.name) : message.file;
+    const fileText = byName ? `"${message.name}"` : String(message.file);
+    if (byName && fileIndex === -1) {
+      console.warn(`diagram card "${section.id}": goto ignored, no file named ${fileText}`);
+      return;
+    }
+    // A block that the file cannot have is refused before any file switch. The upper
+    // bound needs the file's decoded model: checked here when the file is already
+    // decoded, else after `showWindow` decodes it.
+    const cached = models[fileIndex];
+    if (!Number.isInteger(message.block) || message.block < 0 ||
+        (cached && message.block >= cached.view.numBlocks)) {
+      console.warn(
+        `diagram card "${section.id}": goto ignored, file ${fileText} has no block ` +
+          `${message.block}`
+      );
+      return;
+    }
+    const i = windows.findIndex(w => w.file === fileIndex);
+    if (i === -1) {
+      console.warn(
+        `diagram card "${section.id}": goto ignored, file ${fileText} has no window`
+      );
+      return;
+    }
+    if (!(await showWindow(i))) return;
+    const seqView = current.view;
+    if (message.block >= seqView.numBlocks) {
+      console.warn(
+        `diagram card "${section.id}": goto ignored, file ${fileText} has no block ` +
+          `${message.block}`
+      );
+      return;
+    }
+    const startS = seqView.blockStart(message.block);
+    const durS = seqView.blockDuration(message.block);
+    const padS = durS / 2;
+    const [loS, hiS] = ChartMath.clampView(
+      [startS - padS, startS + durS + padS], [0, seqView.durationS], 0.001
+    );
+    const newView = [loS * 1000, hiS * 1000];
+    chart.setView(newView);
+    // A view that is not a window's view: no window button is pressed, as after a zoom.
+    for (const button of buttons) button.setAttribute("aria-pressed", "false");
+    chart.setAnchor((startS + durS / 2) * 1000);
+    publishView(newView);
+  }
+
+  // `replay: false`: a goto is a one-time action, not state a later subscriber
+  // should be replayed into.
+  PulseqReport.subscribe("goto", handleGoto, { replay: false });
 });

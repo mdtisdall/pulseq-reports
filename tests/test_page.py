@@ -131,6 +131,8 @@ def test_script_order(tmp_path, monkeypatch):
     indices = [
         result.index("const ChartMath"),
         result.index("const PulseqReport"),
+        result.index("PulseqReport.mapChart = mapChart;"),
+        result.index("const RfProfiles"),
         result.index("const SeqLanes"),
         result.index("const PnsLanes"),
         result.index("const GLanes"),
@@ -145,9 +147,9 @@ def test_script_order(tmp_path, monkeypatch):
 def test_each_script_is_its_own_script_element():
     cards = [page.Card(id="a", title="A", body_html="<p>a</p>")]
     result = page.render_page("Title", "Subtitle", cards, extra_scripts=["// only extra"])
-    # chart_math.js, lane_chart.js, seq_lanes.js, pns_lanes.js, g_lanes.js, the extra
-    # script, page.js: no card scripts here.
-    assert result.count("<script>\n") == 7
+    # chart_math.js, lane_chart.js, map_chart.js, rf_profiles.js, seq_lanes.js,
+    # pns_lanes.js, g_lanes.js, the extra script, page.js: no card scripts here.
+    assert result.count("<script>\n") == 9
 
 
 @pytest.mark.parametrize("closer", ["</script>", "</SCRIPT>", "</ScRiPt "])

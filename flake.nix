@@ -51,6 +51,24 @@
           pkgs.nodejs
           pkgs.shellcheck
         ];
+        # The tools of scripts/rf_references.py, which writes the external reference
+        # fixtures of tests/test_rf_references.py. CI does not use this shell: it only
+        # reads the fixtures. MATLAB Pulseq is pinned to one commit by its hash.
+        rf-references =
+          (mkDevShell pkgs [
+            pkgs.python312
+            pkgs.uv
+            pkgs.octave
+          ]).overrideAttrs
+            {
+              MATLAB_PULSEQ = pkgs.fetchFromGitHub {
+                owner = "pulseq";
+                repo = "pulseq";
+                rev = "c7469123c2f381f065986e6cc3a7d09730ed16ef";
+                hash = "sha256-Q9XjlghUUVDb9ZLs6UQoh6Q/n+KhrrVlyhcIsVzuuig=";
+              };
+              MATLAB_PULSEQ_REV = "c7469123c2f381f065986e6cc3a7d09730ed16ef";
+            };
       });
     };
 }

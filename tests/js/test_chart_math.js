@@ -363,3 +363,95 @@ test("test_view_functions_do_not_change_their_arguments", () => {
   dragView(30, 10, extent, 5);
   assert.deepEqual(extent, extentCopy);
 });
+
+// colorRamp, colorIndex and nearestIndex (docs/plans/rf-profiles.md section 4.4, item 1)
+// are the pure functions the map chart uses to color its raster and to snap the hover
+// cursor and the arrow keys to the nearest grid point.
+const {colorRamp, colorIndex, nearestIndex} = require(
+  path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "chart_math.js")
+);
+
+test("test_color_ramp_two_stops_linear_between_endpoints", () => {
+  // Component values are chosen so every interior step (0.25, 0.5, 0.75) lands on a
+  // whole number, so the test does not have to reason about Uint8ClampedArray rounding.
+  const stops = [[0, 0, 0], [100, 200, 40]];
+  const ramp = colorRamp(stops, 5);
+  assert.deepEqual(Array.from(ramp), [
+    0, 0, 0,
+    25, 50, 10,
+    50, 100, 20,
+    75, 150, 30,
+    100, 200, 40,
+  ]);
+});
+
+test("test_color_ramp_three_stops_midpoint_is_the_middle_stop", () => {
+  // With 3 stops (2 segments) and n = 5, t runs 0, 0.5, 1, 1.5, 2: index 2 (the
+  // middle of the 5 colors) lands exactly on t = 1, the middle stop.
+  const stops = [[0, 0, 0], [10, 20, 30], [100, 200, 40]];
+  const ramp = colorRamp(stops, 5);
+  assert.deepEqual(Array.from(ramp), [
+    0, 0, 0,
+    5, 10, 15,
+    10, 20, 30,
+    55, 110, 35,
+    100, 200, 40,
+  ]);
+});
+
+test("test_color_ramp_n_equal_1_returns_only_the_first_stop", () => {
+  const stops = [[10, 20, 30], [200, 100, 0]];
+  const ramp = colorRamp(stops, 1);
+  assert.equal(ramp.length, 3);
+  assert.deepEqual(Array.from(ramp), [10, 20, 30]);
+});
+
+test("test_color_index_maps_domain_endpoints_to_first_and_last_index", () => {
+  assert.equal(colorIndex(0, [0, 10], 5), 0);
+  assert.equal(colorIndex(10, [0, 10], 5), 4);
+});
+
+test("test_color_index_maps_the_domain_midpoint_to_the_middle_index", () => {
+  assert.equal(colorIndex(5, [0, 10], 5), 2);
+});
+
+test("test_color_index_clamps_below_and_above_the_domain", () => {
+  assert.equal(colorIndex(-100, [0, 10], 5), 0);
+  assert.equal(colorIndex(1000, [0, 10], 5), 4);
+});
+
+test("test_color_index_is_minus_1_for_nan", () => {
+  assert.equal(colorIndex(NaN, [0, 10], 5), -1);
+});
+
+test("test_color_index_degenerate_domain_is_always_index_0", () => {
+  // lo === hi: there is no range to place a value in, so every value, even one
+  // outside the single point, maps to index 0.
+  assert.equal(colorIndex(5, [5, 5], 8), 0);
+  assert.equal(colorIndex(100, [5, 5], 8), 0);
+});
+
+test("test_nearest_index_at_the_grid_points", () => {
+  // linspace(0, 100, 6) = [0, 20, 40, 60, 80, 100].
+  assert.equal(nearestIndex(0, 100, 6, 0), 0);
+  assert.equal(nearestIndex(0, 100, 6, 20), 1);
+  assert.equal(nearestIndex(0, 100, 6, 100), 5);
+});
+
+test("test_nearest_index_halfway_between_grid_points_rounds_up", () => {
+  // 10 is exactly halfway between grid index 0 (0) and index 1 (20); Math.round
+  // rounds a 0.5 fraction up (towards +Infinity), so it goes to index 1. 30 is
+  // exactly halfway between index 1 (20) and index 2 (40), and rounds to index 2.
+  assert.equal(nearestIndex(0, 100, 6, 10), 1);
+  assert.equal(nearestIndex(0, 100, 6, 30), 2);
+});
+
+test("test_nearest_index_clamps_outside_the_range", () => {
+  assert.equal(nearestIndex(0, 100, 6, -50), 0);
+  assert.equal(nearestIndex(0, 100, 6, 500), 5);
+});
+
+test("test_nearest_index_degenerate_domain_or_single_point_is_index_0", () => {
+  assert.equal(nearestIndex(5, 5, 4, 5), 0);
+  assert.equal(nearestIndex(0, 100, 1, 50), 0);
+});

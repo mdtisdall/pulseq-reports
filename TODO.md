@@ -31,8 +31,8 @@ it adds the same source line (`docs/usage.md`).
 to the released name of the chunk function, and remove the fork paragraph of
 `docs/usage.md`.
 
-**How to check.** `scripts/check`, `scripts/vb_parity.py`, and
-`scripts/cards_scale.py --card pns` for the 370 s file.
+**How to check.** `scripts/check`, and `scripts/cards_scale.py --card pns` for
+the 370 s file.
 
 **When.** After the upstream pull requests are merged and released (the user
 proposes them).
@@ -44,8 +44,9 @@ keeps a library of unit quaternions, with at most one rotation in each block.
 The gradient events in the library are logical: the scanner rotates the
 gradients of a block with its rotation. A radial or PROPELLER sequence can use
 a few gradient events and a different rotation in each block. The cards that
-use the gradients (diagram, gradient spectrum, PNS, gradient limits) show the
-logical events as they are stored, so they would be wrong for such a sequence.
+use the gradients (diagram, gradient spectrum, PNS, gradient limits, RF pulse
+profiles) show the logical events as they are stored, so they would be wrong
+for such a sequence.
 Until rotations are supported, these cards refuse a sequence with rotations:
 `extensions.refuse_rotations` raises `NotImplementedError` (phase 6 of
 `docs/plans/diagram-event-table.md`, PR #16).
@@ -108,7 +109,7 @@ needs the gamma of each file (or values that are already converted), and
 
 **How to check.** A test for each card with `pp.Opts(gamma=...)` of another
 nucleus: the physical values (mT/m, µT) of an event made with physical units
-equal those units. `scripts/vb_parity.py` for proton sequences.
+equal those units. The existing tests (`scripts/check`) for proton sequences.
 
 **When.** After phases 3 and 4 of `docs/plans/cards-at-scale.md` are merged
 (they change `rf_exposure.py` and `grad_limits.py`), and after phase 4 of
@@ -165,3 +166,38 @@ its SAFE model disagree in a way that matters, tell the pypulseq maintainers
 
 **When.** Before the slew lane of the sequence diagram is built. Until then,
 keep both definitions as they are.
+
+## Validate every card against external references
+
+**Why.** The first cards moved from vb-pulseq, and `scripts/vb_parity.py` checked
+that each of them gave the same data as vb-pulseq at `3a1c7dd`. That checked the
+move, not the physics: vb-pulseq and this library share their authors, so an
+error in both passes. On 2026-09-28 the user decided that validation uses
+external references, not vb-pulseq (decision 5 of `docs/plans/rf-profiles.md`),
+and retired `scripts/vb_parity.py`. Until a card has external references, its
+own tests and the oracles in `tests/oracles/` (also written in this project) are
+its only checks.
+
+**What.** For each card, find external references, and add fixtures and tests
+with the method of phase 2b of `docs/plans/rf-profiles.md`: a script outside CI
+makes small committed fixtures that record the tool, its version and the inputs,
+and a pytest compares the library with them, with the reason for each tolerance.
+Candidates to check (none is verified yet):
+
+- PNS: pypulseq's `calculate_pns` and MATLAB Pulseq's SAFE model
+  (`docs/notes/slew-definitions.md` already compares their slew parts).
+- Gradient limits and timing: pypulseq's and MATLAB Pulseq's own checks.
+- Sequence diagram: pypulseq `Sequence.waveforms` and MATLAB Pulseq
+  `waveforms_and_times`.
+- Gradient spectrum: a gradient spectrum function of MATLAB Pulseq, if there
+  is one, or a published forbidden-band example.
+- RF exposure: an analytic pulse train, and pypulseq's SAR code if its
+  quantities are the same.
+
+Some docstrings and `TESTS.md` entries still say that a format is the same as
+vb-pulseq's ("parity"). They say where a format came from; replace them with the
+external reference when a card gets one.
+
+**When.** Now: phase 2b of `docs/plans/rf-profiles.md` (#59) shows the method, and
+the RF pulse profiles have their references (section 8.4 of that plan). The user
+decides the order of the cards.
