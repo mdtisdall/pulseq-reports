@@ -1,6 +1,9 @@
-// Pure functions of the report charts, loaded before report.js in the page and by
+// Pure functions of the report charts, loaded before lane_chart.js in the page and by
 // `require` in tests/js.
 const ChartMath = (() => {
+  // Returns the text of a value for display: an em dash (U+2014) for null or undefined, a
+  // string as it is, "0" when |v| < 5e-4, and else v rounded to 3 significant digits, with
+  // no trailing zeros and a minus sign (U+2212) for a negative v.
   const fmt = v => {
     if (v === null || v === undefined) return "\u2014";
     if (typeof v === "string") return v;
@@ -8,6 +11,10 @@ const ChartMath = (() => {
     return Number(v.toPrecision(3)).toString().replace("-", "\u2212");
   };
 
+  // Returns the multiples of a step in [lo, hi], in increasing order. The step is the
+  // smallest of 1, 2, 5 and 10 times a power of ten that is at least (hi - lo) / n, so a
+  // whole number n gives at most n + 1 values. Each value is rounded to 9 decimals to drop
+  // floating-point error.
   function niceTicks(lo, hi, n) {
     const raw = (hi - lo) / n, p = Math.pow(10, Math.floor(Math.log10(raw)));
     const step = [1, 2, 5, 10].map(m => m * p).find(s => s >= raw);
@@ -18,6 +25,10 @@ const ChartMath = (() => {
     return out;
   }
 
+  // Returns the value of `lane` at `t`. For a gate lane, that is "on" when t is in one of
+  // its `windows` and "off" when it is not. For another lane, that is the value in the
+  // first of its `segments` that covers t, linear between the two points that bracket t,
+  // and `lane.fill` where no segment covers t.
   function valueAt(lane, t) {
     if (lane.kind === "gate") {
       return lane.windows.some(([a, b]) => t >= a && t <= b) ? "on" : "off";
@@ -43,10 +54,10 @@ const ChartMath = (() => {
   // value. A bin's own right edge is not read from a following pair (there
   // may be none, or it may belong to the next, unrelated bin across a gap);
   // it is derived from the bin's own pair instead, as `2 * centre - start`,
-  // which is exact because centre is the midpoint of the bin. Returns null
-  // when t is not covered by any bin: a gap between two segments, for
-  // example an RF-phase pulse gap. A gate lane has no such gap; it is read
-  // with valueAt instead.
+  // which equals the bin's end up to rounding because centre is the
+  // midpoint of the bin. Returns null when t is not covered by any bin: a
+  // gap between two segments, for example an RF-phase pulse gap. A gate
+  // lane has no such gap; it is read with valueAt instead.
   function minMaxAt(lane, t) {
     for (const seg of lane.segments) {
       for (let i = 0; i < seg.length; i += 2) {

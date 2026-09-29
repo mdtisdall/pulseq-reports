@@ -1,13 +1,12 @@
 // The lane chart of the report cards, the card registry, the page-level
 // publish/subscribe message bus (`publish`/`subscribe`/`createMessageBus`,
 // docs/plans/rf-profiles.md section 4.1) and the shared table decoder
-// (`decodeTable`, moved here from assets/cards/diagram.js so any card can use
-// it), in one global object, PulseqReport. Loaded after chart_math.js and
-// before the card scripts and page.js. Node tests `require` this file
-// directly (after setting `global.ChartMath`, since the top level reads it);
-// nothing at the top level touches `document` or `window`, so the file loads
-// under Node even though `laneChart` and `decodeTable` use browser APIs once
-// a card actually calls them.
+// (`decodeTable`, which any card can use), in one global object, PulseqReport.
+// Loaded after chart_math.js and before the card scripts and page.js. Node tests
+// `require` this file directly (after setting `global.ChartMath`, since the top level
+// reads it); nothing at the top level touches `document` or `window`, so the file loads
+// under Node even though `laneChart` and `decodeTable` use browser APIs once a card
+// actually calls them.
 const PulseqReport = (() => {
   const NS = "http://www.w3.org/2000/svg";
   const W = 960, LEFT = 128, RIGHT = 20, TOP = 10, LANE_H = 64, LANE_GAP = 18, AXIS_H = 38;
@@ -55,16 +54,15 @@ const PulseqReport = (() => {
   // `groups` and `groupControls` given, one `<button type="button" aria-pressed="...">` is
   // rendered into it for each group (its text is the group's `label`); a click toggles that
   // group's visibility and re-renders. Without `groupControls`, a group's own `visible` flag
-  // still governs it, but nothing in the page can change it. Without `groups`, `laneChart`
-  // behaves exactly as it did before `groups` existed.
+  // still governs it, but nothing in the page can change it. Without `groups`, every lane
+  // is drawn, no group control is made, and `lanesFor` gets null as its third argument.
   // `onCursor(x, pxX)`, when given, is called whenever the hover cursor's value
   // changes: `x` in chart units, or null when the pointer leaves the plot or the
   // cursor is otherwise cleared (Escape, or a `setView`/`setWindow` call); `pxX` is
   // the chart units per unit of plot width, `(view[1] - view[0]) / PLOT_W`.
   // `onAnchor(x)`, when given, is called whenever the anchor (the zoom marker that a
   // click or the arrow keys set) changes, with null when it is cleared (Escape, a
-  // drag-zoom, a reset, `setView` or `setWindow`). Both default to a no-op, so
-  // without them `laneChart` behaves exactly as it did before they existed.
+  // drag-zoom, a reset, `setView` or `setWindow`). Both default to a no-op.
   // Returns {setView, setLanes, setWindow, setAnchor}: setView changes the view
   // without calling onViewChange. setWindow replaces the lanes, `xDomain` and
   // `extent` together, and keeps `lanesFor` and `groups` if they were given.
@@ -83,7 +81,7 @@ const PulseqReport = (() => {
     // Lane groups (comment above `laneChart`). `groupMap` and `filterLanes` are built once;
     // `visibleGroupIds` changes when a group control is clicked. Without `groups`,
     // `filterLanes` is the identity function, so `lanes.length` and the lanes actually drawn
-    // never differ from what `laneChart` was given, as before `groups` existed.
+    // never differ from what `laneChart` was given.
     const groupMap = groups ? laneGroupMap(groups) : null;
     let visibleGroupIds = groups
       ? new Set(groups.filter(g => g.visible).map(g => g.id)) : null;
@@ -248,7 +246,8 @@ const PulseqReport = (() => {
       }
     }
 
-    // Formats a lane's value for the tooltip, as before.
+    // Formats a lane's value for the tooltip: `fmt(v)`, then the lane's unit if it has one,
+    // except for a string or null value (for example a gate lane's "on").
     const valueText = (lane, v) => lane.unit && typeof v !== "string" && v !== null
       ? `${fmt(v)} ${lane.unit}` : fmt(v);
 
@@ -524,8 +523,8 @@ const PulseqReport = (() => {
     cards.set(name, init);
   }
 
-  // ---- The shared table decoder (moved here from assets/cards/diagram.js, docs/plans/
-  // rf-profiles.md section 4.1, item 2, so any card can decode a table the same way) ----
+  // ---- The shared table decoder (docs/plans/rf-profiles.md section 4.1, item 2: any card
+  // can decode a table the same way) ----
 
   // The typed array for one table entry {dtype, length, data} (diagram_data.encode_tables,
   // and any other card that sends a table the same way): base64 -> gzip bytes ->

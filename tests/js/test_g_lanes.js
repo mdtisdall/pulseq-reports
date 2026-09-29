@@ -36,13 +36,11 @@ const SEQ_LANES_META = [
 // Four gradient event shapes (delay, offsets and values, s and mT/m), reused by many
 // blocks: template 2 has a zero-length segment (two offsets at the same time, offset
 // 3 == offset 2), and template 3 has only two points (a single piece) and is not zero
-// at either end. Every template has its own duration option too (`TEMPLATE_DUR`,
-// used only to derive a duration long enough to hold the event at least once,
-// `buildGModel`'s own comment), always longer than the event's own delay + span, so
-// that a block that draws one of these templates commonly has real padding on at
-// least one side (`_tripleGeometry`'s "0 outside the event" now covers the whole
-// block, not just the union of its events' own spans, so this is no longer a case
-// `GLanes` needs the tables to avoid).
+// at either end. A template carries no block duration: `buildGModel` draws each
+// block's duration from `durationOptions`, independently of the events the block plays
+// (see its comment), so that a block that draws one of these templates commonly has
+// real padding on at least one side (`GLanes` pads each block to its whole duration,
+// with 0 outside the event, so the tables need not avoid this case).
 const EVENT_TEMPLATES = [
   { delay: 2e-5, offsets: [0, 1e-4, 4e-4, 5e-4], values: [0, 8, 8, 0] },
   { delay: 1e-5, offsets: [0, 5e-5, 1.5e-4, 2e-4], values: [0, -6, -9, 0] },
@@ -608,9 +606,9 @@ test("test_lane_meta_domain_ticks_and_the_other_fixed_fields", () => {
   const peak = model.wholeFileMax;
   assert.deepEqual(meta.domain, [0, 1.1 * peak]);
   assert.deepEqual(meta.ticks, [0, peak]);
-  // 3 significant figures, the same convention as assets/chart_math.js's `fmt` and
-  // pns_lanes.js's `_fmtBinMs` (the worker spec: "like the gradient lanes ... read
-  // it", diagram_data.lane_meta's own peak-dependent tick label).
+  // 3 significant figures, the same convention as assets/chart_math.js's `fmt`,
+  // pns_lanes.js's `_fmtBinMs` and diagram_data.lane_meta's own peak-dependent tick
+  // label.
   assert.deepEqual(meta.tick_labels, ["0", Number(peak.toPrecision(3)).toString()]);
 });
 

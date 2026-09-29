@@ -12,7 +12,7 @@
 // `lanesFor` turns that into the chart's minimum/maximum zigzag form (the only form this
 // lane ever uses, at every zoom: unlike a value lane's corner points, |G| is not linear
 // between two axes' corner points, so a polyline through the corner values would be
-// wrong -- see the module doc of `_tripleGeometry` below). `laneMeta` builds the lane
+// wrong -- see the paragraph on the quadratic below). `laneMeta` builds the lane
 // object without "segments", for the card script (assets/cards/diagram.js) to draw the
 // lane like the other lanes.
 //
@@ -25,12 +25,19 @@
 //
 // A block with no event on an axis reads as the constant 0 on that axis there (the
 // model of pns_lanes.js's module doc: the event's own polyline, 0 outside it, 0 for no
-// event), so every block always has a |G| range, never "no value".
+// event), so every block always has a |G| range, never "no value". The pieces are
+// linear between the union times, so after an event's last point the axis goes
+// linearly to 0 at the next union time. pypulseq's `add_block` refuses a gradient that
+// stops more than 1e-7 s before its block end at a value above
+// `max_slew * grad_raster_time`, so a ramp to 0 from such a value occurs only in a file
+// that pypulseq does not write.
 //
-// `decode`, `minMax` and `lanesFor` build (and cache, on the model `decode` returns) an
-// event-triple-level cache and a tree over groups of `GROUP_BLOCKS` blocks, the same
-// grouping technique as `seq_lanes.js`'s own (private) group tree, so that a whole-file
-// render touches only the O(bins) groups a bin's edges cut, never all N blocks.
+// `decode` builds, in one pass over all the blocks, an event-triple-level cache and a
+// tree over groups of `GROUP_BLOCKS` blocks (the same grouping technique as
+// `seq_lanes.js`'s own (private) group tree), and keeps them on the model it returns.
+// `minMax` and `lanesFor` only read them: by then the triple of every block is cached.
+// Thus a whole-file render touches only the O(bins) groups a bin's edges cut, never
+// all N blocks.
 "use strict";
 
 // In Node, `require` this file's sibling `seq_lanes.js` (`minMax`'s `_binEdges` needs
@@ -38,17 +45,15 @@
 // `SeqLanes`, exactly as the browser already has it: page.py loads seq_lanes.js in its
 // own <script> element before this one, and top-level `const` declarations of one
 // classic <script> are visible as bare identifiers to a later one on the same page, so
-// `SeqLanes` is already in scope there with no import. `typeof require` (not `typeof
-// module`) is the guard, so that a mistaken load order in the browser fails loudly on
-// the first use of `SeqLanes` instead of silently reading `undefined`.
+// `SeqLanes` is already in scope there with no import.
 if (typeof require === "function") {
   global.SeqLanes = require("./seq_lanes.js");
 }
 
 const GLanes = (() => {
   // 64 blocks in each group: the same order of magnitude as seq_lanes.js's own
-  // (private) grouping, so that a render at 10^7 blocks and 812 bins touches only a
-  // couple of hundred groups for each bin, far fewer than the blocks in it.
+  // (private) grouping. A bin touches at most two partial groups (scanned block by
+  // block) and O(log G) nodes of the tree over the G groups.
   const GROUP_BLOCKS = 64;
   // Two times closer than this (s) are one breakpoint at a block edge (`_tripleTimes`).
   const EDGE_EPS = 1e-9;
@@ -164,7 +169,13 @@ const GLanes = (() => {
   // events). At exactly the first or last point, the event's own recorded value
   // there (which need not be 0: `_tripleTimes` below relies on this for a "not zero
   // at a block border" event). Interior points interpolate linearly between the
-  // event's own breakpoints, as before.
+  // event's own breakpoints.
+  //
+  // The pieces of `_tripleGeometry` are linear between the union times
+  // (`_tripleTimes`), so after an event's last point the axis goes linearly to 0 at
+  // the next union time. pypulseq's `add_block` refuses a gradient that stops more
+  // than 1e-7 s before its block end at a value above `max_slew * grad_raster_time`,
+  // so a ramp to 0 from such a value occurs only in a file that pypulseq does not write.
   function _axisValueAt(tb, k, cache, t) {
     if (k === 0) return 0;
     const { times, values } = _eventGeometry(tb, k, cache);
@@ -182,18 +193,18 @@ const GLanes = (() => {
   // ---- |G| geometry -------------------------------------------------------------
 
   // The extrema of a convex quadratic f(tau) = A*tau^2 + B*tau + C (A >= 0) over
-  // tau in [ta, tb] (0 <= ta <= tb <= 1): the maximum is always at one of the two
+  // tau in [ta, tEnd] (0 <= ta <= tEnd <= 1): the maximum is always at one of the two
   // ends (a convex function's maximum on an interval is at an endpoint); the minimum
-  // is at the vertex tau* = -B / (2A) when A > 0 and tau* falls inside [ta, tb], else
+  // is at the vertex tau* = -B / (2A) when A > 0 and tau* falls inside [ta, tEnd], else
   // also at an endpoint. Returns [min, max] of f itself (not yet square-rooted).
-  function _quadRangeExtrema(A, B, C, ta, tb) {
+  function _quadRangeExtrema(A, B, C, ta, tEnd) {
     const fa = (A * ta + B) * ta + C;
-    const fb = (A * tb + B) * tb + C;
+    const fb = (A * tEnd + B) * tEnd + C;
     let lo = fa < fb ? fa : fb;
     const hi = fa > fb ? fa : fb;
     if (A > 0) {
       const tv = -B / (2 * A);
-      if (tv > ta && tv < tb) {
+      if (tv > ta && tv < tEnd) {
         const fv = C - (B * B) / (4 * A);
         if (fv < lo) lo = fv;
       }
@@ -248,32 +259,31 @@ const GLanes = (() => {
   // the prototype's own `slew_g.js` style would give, because that single key stops
   // being an exact integer past 2^53 at about 1.2 * 10^5 gradient events; the two
   // keys above need only `M * M` and `M * D` to stay exact integers (`decode`'s
-  // check), which raises the limit to about 9.5 * 10^7 events. The caller
-  // (`_tripleKeyOf`) computes both keys once and passes them in as
-  // `outerKey`/`innerKey`, so a block makes no extra object on the hot path. Keyed by
-  // duration as well as triple (not by triple alone, as the prototype's own
-  // `slew_g.js` is) because the padding this function adds depends on the block's own
-  // duration, which the same triple can play at more than one length (for example a
-  // spoiler gradient shared by blocks with different trailing delays); a file's own
-  // durations are pooled to a small number of distinct values
-  // (`diagram_data.diagram_tables`), so this does not multiply the number of distinct
-  // cache entries by the number of blocks.
-  function _tripleGeometry(tb, kx, ky, kz, dur, evCache, outerKey, innerKey) {
-    let inner = evCache.triple.get(outerKey);
+  // check), which raises the limit to about 9.5 * 10^7 events. `t` is the object of
+  // `_tripleKeyOf` for the block: the triple `kx`, `ky`, `kz`, the duration `dur`, and
+  // both keys (`outerKey`, `innerKey`). Keyed by duration as well as triple (not by
+  // triple alone, as the prototype's own `slew_g.js` is) because the padding this
+  // function adds depends on the block's own duration, which the same triple can play
+  // at more than one length (for example a spoiler gradient shared by blocks with
+  // different trailing delays); a file's own durations are pooled to a small number of
+  // distinct values (`diagram_data.diagram_tables`), so this does not multiply the
+  // number of distinct cache entries by the number of blocks.
+  function _tripleGeometry(tb, t, evCache) {
+    let inner = evCache.triple.get(t.outerKey);
     if (inner === undefined) {
       inner = new Map();
-      evCache.triple.set(outerKey, inner);
+      evCache.triple.set(t.outerKey, inner);
     }
-    let g = inner.get(innerKey);
+    let g = inner.get(t.innerKey);
     if (g !== undefined) return g;
 
-    const times = _tripleTimes(tb, kx, ky, kz, dur, evCache.geom);
+    const times = _tripleTimes(tb, t.kx, t.ky, t.kz, t.dur, evCache.geom);
     const n = times.length;
     const vx = new Float64Array(n), vy = new Float64Array(n), vz = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      vx[i] = _axisValueAt(tb, kx, evCache.geom, times[i]);
-      vy[i] = _axisValueAt(tb, ky, evCache.geom, times[i]);
-      vz[i] = _axisValueAt(tb, kz, evCache.geom, times[i]);
+      vx[i] = _axisValueAt(tb, t.kx, evCache.geom, times[i]);
+      vy[i] = _axisValueAt(tb, t.ky, evCache.geom, times[i]);
+      vz[i] = _axisValueAt(tb, t.kz, evCache.geom, times[i]);
     }
     const pieceA = new Float64Array(Math.max(0, n - 1));
     const pieceB = new Float64Array(Math.max(0, n - 1));
@@ -302,7 +312,7 @@ const GLanes = (() => {
       blockMax = 0;
     }
     g = { times, pieceA, pieceB, pieceC, blockMin, blockMax };
-    inner.set(innerKey, g);
+    inner.set(t.innerKey, g);
     return g;
   }
 
@@ -322,9 +332,10 @@ const GLanes = (() => {
   // or before/after every one of its events, whatever the block's duration), unlike
   // a value lane's own minimum/maximum in seq_lanes.js, which a block with no event
   // contributes nothing to.
-  function _blockGRange(tb, i, evCache, M, D) {
-    const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
+  function _blockGRange(model, i) {
+    const tb = model.tables;
+    const t = _tripleKeyOf(tb, i, model.M, model.D);
+    const g = _tripleGeometry(tb, t, model.evCache);
     return [g.blockMin, g.blockMax];
   }
 
@@ -334,15 +345,16 @@ const GLanes = (() => {
   // (binary search on the triple's own union times, now padded to the block's own
   // start and end, so a clip range entirely before the first event or after the last
   // still finds the padding piece there, at the value 0).
-  function _exactBlockGRange(seqModel, tb, i, evCache, M, D, loAbs, hiAbs) {
-    const bStart = SeqLanes.blockStart(seqModel, i);
+  function _exactBlockGRange(model, i, loAbs, hiAbs) {
+    const tb = model.tables;
+    const bStart = SeqLanes.blockStart(model.seqModel, i);
     const bDur = tb.durations[tb.duration_index[i]];
     const overlapLo = Math.max(bStart, loAbs);
     const overlapHi = Math.min(bStart + bDur, hiAbs);
     if (overlapHi <= overlapLo) return null;
 
-    const t = _tripleKeyOf(tb, i, M, D);
-    const g = _tripleGeometry(tb, t.kx, t.ky, t.kz, t.dur, evCache, t.outerKey, t.innerKey);
+    const t = _tripleKeyOf(tb, i, model.M, model.D);
+    const g = _tripleGeometry(tb, t, model.evCache);
     const n = g.times.length;
     // Defensive, not reached in practice: `n < 2` only when `dur === 0` (the times
     // are `{0, dur}`, collapsed), and a 0-duration block's `[bStart, bStart]` can
@@ -370,14 +382,15 @@ const GLanes = (() => {
   // at a time, and the groups strictly between come from the tree, exactly like
   // seq_lanes.js's (private) `_rangeMinMax`. Every block has a range (never null, see
   // `_blockGRange`), so this always returns a pair, or null for an empty range.
-  function _rangeGMinMax(tb, evCache, M, D, tree, from, to, N) {
+  function _rangeGMinMax(model, from, to) {
+    const tree = model.gTree;
     from = Math.max(0, from);
-    to = Math.min(N - 1, to);
+    to = Math.min(model.numBlocks - 1, to);
     if (to < from) return null;
     let lo = Infinity, hi = -Infinity;
     const scan = (a, b) => {
       for (let i = a; i <= b; i++) {
-        const range = _blockGRange(tb, i, evCache, M, D);
+        const range = _blockGRange(model, i);
         if (range[0] < lo) lo = range[0];
         if (range[1] > hi) hi = range[1];
       }
@@ -403,8 +416,8 @@ const GLanes = (() => {
   // `Math.ceil(N / GROUP_BLOCKS) || 1` keeps a well-formed (length >= 1) tree for an
   // empty file too, with both its entries at their identity value (Infinity,
   // -Infinity): an empty range, not a zero range.
-  function _buildGGroups(seqModel, tb, evCache, M, D) {
-    const N = seqModel.numBlocks;
+  function _buildGGroups(model) {
+    const N = model.numBlocks;
     const G = Math.ceil(N / GROUP_BLOCKS) || 1;
     const gMin = new Float64Array(G).fill(Infinity);
     const gMax = new Float64Array(G).fill(-Infinity);
@@ -412,7 +425,7 @@ const GLanes = (() => {
       const from = g * GROUP_BLOCKS, to = Math.min(N, from + GROUP_BLOCKS);
       let lo = Infinity, hi = -Infinity;
       for (let i = from; i < to; i++) {
-        const range = _blockGRange(tb, i, evCache, M, D);
+        const range = _blockGRange(model, i);
         if (range[0] < lo) lo = range[0];
         if (range[1] > hi) hi = range[1];
       }
@@ -427,8 +440,9 @@ const GLanes = (() => {
   // `seqModel`: a model from `SeqLanes.decode` (its tables, `numBlocks`, and
   // `blockStart`/`blockAt` through the `SeqLanes` global/require above). Builds the
   // per-(triple, duration) geometry cache and the group tree one time, and the
-  // whole-file peak |G| that `laneMeta` needs (the tree's own root range, so no extra
-  // pass over the blocks). Returns a model for `minMax`/`lanesFor`/`laneMeta`.
+  // whole-file peak |G| that `laneMeta` needs (the maximum of the tree over all its
+  // groups, so no extra pass over the blocks). Returns a model for
+  // `minMax`/`lanesFor`/`laneMeta`.
   //
   // `D`, the number of distinct block durations (`tb.durations.length`, at least 1 so
   // an empty file's unused key space is still well-formed), is part of the two-level
@@ -446,11 +460,13 @@ const GLanes = (() => {
         "GLanes.decode: the per-(triple, duration) cache key of this file would exceed 2^53");
     }
     const N = seqModel.numBlocks;
-    const evCache = { geom: new Map(), triple: new Map() };
-    const gTree = _buildGGroups(seqModel, tb, evCache, M, D);
-    const whole = N > 0 ? _rangeGMinMax(tb, evCache, M, D, gTree, 0, N - 1, N) : null;
-    const wholeFileMax = whole === null ? 0 : whole[1];
-    return { seqModel, tables: tb, evCache, gTree, M, D, numBlocks: N, wholeFileMax };
+    const model = {
+      seqModel, tables: tb, evCache: { geom: new Map(), triple: new Map() }, M, D, numBlocks: N,
+      gTree: null, wholeFileMax: 0,
+    };
+    model.gTree = _buildGGroups(model);
+    model.wholeFileMax = N > 0 ? model.gTree.max.query(0, model.gTree.max.n) : 0;
+    return model;
   }
 
   // ---- minMax ---------------------------------------------------------------------
@@ -465,17 +481,10 @@ const GLanes = (() => {
   //
   // Returns `{edges (Float64Array, bins + 1, s), min, max (Float64Array, bins)}`.
   function minMax(model, t0, t1, bins) {
-    const seqModel = model.seqModel;
-    const tb = model.tables;
-    const evCache = model.evCache;
-    const tree = model.gTree;
-    const M = model.M;
-    const D = model.D;
-    const N = model.numBlocks;
-    const { edges, edgeBlock } = _binEdges(seqModel, t0, t1, bins);
+    const { edges, edgeBlock } = _binEdges(model.seqModel, t0, t1, bins);
     const outMin = new Float64Array(bins).fill(Infinity);
     const outMax = new Float64Array(bins).fill(-Infinity);
-    if (N === 0) {
+    if (model.numBlocks === 0) {
       return { edges, min: outMin, max: outMax };
     }
 
@@ -487,12 +496,12 @@ const GLanes = (() => {
         if (pair[1] > hi) hi = pair[1];
       };
       const loAbs = edges[k], hiAbs = edges[k + 1];
-      take(_exactBlockGRange(seqModel, tb, edgeBlock[k], evCache, M, D, loAbs, hiAbs));
+      take(_exactBlockGRange(model, edgeBlock[k], loAbs, hiAbs));
       if (edgeBlock[k + 1] !== edgeBlock[k]) {
-        take(_exactBlockGRange(seqModel, tb, edgeBlock[k + 1], evCache, M, D, loAbs, hiAbs));
+        take(_exactBlockGRange(model, edgeBlock[k + 1], loAbs, hiAbs));
       }
       if (edgeBlock[k + 1] - edgeBlock[k] > 1) {
-        take(_rangeGMinMax(tb, evCache, M, D, tree, edgeBlock[k] + 1, edgeBlock[k + 1] - 1, N));
+        take(_rangeGMinMax(model, edgeBlock[k] + 1, edgeBlock[k + 1] - 1));
       }
       outMin[k] = lo;
       outMax[k] = hi;
@@ -550,13 +559,14 @@ const GLanes = (() => {
   // "mT/m", a color token of report.css that is not one of gx/gy/gz ("ink": a solid,
   // neutral color for a combined trace, distinct from the PNS lane's own "ink-2" so
   // the two are never the same color when both are visible at once), "line", the
-  // domain/ticks/tick_labels of the whole-file peak (`model.wholeFileMax`, the same
-  // style `diagram_data.lane_meta` gives the gx/gy/gz lanes for a peak that is not
-  // symmetric about 0: `[0, 1.1 * peak]`, ticks at 0 and the peak -- except that,
-  // unlike those lanes, a file with no gradient at all (`peak === 0`) still gets the
-  // one-sided domain `[0, 1]`, never `[-1, 1]`: |G| can never be negative), `empty`
-  // (true only when the file has no gradient event on any axis, as `gx`/`gy`/`gz`'s
-  // own `empty` is) and `fill` (the tooltip's fallback value outside every segment).
+  // domain/ticks/tick_labels of the whole-file peak (`model.wholeFileMax`): the domain
+  // `[0, 1.1 * peak]` and the ticks at 0 and the peak are the style of the RF |B1|
+  // lane (`_value_domain(..., symmetric=False)` in `waveforms.py`), while the gx, gy
+  // and gz lanes are symmetric about 0. Unlike the RF |B1| lane, a peak of 0 still
+  // gets the one-sided domain `[0, 1]`, never `[-1, 1]`: |G| can never be negative.
+  // `empty` is true when the whole-file peak is 0, which includes a file whose
+  // gradient events are all 0, and `fill` is the tooltip's fallback value outside
+  // every segment.
   function laneMeta(model) {
     const peak = model.wholeFileMax;
     const hasGradient = peak > 0;
