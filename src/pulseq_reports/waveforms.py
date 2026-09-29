@@ -9,7 +9,6 @@ of the block table from the same description of each block.
 Each function reads one block at a time. A range reads only the blocks that overlap it.
 """
 
-import dataclasses
 import math
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ import numpy as np
 import pypulseq as pp
 
 from .markup import Lane, _points, fmt, lanes_json
+from .seq_index import block_cache_off, sequence_index
 from .seq_utils import GAMMA, NamedSequence, gradient_points
 
 _AXES = ("gx", "gy", "gz")
@@ -35,7 +35,7 @@ class TimeWindow:
 
 @dataclass(frozen=True)
 class _BlockEvents:
-    """The diagram content of one block, as arrays in ms and display units."""
+    """The diagram content of one block: times in s, and values in µT, rad and mT/m."""
 
     block_id: int
     start_s: float
@@ -49,7 +49,7 @@ class _BlockEvents:
 
 def _timed_blocks(seq: pp.Sequence) -> Iterator[tuple[int, float, float]]:
     """(block id, start (s), duration (s)) of each block in play order, without reading
-    the block. The start times are added as in `seq_utils.iter_blocks`."""
+    the block. The start of a block is the sum of the durations before it, in play order."""
     start = 0.0
     for block_id in seq.block_events:
         duration = seq.block_durations[block_id]
@@ -131,11 +131,9 @@ def _events_in_range(
 
 
 def duration_s(seq: pp.Sequence) -> float:
-    """The end of the last block (s), added one block at a time as in `iter_blocks`."""
-    end = 0.0
-    for _, t, duration in _timed_blocks(seq):
-        end = t + duration
-    return end
+    """The end of the last block (s): the sum of the block durations in play order
+    (`seq_index.SequenceIndex.end_s`)."""
+    return sequence_index(seq).end_s
 
 
 def block_row(e: _BlockEvents) -> dict:
@@ -160,6 +158,8 @@ def block_rows(
     rows: list[dict] = []
     total = 0
     for block_id, t, duration in _timed_blocks(seq):
+        if end_s is not None and t > end_s:
+            break
         if not _in_range(t, duration, start_s, end_s):
             continue
         total += 1
@@ -186,9 +186,10 @@ def _value_domain(peak: float, symmetric: bool) -> tuple[list[float], list[float
     return [0.0, 1.1 * peak], [0.0, peak], ["0", fmt(peak)]
 
 
-def _value_lane(lane_id, title, unit, color, segments, symmetric, has_events, fill=0.0) -> Lane:
-    values = [abs(v) for seg in segments for _, v in seg]
-    peak = max(values, default=0.0)
+def _value_lane(
+    lane_id, title, unit, color, segments, peak, symmetric, has_events, fill=0.0
+) -> Lane:
+    """One line lane. `peak` is the largest absolute value of its rounded points."""
     domain, ticks, labels = _value_domain(peak, symmetric)
     return Lane(
         id=lane_id,
@@ -204,25 +205,22 @@ def _value_lane(lane_id, title, unit, color, segments, symmetric, has_events, fi
     )
 
 
-def _phase_lane(segments: list) -> Lane:
-    return dataclasses.replace(
-        _value_lane(
-            "rf_phase",
-            "RF phase",
-            "rad",
-            "rf",
-            segments,
-            symmetric=True,
-            has_events=bool(segments),
-        ),
+def _phase_lane(segments: list, has_events: bool) -> Lane:
+    return Lane(
+        id="rf_phase",
+        title="RF phase",
+        unit="rad",
+        color="rf",
+        segments=segments,
         domain=[-1.1 * math.pi, 1.1 * math.pi],
         ticks=[-math.pi, 0.0, math.pi],
         tick_labels=["−π", "0", "π"],
+        empty=not has_events,
         fill=None,
     )
 
 
-def _adc_lane(windows: list) -> dict:
+def _adc_lane(windows: list, has_events: bool) -> dict:
     return {
         "id": "adc",
         "title": "ADC",
@@ -233,39 +231,41 @@ def _adc_lane(windows: list) -> dict:
         "domain": [0.0, 1.25],
         "ticks": [0.0, 1.0],
         "tick_labels": ["off", "on"],
-        "empty": not windows,
+        "empty": not has_events,
     }
 
 
-def _lanes(rf_mag: list, rf_phase: list, adc_windows: list, grads: dict, joined) -> list:
-    """The six lanes in their page order, from the parts of each lane. `joined` makes
-    the one segment of a line lane from its parts."""
-    lanes = [
+def _lanes(segments: dict, windows: list, peaks: dict, has_events: dict) -> list:
+    """The six lanes in their page order. `segments` has the segments of "rf_mag",
+    "rf_phase", "gx", "gy" and "gz". `windows` has the ADC windows. `peaks` has the peak
+    of "rf_mag", "gx", "gy" and "gz". `has_events` has one bool for each of the six ids."""
+    return [
         _value_lane(
             "rf_mag",
             "RF |B1|",
             "µT",
             "rf",
-            joined(rf_mag),
+            segments["rf_mag"],
+            peaks["rf_mag"],
             symmetric=False,
-            has_events=bool(rf_mag),
+            has_events=has_events["rf_mag"],
         ),
-        _phase_lane(rf_phase),
-        _adc_lane(adc_windows),
-    ]
-    for axis, parts in grads.items():
-        lanes.append(
+        _phase_lane(segments["rf_phase"], has_events["rf_phase"]),
+        _adc_lane(windows, has_events["adc"]),
+        *(
             _value_lane(
                 axis,
                 f"G{axis[1]}",
                 "mT/m",
                 axis,
-                joined(parts),
+                segments[axis],
+                peaks[axis],
                 symmetric=True,
-                has_events=bool(parts),
+                has_events=has_events[axis],
             )
-        )
-    return lanes
+            for axis in _AXES
+        ),
+    ]
 
 
 def file_lanes(
@@ -306,20 +306,41 @@ def file_lanes(
         # One zero-padded segment across the blocks in the range.
         return [[[lo_ms, 0.0], *[p for part in parts for p in part], [hi_ms, 0.0]]]
 
-    return lanes_json(_lanes(rf_mag, rf_phase, adc_windows, grads, joined))
+    segments = {"rf_mag": joined(rf_mag), "rf_phase": rf_phase}
+    for axis in _AXES:
+        segments[axis] = joined(grads[axis])
+    peaks = {
+        lane_id: max((abs(v) for seg in segments[lane_id] for _, v in seg), default=0.0)
+        for lane_id in ("rf_mag", *_AXES)
+    }
+    has_events = {
+        "rf_mag": bool(rf_mag),
+        "rf_phase": bool(rf_phase),
+        "adc": bool(adc_windows),
+        **{axis: bool(grads[axis]) for axis in _AXES},
+    }
+    return lanes_json(_lanes(segments, adc_windows, peaks, has_events))
 
 
 def first_adc_window(seqs: Sequence[NamedSequence], file_index: int = 0) -> TimeWindow:
     """vb-pulseq's "First ADC" view of one file: from 0 to 1.1 times the end of the first
-    ADC window, or the whole file when that is shorter or there is no ADC."""
+    ADC window, or the whole file when that is shorter or there is no ADC. Reads only the
+    block of the first ADC, with the block cache off."""
     seq = seqs[file_index].seq
-    end = duration_s(seq)
-    duration_ms = round(end * 1e3, 4)
+    index = sequence_index(seq)
+    duration_ms = round(index.end_s * 1e3, 4)
     window_ms = duration_ms
-    for e in _events_in_range(seq, None, None):
-        if e.adc is not None:
-            window_ms = min(duration_ms, 1.1 * round(e.adc[1] * 1e3, 4))
-            break
+    if index.adc_first.size:
+        play = int(index.adc_first[0])  # the first block with an ADC, in play order
+        with block_cache_off(seq):
+            adc = seq.get_block(int(index.block_id[play])).adc
+        # The float operations of `_block_events`: (block start + delay) + length, with
+        # the same types. The index keeps the block starts as numpy.float64; `float()`
+        # gives the Python float of a sequence built in Python, so that `round` stays
+        # Python's (numpy's differs at ties). After `Sequence.read`, `adc.delay` is a
+        # numpy.float64, so the sum is a numpy.float64 there, as it was before.
+        a0 = float(index.start_s[play]) + adc.delay
+        window_ms = min(duration_ms, 1.1 * round((a0 + adc.num_samples * adc.dwell) * 1e3, 4))
     window_ms = round(window_ms, 4)
     return TimeWindow(f"First ADC (0–{window_ms:.3g} ms)", file_index, 0.0, window_ms / 1e3)
 

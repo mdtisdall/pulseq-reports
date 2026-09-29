@@ -21,8 +21,9 @@ from dataclasses import dataclass
 
 import numpy as np
 import pypulseq as pp
+from oracles.blocks import iter_blocks
 
-from pulseq_reports.seq_utils import GAMMA, TIME_TOLERANCE, gradient_points, iter_blocks
+from pulseq_reports.seq_utils import GAMMA, TIME_TOLERANCE, gradient_points
 
 _AXES = ("x", "y", "z")
 
@@ -44,7 +45,7 @@ class HardwareLimits:
 class AxisResult:
     """The gradient limit numbers for one logical axis, over a time range.
 
-    `peak_block` and `slew_block` are the block ID (`seq_utils.BlockTiming.block_id`)
+    `peak_block` and `slew_block` are the block ID (`oracles.blocks.BlockTiming.block_id`)
     where the peak amplitude, respectively the peak slew, was found. `rms_mt_per_m` is
     the RMS amplitude over the range that `GradientLimits.range_s` gives, not over the
     whole sequence when a window is used.
@@ -204,7 +205,7 @@ def gradient_limits(
     With `limits=None`, the limits are `seq.system.max_grad` and `seq.system.max_slew`
     (see `HardwareLimits`).
 
-    This function reads one block at a time (`seq_utils.iter_blocks`) and keeps only a
+    This function reads one block at a time (`oracles.blocks.iter_blocks`) and keeps only a
     constant amount of state for each axis, so its memory does not grow with the
     number of blocks.
     """

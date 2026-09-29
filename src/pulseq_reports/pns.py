@@ -25,6 +25,8 @@ import numpy as np
 import pypulseq as pp
 from pypulseq.utils.siemens.readasc import readasc
 
+from .seq_index import sequence_index
+
 if TYPE_CHECKING:
     from .pns_levels import PnsLevels
 
@@ -154,7 +156,7 @@ def peak_tr_window(seq: pp.Sequence, peak_time_s: float | None) -> tuple[float, 
     if tr is None or peak_time_s is None:
         return None
     tr = float(np.atleast_1d(tr)[0])
-    duration = seq.duration()[0]
+    duration = sequence_index(seq).end_s
     if tr <= 0 or duration <= tr * (1 + 1e-9):
         return None
     start = math.floor(peak_time_s / tr + 1e-9) * tr

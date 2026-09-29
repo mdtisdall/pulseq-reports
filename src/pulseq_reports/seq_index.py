@@ -3,7 +3,7 @@
 `sequence_index` reads `seq.block_events` and `seq.block_durations` one column at a
 time, without `get_block`, so it costs O(N) for N blocks with no per-block pypulseq
 call. It numbers the unique RF, gradient and ADC events from 1, in the order of their
-first use in play order, as `diagram_data.diagram_tables` numbers them. The three
+first use in play order. The diagram tables and the analyses use these numbers. The three
 gradient axes share one index space: in one block, gx comes before gy and gz.
 
 `rf_events`, `grad_events` and `adc_events` give each unique event one time, from the
