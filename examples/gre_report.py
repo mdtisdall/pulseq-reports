@@ -19,7 +19,6 @@ import numpy as np
 import pypulseq as pp
 
 import pulseq_reports
-from pulseq_reports import pns
 from pulseq_reports.cards.blocks import blocks_card
 from pulseq_reports.cards.definitions import definitions_card
 from pulseq_reports.cards.diagram import diagram_card
@@ -30,7 +29,7 @@ from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.cards.timing import timing_card
 from pulseq_reports.page import write_page
-from pulseq_reports.waveforms import TimeWindow, first_adc_window, full_window
+from pulseq_reports.waveforms import first_adc_window, full_window
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "docs" / "examples" / "gre.html"
 
@@ -120,16 +119,11 @@ def main(output: Path) -> None:
     seq = gre_sequence()
 
     windows = [first_adc_window(seq), full_window(seq)]
-    prediction = pns.pns_prediction(seq)
-    peak_window = pns.peak_tr_window(seq, prediction.peak_time_s)
-    if peak_window is not None:
-        start_s, end_s = peak_window
-        windows.append(TimeWindow("Peak-PNS TR", start_s, end_s))
 
     cards = [
         timing_card(seq),
         rf_exposure_card(seq),
-        diagram_card(seq, windows, pns=True),
+        diagram_card(seq, windows, pns_lane=True),
         rf_profile_card(seq, views=("profile", "z_df")),
         spectrum_card(seq),
         pns_card(seq),

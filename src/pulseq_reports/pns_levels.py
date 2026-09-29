@@ -26,7 +26,7 @@ import pypulseq as pp
 from pypulseq.utils.safe_pns_prediction import _safe_gwf_to_pns_chunk, safe_example_hw
 from pypulseq.utils.siemens.asc_to_hw import asc_to_hw
 
-from . import pns
+from .asc import EXAMPLE_HARDWARE, hardware_name, read_gradient_asc
 from .extensions import refuse_rotations
 from .sampling import GradientSampler, raster_block_lengths
 from .seq_index import sequence_index
@@ -44,12 +44,16 @@ MAX_BINS = 2_000_000
 # (section 2.6, item 4). A chunk of `pns_levels` is the whole number of bins nearest
 # above it.
 CHUNK_SAMPLES = 30_000
+NO_GRADIENTS = "no gradients"
+# Samples within this fraction of the peak count as the peak. Identical TRs differ only by
+# rounding, so the peak time is in the first of them.
+PEAK_TOLERANCE = 1e-6
 
 
 @dataclass(frozen=True)
 class PnsLevels:
-    reason: str | None  # why there is no prediction (pns.NO_GRADIENTS), or None
-    hardware: str  # the hardware name in the .asc file, or pns.EXAMPLE_HARDWARE
+    reason: str | None  # why there is no prediction (NO_GRADIENTS), or None
+    hardware: str  # the hardware name in the .asc file, or asc.EXAMPLE_HARDWARE
     asc_file: str | None  # the .asc file name, or None for the example hardware
     hw: dict[str, dict[str, float]]  # "x", "y", "z": tau1, tau2, tau3, a1, a2, a3,
     # stim_limit, g_scale, as pypulseq's hardware namespace has them
@@ -73,11 +77,11 @@ def bin_samples_for(num_samples: int, dt: float) -> int:
     return max(finest, coarsest_for_size, 1)
 
 
-def pns_levels(seq: pp.Sequence, asc_path: str | Path | None = None) -> PnsLevels:
+def pns_levels(seq: pp.Sequence, *, gradient_asc: str | Path | None = None) -> PnsLevels:
     """The stored level and the summary of the SAFE PNS total of `seq`, with the hardware
-    of the gradient .asc file `asc_path`, or pypulseq's example hardware when it is None
-    (as `pns.pns_prediction` chooses them, with `pns.read_gradient_asc`,
-    `pns.hardware_name` and `pns.EXAMPLE_HARDWARE`).
+    of the gradient .asc file `gradient_asc`, or pypulseq's example hardware when it is None
+    (as `pns.pns_prediction` chooses them, with `asc.read_gradient_asc`,
+    `asc.hardware_name` and `asc.EXAMPLE_HARDWARE`).
 
     The model is `calc_pns` of the pinned fork, on other samples:
 
@@ -102,13 +106,13 @@ def pns_levels(seq: pp.Sequence, asc_path: str | Path | None = None) -> PnsLevel
        stored bin holds every total of its samples.
     5. The summary: the peak (float64), the axis peaks, and the peak time: the time
        `(k + 0.5) * dt` of the first sample whose total is at or above
-       `peak * (1 - pns.PEAK_TOLERANCE)`, as `PnsPrediction.peak_time_s`. The peak is
+       `peak * (1 - PEAK_TOLERANCE)`, as `PnsPrediction.peak_time_s`. The peak is
        known only at the end, so `pns_levels` keeps the start state of each chunk
        (12 numbers) and the float64 maximum of each chunk, and runs again only the
        first chunk whose maximum reaches the threshold.
 
     The result does not depend on the chunk size (exact equality). A sequence without
-    a gradient event gives `reason=pns.NO_GRADIENTS`, no bins, peak 0 and
+    a gradient event gives `reason=NO_GRADIENTS`, no bins, peak 0 and
     `peak_time_s` None. Memory: the chunk, the longest block, the stored level and a
     few numbers for each chunk.
 
@@ -119,12 +123,12 @@ def pns_levels(seq: pp.Sequence, asc_path: str | Path | None = None) -> PnsLevel
     refuse_rotations(seq)
     dt = seq.grad_raster_time
 
-    if asc_path is None:
-        hw_ns, hardware, asc_file = safe_example_hw(), pns.EXAMPLE_HARDWARE, None
+    if gradient_asc is None:
+        hw_ns, hardware, asc_file = safe_example_hw(), EXAMPLE_HARDWARE, None
     else:
-        asc = pns.read_gradient_asc(asc_path)
+        asc = read_gradient_asc(gradient_asc)
         hw_ns = asc_to_hw(asc)
-        hardware, asc_file = pns.hardware_name(asc), Path(asc_path).name
+        hardware, asc_file = hardware_name(asc), Path(gradient_asc).name
     hw = _hw_to_dict(hw_ns)
 
     index = sequence_index(seq)
@@ -133,7 +137,7 @@ def pns_levels(seq: pp.Sequence, asc_path: str | Path | None = None) -> PnsLevel
     if not _has_gradients(index):
         empty = np.zeros(0, dtype=np.float32)
         return PnsLevels(
-            reason=pns.NO_GRADIENTS,
+            reason=NO_GRADIENTS,
             hardware=hardware,
             asc_file=asc_file,
             hw=hw,
@@ -197,7 +201,7 @@ def pns_levels(seq: pp.Sequence, asc_path: str | Path | None = None) -> PnsLevel
         bin_cursor = _store_bins(level_min, level_max, bin_cursor, total, bin_samples)
 
     peak_time_s = None
-    threshold = peak * (1 - pns.PEAK_TOLERANCE)
+    threshold = peak * (1 - PEAK_TOLERANCE)
     for s0, state_before, chunk_max in chunk_records:
         if chunk_max < threshold:
             continue

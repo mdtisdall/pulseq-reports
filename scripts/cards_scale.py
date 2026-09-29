@@ -69,7 +69,7 @@ For each card run, it records (as JSON, and prints a one-line summary):
 - `pns_lanes`: whether `--pns-lanes` was given.
 - `python_version`, `numpy_version`, `pypulseq_version`.
 
-`--pns-lanes`: the diagram card is called with `pns=True` (pypulseq's example hardware),
+`--pns-lanes`: the diagram card is called with `pns_lane=True` (pypulseq's example hardware),
 so it adds the PNS lane (`docs/plans/diagram-lanes.md`). Its time and `card_bytes` minus
 those of a run without `--pns-lanes` are what the PNS lane adds (section 2.4 of that
 plan). No other card reads it, so `--pns-lanes` with a `--card` other than `diagram` or
@@ -189,7 +189,7 @@ def _run_spectrum(seq: pp.Sequence) -> Card:
 
 def _run_diagram(seq: pp.Sequence, pns_lanes: bool) -> Card:
     windows = [first_adc_window(seq), full_window(seq)]
-    return diagram_card(seq, windows, pns=pns_lanes)
+    return diagram_card(seq, windows, pns_lane=pns_lanes)
 
 
 def _run_rf_profile(seq: pp.Sequence) -> Card:
@@ -336,7 +336,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--tr-s", type=float, default=None, help="a longer TR (s), rounded to 10 us"
     )
     parser.add_argument(
-        "--pns-lanes", action="store_true", help="the diagram card with pns=True (the PNS lane)"
+        "--pns-lanes",
+        action="store_true",
+        help="the diagram card with pns_lane=True (the PNS lane)",
     )
     parser.add_argument("--out", type=Path, required=True, help="output directory")
     args = parser.parse_args(argv)

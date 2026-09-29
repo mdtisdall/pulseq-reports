@@ -2084,12 +2084,12 @@ renders the page, and checks that the literal registration call
 `test_pns.py` tests `pns.py`. `PnsPrediction` is now summary-only (`reason`,
 `hardware`, `asc_file`, `peak`, `peak_time_s`, `axis_peaks`; no `t_s`,
 `norm` or `axes`), built by `pns_prediction` from `pns_levels_for(seq,
-asc_path)` — the SAFE model itself (`pns_levels.pns_levels`, the pinned
+gradient_asc=...)` — the SAFE model itself (`pns_levels.pns_levels`, the pinned
 pypulseq fork's chunked SAFE recursion) has moved there. `pns_levels_for`
-keeps one `PnsLevels` for each (sequence object, asc path), the rule of
-`seq_index.sequence_index` for staleness (rebuilt when the number of
-blocks or the last block id changes, or when the given asc path differs
-from the kept one), so that a page with both the PNS summary card and the
+keeps one `PnsLevels` for each (sequence object, hardware), the hardware
+being the example hardware or the resolved path of the gradient `.asc`
+file, and the rule of `seq_index.sequence_index` for staleness (all are
+rebuilt when the number of blocks or the last block id changes), so that a page with both the PNS summary card and the
 diagram's PNS lane for one sequence runs the SAFE model once.
 `peak_tr_window` is the start and end of the TR that holds the
 prediction's peak, counted from the sequence start in steps of the TR
@@ -2368,18 +2368,16 @@ with `peak_time_s=None`. The result must be None.
 
 #### `test_pns_levels_for_shares_one_computation_with_the_pns_card_and_the_diagram`
 
-**Checks:** For one sequence, the PNS summary card (`cards.pns.pns_data`) and the
-diagram's PNS lane (`cards.diagram.diagram_card(..., pns=True)`) together run the SAFE
+**Checks:** For one sequence, the PNS summary card (`cards.pns.pns_card`) and the
+diagram's PNS lane (`cards.diagram.diagram_card(..., pns_lane=True)`) together run the SAFE
 model once, not twice; adding a block makes the next call recompute
 (`docs/plans/diagram-lanes.md`, section 4.6).
 
-**How:** The test patches `pns_levels.pns_levels` with a wrapper that records one entry
-for each call (patching the module attribute reaches `pns.pns_levels_for`, which
-imports it inside the function body on every call, to avoid a circular import with
-`pns_levels.py`). It calls `cards.pns.pns_data(seq)` and then
-`cards.diagram.diagram_card(seq, [full_window(seq)], pns=True)` for the same
+**How:** The test patches `pns.pns_levels` (the name that `pns.pns_levels_for` calls)
+with a wrapper that records one entry for each call. It calls
+`cards.pns.pns_card(seq)` and then `cards.diagram.diagram_card(seq, [full_window(seq)], pns_lane=True)` for the same
 sequence object and checks there was 1 call. It adds a delay block to the sequence and
-calls `pns_data` again, and checks there are then 2 calls.
+calls `pns_card` again, and checks there are then 2 calls.
 
 **Assumptions:**
 
@@ -2387,32 +2385,45 @@ calls `pns_data` again, and checks there are then 2 calls.
   already tested elsewhere (`docs/plans/cards-at-scale.md`'s suite); this test only
   checks that `pns_levels_for` uses the same rule for its own cache.
 
-#### `test_pns_levels_for_recomputes_for_a_different_asc_path`
+#### `test_pns_levels_for_keeps_one_result_for_each_asc_file`
 
-**Checks:** `pns_levels_for` keeps one result for each (sequence, asc path): a
-different `.asc` file for the same sequence recomputes, and going back to an earlier
-path recomputes again (a 1-entry cache, not a cache of every path seen).
+**Checks:** `pns_levels_for` keeps one result for each (sequence, gradient `.asc`
+file): a different `.asc` file for the same sequence computes once, and going back to
+an earlier file does not compute again.
 
-**How:** The test patches `pns_levels.pns_levels` the same way as the test above, and
-calls `pns.pns_levels_for(seq, path)` for two different `.asc` files (`path_a`,
+**How:** The test patches `pns.pns_levels` the same way as the test above, and calls
+`pns.pns_levels_for(seq, gradient_asc=path)` for two different `.asc` files (`path_a`,
 `path_b`) built by the file's `write_gradient_asc` fixture, in the order a, a, b, a. It
-checks the call count is 1, 1 (cached), 2 (a different path), 3 (back to `path_a`, but
-recomputed, not restored from a 2-entry cache).
+checks the call count is 1, 1 (cached), 2 (a different file), 2 (back to `path_a`,
+restored from the kept results).
+
+**Assumptions:** None.
+
+#### `test_pns_levels_for_alternating_two_hardwares_runs_the_model_two_times`
+
+**Checks:** Two hardwares of one sequence alternated (a, b, a, b) run the SAFE model two
+times, not four: the cache keeps one result for each hardware.
+
+**How:** The test patches `pns.pns_levels` as above, and calls
+`pns.pns_levels_for(seq, gradient_asc=...)` with the keys `None` (the example hardware),
+a `.asc` file, `None`, the same file. It checks there were 2 calls.
 
 **Assumptions:** None.
 
 ### 2.12 PNS card (`test_pns_card.py`)
 
-`test_pns_card.py` tests `cards/pns.py`. `pns_data` is now `pns.pns_prediction`'s
-summary as a JSON-ready dict only (`reason`, `hardware`, `asc_file`, `example`,
-`peak_percent`, `peak_time_ms`, `axis_peaks_percent`); it no longer has `lanes`,
-`end_ms` or `peak_tr_ms`. `pns_card` keeps the status line, the table of peaks and
-the hardware note; it has no chart and no script (`Card.script` is `None`): the
-stimulation over time is now the PNS lane of the sequence diagram
-(`cards.diagram.diagram_card(..., pns=...)`), which shares its `PnsLevels`
-computation with this card through `pns.pns_levels_for`. A caller that wants the
-old "TR with the highest PNS" zoomed view adds `pns.peak_tr_window(seq, ...)` to
-the diagram card's own windows instead.
+`test_pns_card.py` tests `cards/pns.py`. `_pns_data` (private) is
+`pns.pns_prediction`'s summary as a JSON-ready dict only (`reason`, `hardware`,
+`asc_file`, `example`, `peak_percent`, `peak_time_ms`, `axis_peaks_percent`), from
+which the card's body is written; it no longer has `lanes`, `end_ms` or `peak_tr_ms`.
+`pns_card` keeps the status line, the table of peaks and the hardware note, and it has
+no chart: the stimulation over time is the PNS lane of the sequence diagram
+(`cards.diagram.diagram_card(..., pns_lane=True)`), which shares its `PnsLevels`
+computation with this card through `pns.pns_levels_for`. The card's own data is only
+what its script `assets/cards/pns.js` reads: `{"format": 1, "goto": ...}`, the message
+of the button that shows the peak in the diagram (the TR that holds the peak, or the
+block that holds it when the sequence has no `TR` definition). A card with no
+prediction has no button, no script and no data. The browser checks the button.
 
 Most of the tests use the synthetic spin echo sequence
 (`tests/synthetic.py`'s `spin_echo_sequence`) or the three-TR sequence built
@@ -2440,10 +2451,10 @@ axis peak, and that the axis peaks are keyed x, y and z.
 
 #### `test_pns_data_matches_pns_prediction`
 
-**Checks:** `pns_data`'s numbers are `pns.pns_prediction`'s own fields, converted to
+**Checks:** `_pns_data`'s numbers are `pns.pns_prediction`'s own fields, converted to
 percent and ms.
 
-**How:** The test computes `pns.pns_prediction(seq)` and `pns_data(seq)` for the
+**How:** The test computes `pns.pns_prediction(seq)` and `_pns_data(seq)` for the
 synthetic spin echo sequence and checks `peak_percent`, `peak_time_ms` and each axis of
 `axis_peaks_percent` against the prediction's `peak`, `peak_time_s` and `axis_peaks`
 (scaled and converted), within the rounding the card applies.
@@ -2456,7 +2467,7 @@ synthetic spin echo sequence and checks `peak_percent`, `peak_time_ms` and each 
 three-TR sequence, the card still reports the right peak time.
 
 **How:** For peak TR k = 0, 1 and 2, the test makes `_three_trs(k)`, computes
-`pns.pns_prediction` and `pns_data`, and checks that `peak_time_ms` matches the
+`pns.pns_prediction` and `_pns_data`, and checks that `peak_time_ms` matches the
 prediction's own `peak_time_s` (converted) and falls inside the TR `[50k, 50(k + 1)]`
 ms.
 
@@ -2468,7 +2479,7 @@ ms.
 #### `test_report_has_pns_card`
 
 **Checks:** For the synthetic spin echo sequence, the card has the id `"pns"`, the
-title "PNS prediction" and no script (`script is None`); its body has the below-limit
+title "PNS prediction" and the script `"pns"`; its body has the below-limit
 result, the example hardware warning, the hardware and peak rows, and no chart, no SVG
 and no PNS view buttons; and `render_page` accepts it, with the title.
 
@@ -2476,8 +2487,8 @@ and no PNS view buttons; and `render_page` accepts it, with the title.
 the body for the status text, "Example hardware, not a real scanner.", a cell with the
 example hardware name, the rows for the peak of all axes, Gx, Gy and Gz, and that the
 body has no `<div class="chart">`, no `<svg` and no `data-pns-view`. It renders the
-page and checks for the section element with the card's id (with no
-`data-card-script` attribute, since `Card.script` is `None`) and the title.
+page and checks for the section element with the card's id and the
+`data-card-script="pns"` attribute, and the title.
 
 **Assumptions:**
 
@@ -2497,12 +2508,49 @@ that there is no `<table>` element.
 #### `test_card_id_is_used_for_the_section_and_data_element`
 
 **Checks:** With a non-default `card_id`, the card's own id follows it, and its JSON
-data element key is that id too, so two PNS cards can be on one page without an id
-clash.
+data element key is that id too and holds the card's data, so two PNS cards can be on
+one page without an id clash.
 
 **How:** The test builds the card with `card_id="pns-b"` and checks that the card's own
-id and script (`None`) are as given, and that the rendered page has the section
-`id="pns-b"` and the data element `id="pns-b-data"`.
+id and script (`"pns"`) are as given. It renders the page, checks the section
+`id="pns-b"`, reads the data element `id="pns-b-data"` and checks that its JSON is the
+card's `data`.
+
+**Assumptions:** None.
+
+#### `test_data_with_a_tr_definition_has_the_peak_tr_and_the_peak_time`
+
+**Checks:** For a sequence with a `TR` definition, the card's data is
+`{"format": 1, "goto": {"t0S", "t1S", "anchorS"}}`: the range is the TR that
+`pns.peak_tr_window` gives, and the anchor is the peak time.
+
+**How:** The test builds the three-TR sequence with the peak in the second TR. It
+computes the prediction and the window with `pns.pns_prediction` and
+`pns.peak_tr_window`, and checks that the card's data equals the format, the window
+and the peak time exactly, and that the window is 50 ms to 100 ms.
+
+**Assumptions:** None.
+
+#### `test_data_without_a_tr_definition_has_the_block_of_the_peak`
+
+**Checks:** For a sequence without a `TR` definition, the card's data is
+`{"format": 1, "goto": {"block": k}}`, with `k` the play index of a block that holds
+the peak time.
+
+**How:** The test takes the synthetic spin echo sequence, checks that
+`pns.peak_tr_window` gives None for its peak time, and checks the key sets of the data.
+It reads the start and duration of block `k` from `seq_index.sequence_index` and checks
+that the block has a duration above zero and that the peak time is inside it.
+
+**Assumptions:** None.
+
+#### `test_card_without_gradients_has_no_data_and_no_script`
+
+**Checks:** A sequence with no gradients has no PNS prediction, so the card has no
+data, no script and no button.
+
+**How:** The test builds the card for the empty synthetic sequence and checks that
+`data` and `script` are None and that the body has no `<button`.
 
 **Assumptions:** None.
 
@@ -3239,22 +3287,22 @@ characters.
 
 #### `test_pns_false_by_default_adds_no_pns_key`
 
-**Checks:** Without `pns` (the default, `False`), the `file` entry has no `"pns"` key.
+**Checks:** Without `pns_lane` (the default, `False`), the `file` entry has no `"pns"` key.
 
 **How:** The test builds a diagram card for the synthetic spin echo sequence with no
-`pns` argument and checks that `"pns"` is not a key of the `file` entry.
+`pns_lane` argument and checks that `"pns"` is not a key of the `file` entry.
 
 **Assumptions:** None.
 
 #### `test_pns_true_adds_the_pns_key_with_the_example_hardware`
 
-**Checks:** With `pns=True`, the `file` entry gets a `"pns"` key with the example
+**Checks:** With `pns_lane=True`, the `file` entry gets a `"pns"` key with the example
 hardware, the SAFE parameters, the gradient raster, `gradScale`, `binSamples`, the
 summary and the stored level, all with the keys the plan's data section lists.
 
-**How:** The test builds a diagram card with `pns=True` for the synthetic spin echo
+**How:** The test builds a diagram card with `pns_lane=True` for the synthetic spin echo
 sequence, and checks the `"pns"` entry's key set, that `hardware` is
-`pns.EXAMPLE_HARDWARE`, `example` is True and `asc_file` is None, that `hw` has x, y, z
+`asc.EXAMPLE_HARDWARE`, `example` is True and `asc_file` is None, that `hw` has x, y, z
 each with the 8 SAFE fields, that `dtS` equals the sequence's own gradient raster time,
 that `gradScale` is exactly 1.0 (a proton sequence), that `binSamples` is positive,
 that the summary has `peak`, `peak_time_s` and `axis_peaks` with a peak between 0 and 1
@@ -3264,14 +3312,36 @@ and a peak time, and that `levels` has `min` and `max` tables of dtype `float32`
 
 #### `test_pns_asc_path_uses_the_gradient_asc_hardware`
 
-**Checks:** With `pns` set to a gradient `.asc` path, the `"pns"` entry uses that
+**Checks:** With `pns_lane=True` and `gradient_asc` set to a gradient `.asc` path, the `"pns"` entry uses that
 file's hardware, not the example hardware.
 
 **How:** The test writes a minimal gradient `.asc` file with pypulseq's example
 hardware's own PNS parameters (a local helper, the same technique as `test_pns.py`'s
 `write_gradient_asc` fixture: the real files are confidential), builds a diagram card
-with `pns` set to that path, and checks that the `"pns"` entry's `hardware` is the
+with `pns_lane=True` and `gradient_asc` set to that path, and checks that the `"pns"` entry's `hardware` is the
 file's name, `example` is False and `asc_file` is the file's name.
+
+**Assumptions:** None.
+
+#### `test_gradient_asc_without_pns_lane_raises_value_error`
+
+**Checks:** `gradient_asc` without `pns_lane=True` raises `ValueError` (the file would
+be ignored).
+
+**How:** The test writes a minimal gradient `.asc` file (the local helper) and builds a
+diagram card with `gradient_asc` set to it and no `pns_lane`. It checks the
+`ValueError`, which names `gradient_asc`.
+
+**Assumptions:** None.
+
+#### `test_pns_lane_that_is_not_a_bool_raises_type_error`
+
+**Checks:** A `pns_lane` that is not a `bool` raises `TypeError`, also for the values
+that are like a bool (`1`, `0`, and a NumPy bool).
+
+**How:** For each of `1`, `0`, `"yes"`, `None` and `np.True_`, the test builds a
+diagram card for the synthetic spin echo sequence with that `pns_lane` and checks the
+`TypeError`, which names `pns_lane`.
 
 **Assumptions:** None.
 
@@ -3282,17 +3352,17 @@ a sequence built with a non-proton gyromagnetic ratio.
 
 **How:** The test builds a one-block x-trapezoid sequence on a system with
 `gamma=11.262e6` (sodium, the same value the golden test of task 4.5 uses), builds a
-diagram card with `pns=True`, and checks the `"pns"` entry's `gradScale` equals
+diagram card with `pns_lane=True`, and checks the `"pns"` entry's `gradScale` equals
 `seq_utils.GAMMA / seq.system.gamma` and is not 1.0.
 
 **Assumptions:** None.
 
 #### `test_pns_without_gradients_adds_no_pns_key`
 
-**Checks:** A file with no gradient event gets no `"pns"` key even when `pns` is not
-False.
+**Checks:** A file with no gradient event gets no `"pns"` key even when `pns_lane` is
+true.
 
-**How:** The test builds a diagram card with `pns=True` for the synthetic sequence
+**How:** The test builds a diagram card with `pns_lane=True` for the synthetic sequence
 with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks that
 `"pns"` is not a key of the `file` entry.
 
@@ -3303,7 +3373,7 @@ with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks tha
 **Checks:** The `"levels"` key of the `"pns"` entry, decoded, equals
 `pns.pns_levels_for(seq)`'s own `level_min`/`level_max` exactly.
 
-**How:** The test builds a diagram card with `pns=True` for the synthetic spin echo
+**How:** The test builds a diagram card with `pns_lane=True` for the synthetic spin echo
 sequence, decodes the `"pns"` entry's `"levels"` with `diagram_data.decode_tables`, and
 compares the two arrays' dtype (`float32`) and values (`numpy.array_equal`) against
 `pns.pns_levels_for(seq).level_min`/`level_max`.
@@ -3342,11 +3412,11 @@ that `id="my-diagram-groups"` appears on the group-controls container.
 #### `test_group_controls_container_present_even_without_pns_data`
 
 **Checks:** The group-controls container is present even when the card has no
-PNS lane: it is not conditional on `pns`, since the RF, ADC and gradient groups
+PNS lane: it is not conditional on `pns_lane`, since the RF, ADC and gradient groups
 can be toggled regardless, and the card script fills it in the browser with one
 button for each group that applies to the file's own data.
 
-**How:** The test builds a diagram card with no `pns` argument (`pns=False`, the
+**How:** The test builds a diagram card with no `pns_lane` argument (`pns_lane=False`, the
 default) and checks that the empty group-controls container is present in the
 body.
 
@@ -3356,11 +3426,11 @@ body.
 
 **Checks:** The card's body always has the |G| lane's explanation sentence (naming
 the |G| lane and that it shows the magnitude of the gradient vector), whether or not
-`pns` is given: the |G| lane needs no extra data from `diagram_card` (`docs/plans/
+`pns_lane` is given: the |G| lane needs no extra data from `diagram_card` (`docs/plans/
 diagram-lanes.md`, phase 5; it is computed in the browser from the tables already
 sent), unlike the PNS sentence.
 
-**How:** The test builds a diagram card with no `pns` argument (`pns=False`, the
+**How:** The test builds a diagram card with no `pns_lane` argument (`pns_lane=False`, the
 default) for the synthetic spin echo sequence and checks that each of the two phrases
 ("|G| lane", "magnitude of the gradient vector") appears in the body.
 
@@ -3380,11 +3450,11 @@ has no gradient), so its sentence is not keyed on the file's own data either.
 
 #### `test_pns_explanation_sentence_present_when_the_card_has_pns_data`
 
-**Checks:** With `pns=True` and a sequence with gradients, the card's body has
+**Checks:** With `pns_lane=True` and a sequence with gradients, the card's body has
 the PNS lane's explanation sentence (naming the PNS lane, that it is a percent
 of the SAFE stimulation limit, and the "10 s or less" exact-view span).
 
-**How:** The test builds a diagram card with `pns=True` for the synthetic spin
+**How:** The test builds a diagram card with `pns_lane=True` for the synthetic spin
 echo sequence and checks that each of the three phrases ("PNS lane", "percent
 of the SAFE stimulation limit", "10 s or less") appears in the body.
 
@@ -3392,21 +3462,21 @@ of the SAFE stimulation limit", "10 s or less") appears in the body.
 
 #### `test_pns_explanation_sentence_absent_by_default`
 
-**Checks:** Without `pns` (the default, `False`), the explanation sentence is
+**Checks:** Without `pns_lane` (the default, `False`), the explanation sentence is
 absent.
 
-**How:** The test builds a diagram card with no `pns` argument and checks that
+**How:** The test builds a diagram card with no `pns_lane` argument and checks that
 none of the three explanation phrases appears in the body.
 
 **Assumptions:** None.
 
 #### `test_pns_explanation_sentence_absent_without_gradients_even_with_pns_true`
 
-**Checks:** A file with no gradient event gets no `"pns"` key even when `pns` is
-not False, so it gets no explanation sentence either: the sentence is keyed on
-the data (`has_pns`), not on the `pns` argument alone.
+**Checks:** A file with no gradient event gets no `"pns"` key even when `pns_lane` is
+true, so it gets no explanation sentence either: the sentence is keyed on
+the data (`has_pns`), not on the `pns_lane` argument alone.
 
-**How:** The test builds a diagram card with `pns=True` for the synthetic
+**How:** The test builds a diagram card with `pns_lane=True` for the synthetic
 sequence with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and
 checks that none of the three explanation phrases appears in the body.
 
@@ -5182,7 +5252,7 @@ example-hardware, on-raster case.
 `arbitrary_gradient_sequence()` and `synthetic.border_sequence()` (two
 `pp.make_extended_trapezoid` blocks on x, the second continuing the first's
 amplitude with no step, so `add_block` accepts the junction). The reference peak,
-peak time (the first sample at or above `peak * (1 - pns.PEAK_TOLERANCE)`, as
+peak time (the first sample at or above `peak * (1 - PEAK_TOLERANCE)`, as
 `PnsPrediction.peak_time_s`) and axis peaks come from
 `seq.calculate_pns(safe_example_hw(), do_plots=False)`. `pns_levels(seq)`'s fields
 are compared with `pytest.approx`: the
@@ -5267,7 +5337,7 @@ bins, so the sizes give chunks of 1, 2 and 7 bins and one chunk bigger than the 
 
 #### `test_no_gradients`
 
-**Checks:** A sequence with no gradient event gives `reason=pns.NO_GRADIENTS`, no
+**Checks:** A sequence with no gradient event gives `reason=NO_GRADIENTS`, no
 stored bins, a peak of 0, `peak_time_s` of `None`, zero axis peaks, and still the
 example hardware and its `hw` fields.
 
