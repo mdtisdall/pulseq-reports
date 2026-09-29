@@ -2,9 +2,9 @@
 card, simulated in the browser (`docs/plans/rf-profiles.md`, section 4.5).
 
 This module builds the Python half of the card: the RF table, the pulse list of each
-file, and the card's options. The browser half (`assets/cards/rf-profile.js`, a later
-phase) reads this data with `RfProfiles` (`assets/rf_profiles.js`) and the sequence view
-of the diagram card (`SeqLanes.sequenceView`).
+file, and the card's options. The card script (`assets/cards/rf-profile.js`) reads this
+data with `RfProfiles` (`assets/rf_profiles.js`) and the sequence view of the diagram
+card (`SeqLanes.sequenceView`), which it gets from the diagram's `sequence` messages.
 
 The card needs an RF use label on every RF event of a file (decision 22 of the plan):
 `rf_profiles.rf_uses_labeled` tells the caller so before it adds the card. A file
@@ -335,7 +335,7 @@ def rf_profile_card(
 ) -> Card:
     """The "RF pulse profiles" card (`docs/plans/rf-profiles.md`, section 4.5): the RF
     pulses of the period at the cursor of the sequence diagram card `diagram_card_id`,
-    simulated in the browser (a later phase).
+    simulated in the browser by the card script (`assets/cards/rf-profile.js`).
 
     `seqs` must be the list of the diagram card `diagram_card_id`, with the same names:
     the card script matches the files of the diagram's `sequence` messages by name,
@@ -369,9 +369,11 @@ def rf_profile_card(
     the elements for the pulses of the period at the cursor and the combined profile of
     the first echo (both empty here, and the combined one hidden, until the card script
     fills them), the note of section 4.3, item 7 (`PRIMARY_ECHO_TITLE`,
-    `PRIMARY_ECHO_NOTE`), and a table of the distinct pulses of each labeled file, with a
-    "Show" button in each row that the card script uses to move the diagram
-    (`data-file` is the file's index in `seqs`, `data-block` its first block).
+    `PRIMARY_ECHO_NOTE`: the first paragraph of the combined element, which the card
+    script hides above a period without a combined profile), and a table of the distinct
+    pulses of each labeled file, with a "Show" button in each row that the card script
+    uses to move the diagram (`data-file` is the file's index in `seqs`, `data-block` its
+    first block; the script sends `goto` with the file's name).
     """
     if not seqs:
         raise ValueError("rf_profile_card needs at least one sequence")

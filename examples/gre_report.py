@@ -26,6 +26,7 @@ from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.cards.rf_exposure import rf_exposure_card
+from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.cards.timing import timing_card
 from pulseq_reports.page import write_page
@@ -132,6 +133,7 @@ def main(output: Path) -> None:
         timing_card(seqs),
         rf_exposure_card(seqs),
         diagram_card(seqs, windows, pns=True),
+        rf_profile_card(seqs, views=("profile", "z_df")),
         spectrum_card(seqs),
         pns_card(named),
         gradient_limits_card(seqs),

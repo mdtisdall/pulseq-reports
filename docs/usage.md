@@ -80,9 +80,11 @@ from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.cards.rf_exposure import rf_exposure_card
+from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.cards.timing import timing_card
 from pulseq_reports.page import write_page
+from pulseq_reports.rf_profiles import rf_uses_labeled
 from pulseq_reports.seq_utils import NamedSequence
 from pulseq_reports.waveforms import TimeWindow, first_adc_window, full_window
 
@@ -102,6 +104,10 @@ cards = [
     timing_card(seqs),
     rf_exposure_card(seqs),
     diagram_card(seqs, windows, pns=True),
+]
+if rf_uses_labeled(seq):
+    cards.append(rf_profile_card(seqs, views=("profile", "z_df")))
+cards += [
     spectrum_card(seqs),
     pns_card(named),
     gradient_limits_card(seqs),
@@ -124,6 +130,12 @@ takes the list `seqs`.
 `pns_card` and `diagram_card`'s PNS lane (`pns=True` here) share one PNS
 computation for each sequence (`pns.pns_levels_for`), so this page runs the
 SAFE model once for `named`, not twice.
+
+`rf_profile_card` shows the RF pulses of the period at the cursor of the
+diagram card, so it goes on a page with that diagram card, and it needs a use
+label on each RF pulse: `rf_uses_labeled` checks that first. Without the
+labels, the card shows a note in place of the profiles (see "The RF profile
+card" in section 5).
 
 The card order above is a suggestion, not a requirement: `write_page` puts
 the cards on the page in the order of the `cards` list.
@@ -536,9 +548,121 @@ the same file can use them as keys.
 | `cards.gradient_limits.gradient_limits_card(seqs, window=None, limits=None)` | Peak amplitude, peak slew rate and RMS amplitude of each logical axis and of the three-axis vector, as a percent of the hardware limits. |
 | `cards.diagram.diagram_card(seqs, windows, pns=False)` | RF magnitude and phase, the ADC gate, Gx, Gy, Gz, \|G\| and, when `pns` is not `False`, a PNS lane, against time, with one button for each window and one for each lane group. |
 | `cards.blocks.blocks_card(seqs, windows=None, max_rows=500)` | A collapsed, block-by-block table: block id, start, duration and events. |
+| `cards.rf_profile.rf_profile_card(seqs, diagram_card_id="diagram", views=("profile",), plane=None, extent_m=None)` | The RF pulses of the period at the cursor of a diagram card, simulated in the browser: each distinct pulse with its 1D profile and its widths, the combined profile of the first echo, optional maps, and the distinct pulses of each file with a button that moves the diagram to each one. Needs RF use labels. |
 
-All eight functions take `card_id` with a default, so a page can hold two
+All nine functions take `card_id` with a default, so a page can hold two
 cards built by the same function.
+
+### The RF profile card
+
+```python
+from pulseq_reports.cards.rf_profile import rf_profile_card
+from pulseq_reports.rf_profiles import rf_uses_labeled
+
+cards = [diagram_card(seqs, windows)]
+if all(rf_uses_labeled(named.seq) for named in seqs):
+    cards.append(rf_profile_card(seqs, views=("profile", "z_df")))
+```
+
+`rf_profile_card` simulates the RF pulses of a sequence in the browser, as
+they play: the RF with its frequency and phase offsets, and the gradients of
+its block, with a spin-domain (Cayley-Klein) rotation for each RF sample and
+no relaxation. It sends no profiles in the page: only the RF table of each
+file, from which the browser computes the pulses that you point at.
+
+**One diagram card.** The card follows the diagram card `diagram_card_id`
+through its messages ("Messages between cards", section 4), and never reads
+its data. Give the card the same list of files as that diagram card, with
+the same names: the card matches the diagram's files by name, so the names
+must be unique (`ValueError` otherwise). The card needs that diagram card on
+the page.
+
+**The period.** The card shows the period that holds the diagram's marker (a
+click or the arrow keys set it; Escape or Reset clears it), or the hover
+cursor when there is no marker. A block starts a period when it has an RF
+pulse that is not a refocusing pulse and the last block before it with an RF
+pulse or an ADC has an ADC; the first block with an RF pulse always starts
+one. So a period of a GRE is one TR, a period of a TSE is one echo train, and
+dummy scans without an ADC are in the period of the first ADC after them. A
+move of the cursor inside the period changes nothing, and the card keeps the
+last period when the cursor leaves the diagram.
+
+**What it shows.** A status line with the file, the blocks and the time of
+the period. For each distinct pulse of the period (its blocks with the same
+RF event, without its phase offsets, and the same gradients during the RF): a
+table row (use, count, gradient, flip angle, peak B1, energy, W, slice
+centre, FWHM, 10–90 % edge, passband ripple, stopband level, and for an
+excitation the rephasing error, the non-linear residual and the centre phase)
+and a chart of its 1D profile, with the band of W shaded:
+
+| Use | Lanes |
+|---|---|
+| excitation | \|Mxy\|, Mz, and the phase at the echo |
+| refocusing | \|β\|² |
+| inversion, saturation | Mz |
+| preparation, other | \|Mxy\|, Mz |
+
+W is the `SliceThickness` definition. A pulse with a gradient in one
+direction has its profile along that direction, in mm, over c ± 2W around
+its slice centre c (without W, over twice the width of its RF spectrum over
+the gradient); a pulse without a gradient has its profile against the
+frequency offset Δf. The phase at the echo follows the primary echo pathway
+from the end of the RF to the centre of the next ADC: the gradient moments
+of the blocks between, with a change of sign at each refocusing pulse. The
+rephasing error is the linear phase across W that the sequence leaves, and
+the non-linear residual is the phase of the pulse itself after the best
+linear rephasing. Last, the card lists the distinct pulses of each file,
+with a "Show" button that moves the diagram to the first block of each one.
+
+**The combined profile of the first echo.** For a period with an excitation
+and refocusing pulses before its first ADC, the card also shows their
+combined effect, with this note:
+
+> **Primary echo pathway only.** This is the excitation |Mxy| times |β|² of
+> each refocusing pulse before the first ADC of this period, with ideal
+> crushers. It does not include the FID or stimulated-echo pathways, the
+> later echoes of an echo train, the effect of preparation pulses, or
+> relaxation.
+
+Pulses on one direction give a chart with a lane for each pulse and one for
+the product. Pulses on two or three directions give numbers (the signal
+kept, the fraction inside W, the signal at the slice centres), and with the
+`"2d"` view a map of the two directions, or the three central sections. A
+pulse without a gradient is a factor, its value at the centre. A GRE has no
+combined profile, and the card shows nothing for it.
+
+**Options.**
+
+| Option | Effect |
+|---|---|
+| `views` | `"profile"` (the 1D profiles, always; it must be in the list), `"z_df"` (for each pulse with a gradient in one direction, a map of the select coordinate against Δf), `"2d"` (a map on two spatial axes of a pulse whose gradient direction changes during the RF, and the map of a combined profile on two or three directions). The page has no control for them: the caller chooses. |
+| `plane` | The two logical axes, for example `("x", "y")`, of the `"2d"` map of a pulse whose gradient direction changes. Default: the two axes with the largest RMS gradient during the RF. |
+| `extent_m` | The width of that map on each axis, in m. Default: the `FOV` definition. Without both, the card shows the reason in place of the map. |
+| `diagram_card_id` | The id of the diagram card to follow. Default `"diagram"`. |
+
+A map computes in slices while the page stays responsive, with a progress
+text; a move to another period stops it, and it goes on when you come back.
+The card keeps the profiles and maps of the last 64 distinct pulses.
+
+**RF use labels.** The card must know which pulses excite and which refocus.
+`rf_profiles.rf_uses_labeled(seq)` returns `False` when an RF event of `seq`
+has the use `undefined`, which is the default of each pypulseq
+`make_*_pulse` function: set `use=` there (`"excitation"`, `"refocusing"`,
+`"inversion"`, `"saturation"`, `"preparation"`). The card does not raise for
+such a file: it shows a note for the file with the count of pulses without a
+label, and the other files of the card still work. Two cases need care:
+
+- A `.seq` file older than format 1.5 has no use labels, and
+  `Sequence.read` reads each use as `undefined`. With
+  `seq.read(path, detect_rf_use=True)`, pypulseq guesses them: a flip angle
+  below 90.01° is `excitation`, any other pulse is `refocusing`, or
+  `saturation` when it is longer than 6 ms and between −3.5 and −3.4 ppm off
+  resonance. So an inversion pulse reads as `refocusing`. The library cannot
+  tell a guessed label from one that the author set: check the guesses, or
+  set the labels yourself.
+- pypulseq (1.5.0.post1, and the fork that this library pins) stores
+  `use="other"` as `undefined`, so a file with such a pulse gets the note.
+  Use another label for it.
 
 ## Notes
 
@@ -557,8 +681,8 @@ example µT, mT/m, T/m/s and percent, are named in each card's table.
 
 The Pulseq rotation extension rotates the gradients of a block on the
 scanner. `pulseq-reports` does not support it yet: `spectrum_card`,
-`pns_card`, `gradient_limits_card` and `diagram_card` raise
-`NotImplementedError` for a sequence that uses it
+`pns_card`, `gradient_limits_card`, `diagram_card` and `rf_profile_card`
+raise `NotImplementedError` for a sequence that uses it
 (`extensions.refuse_rotations`). The RF exposure, timing, definitions and
 block table cards do not use the gradients, so they accept a sequence with
 rotations.

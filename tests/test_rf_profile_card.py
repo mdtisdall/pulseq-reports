@@ -12,6 +12,7 @@ import dataclasses
 import html
 import math
 import re
+from pathlib import Path
 
 import numpy as np
 import pypulseq as pp
@@ -20,6 +21,7 @@ from pypulseq.event_lib import EventLibrary
 
 from pulseq_reports import page
 from pulseq_reports import rf_profiles as rp
+from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.rf_profile import (
     PRIMARY_ECHO_NOTE,
     PRIMARY_ECHO_TITLE,
@@ -29,6 +31,7 @@ from pulseq_reports.cards.rf_profile import (
 )
 from pulseq_reports.diagram_data import decode_tables, encode_tables
 from pulseq_reports.seq_utils import NamedSequence, hold_samples
+from pulseq_reports.waveforms import full_window
 
 SYSTEM = pp.Opts(
     max_grad=30,
@@ -489,3 +492,87 @@ def test_sequence_without_rf_has_an_empty_entry_and_no_pulses_note():
 
     card = rf_profile_card([NamedSequence("a.seq", seq)])
     assert '<p class="muted">No RF pulses.</p>' in card.body_html
+
+
+# ---- 10. What the card script reads ----
+
+
+def _spin_echo():
+    """Excitation (sinc on z), a crusher, a refocusing pulse (sinc on y), a crusher and
+    the readout."""
+    rf_ex, gz_ex, _ = _sinc("excitation")
+    rf_ref, gz_ref, _ = _sinc("refocusing", math.pi, phase_offset=math.pi / 2)
+    gz_ref.channel = "y"
+    gx, adc = _readout()
+    seq = _new()
+    seq.add_block(rf_ex, gz_ex)
+    seq.add_block(_trap("y", CRUSHER_AREA))
+    seq.add_block(rf_ref, gz_ref)
+    seq.add_block(_trap("y", CRUSHER_AREA))
+    seq.add_block(gx, adc)
+    return seq
+
+
+def test_page_has_the_card_script_and_the_elements_it_reads():
+    """A page with a diagram card and this card, for two files and a third without use
+    labels (`assets/cards/rf-profile.js` is DOM code, with no Node test: decision 10 of
+    `docs/plans/pulseq-reports.md`): the page has the card script once; the data names
+    the diagram card; the body has the elements that the script reads by id (the status
+    line with `aria-live`, the pulses element, the combined element, hidden, with the
+    combined body inside it), and the primary echo note is the first paragraph of the
+    combined element (the script hides that paragraph above a period without a combined
+    profile). The "Show" buttons are exactly one for each distinct pulse of each labeled
+    file: `data-file` its index in the card's list (the script sends the name of that
+    file) and `data-block` its first block."""
+    unlabeled = _new()
+    unlabeled.add_block(
+        pp.make_block_pulse(
+            flip_angle=0.1, duration=0.2e-3, delay=SYSTEM.rf_dead_time, system=SYSTEM
+        )
+    )
+    seqs = [
+        NamedSequence("gre.seq", _gre(3, rf_spoiling=True)),
+        NamedSequence("old.seq", unlabeled),
+        NamedSequence("se.seq", _spin_echo()),
+    ]
+    windows = [full_window(seqs, i) for i in range(len(seqs))]
+    card = rf_profile_card(seqs, diagram_card_id="diagram")
+    result = page.render_page("Title", "Subtitle", [diagram_card(seqs, windows), card])
+
+    assert result.count('PulseqReport.registerCard("rf-profile"') == 1
+    assert page.card_asset("rf-profile") in result
+    assert card.data["diagram_card_id"] == "diagram"
+
+    body = card.body_html
+    assert '<p class="muted" id="rf-profile-status" aria-live="polite">' in body
+    assert '<div id="rf-profile-pulses"></div>' in body
+    combined = re.search(
+        r'<div id="rf-profile-combined" hidden><h3>[^<]*</h3>\s*<p>(.*?)</p>\s*'
+        r'<div id="rf-profile-combined-body"></div></div>',
+        body,
+        re.DOTALL,
+    )
+    assert combined is not None
+    assert combined.group(1).startswith(f"<strong>{PRIMARY_ECHO_TITLE}</strong>")
+
+    buttons = re.findall(r'<button type="button" data-file="(\d+)" data-block="(\d+)">', body)
+    expected = [
+        (str(i), str(p["first_block"]))
+        for i, entry in enumerate(card.data["files"])
+        if entry["labeled"]
+        for p in entry["pulses"]
+    ]
+    assert buttons == expected
+    assert {i for i, _ in buttons} == {"0", "2"}
+
+
+def test_usage_md_has_the_primary_echo_note_word_for_word():
+    """`docs/usage.md` has the primary echo note (task 5.3, item 7: the card HTML, the
+    card script and the documents use one text): `PRIMARY_ECHO_TITLE` in bold, then
+    `PRIMARY_ECHO_NOTE`, word for word, in a Markdown quote. The comparison drops the
+    quote marks at the start of each line and joins the lines with one space, so the
+    line breaks of the Markdown source do not matter."""
+    usage = (Path(__file__).parent.parent / "docs" / "usage.md").read_text(encoding="utf-8")
+    text = " ".join(line.removeprefix(">").strip() for line in usage.splitlines())
+    text = re.sub(r"\s+", " ", text)
+    assert f"**{PRIMARY_ECHO_TITLE}** {PRIMARY_ECHO_NOTE}" in text
