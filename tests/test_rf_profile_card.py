@@ -36,9 +36,9 @@ from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.rf_profile import (
     PRIMARY_ECHO_NOTE,
     PRIMARY_ECHO_TITLE,
+    _rf_profile_data,
+    _rf_table,
     rf_profile_card,
-    rf_profile_data,
-    rf_table,
 )
 from pulseq_reports.diagram_data import decode_tables, encode_tables
 from pulseq_reports.seq_utils import hold_samples
@@ -87,7 +87,7 @@ def test_rf_table_matches_hold_samples_and_definitions():
     seq.add_block(rf_ref, gz_ref)
     seq.add_block(block)
 
-    table = rf_table(seq)
+    table = _rf_table(seq)
     expected_dtypes = {
         "key": np.uint32,
         "use": np.uint8,
@@ -110,7 +110,7 @@ def test_rf_table_matches_hold_samples_and_definitions():
     for k, use in enumerate(["excitation", "refocusing", "saturation"]):
         # The RF as pypulseq stores and rebuilds it (`seq.get_block`), not the object
         # given to `add_block`: the rebuilt samples can differ from the given ones by
-        # float rounding. This is the same "rf" that `rf_table` itself reads.
+        # float rounding. This is the same "rf" that `_rf_table` itself reads.
         rf = seq.get_block(k + 1).rf
         baseband, dt = hold_samples(rf, system.rf_raster_time)
         at, n = int(decoded["shape_at"][k]), int(decoded["shape_n"][k])
@@ -135,25 +135,25 @@ def test_rf_table_shares_one_shape_for_an_rf_spoiled_gre():
     the pools (every event shares the same baseband bytes), and one key (the phase
     offset is not part of the key). The same GRE with two slices (two frequency offsets)
     gives two keys and still one shape."""
-    table = rf_table(_gre(24, rf_spoiling=True))
+    table = _rf_table(_gre(24, rf_spoiling=True))
     assert table["key"].size > 1
     assert len(set(table["key"].tolist())) == 1
     assert table["shape_re"].size == int(table["shape_n"][0])
     assert table["shape_im"].size == int(table["shape_n"][0])
     np.testing.assert_array_equal(table["shape_at"], 0)
 
-    two_slices = rf_table(_gre(1, slices=(-5e-3, 5e-3)))
+    two_slices = _rf_table(_gre(1, slices=(-5e-3, 5e-3)))
     assert set(two_slices["key"].tolist()) == {0, 1}
     assert two_slices["shape_re"].size == int(two_slices["shape_n"][0])
     np.testing.assert_array_equal(two_slices["shape_at"], 0)
 
 
 def test_rf_table_of_a_sequence_without_rf_is_empty():
-    """A sequence without RF: every column and both pools of rf_table have length 0."""
+    """A sequence without RF: every column and both pools of _rf_table have length 0."""
     seq = _new()
     seq.add_block(_trap("x", 100.0))
     seq.add_block(pp.make_delay(1e-3))
-    table = rf_table(seq)
+    table = _rf_table(seq)
     for name, arr in table.items():
         assert arr.size == 0, name
 
@@ -171,7 +171,7 @@ def test_rf_table_raises_without_labels():
         )
     )
     with pytest.raises(ValueError, match="rf_uses_labeled"):
-        rf_table(seq)
+        _rf_table(seq)
 
 
 # ---- 3. The pulse list and the other file-entry keys ----
@@ -194,7 +194,7 @@ def test_pulse_list_and_file_entry_keys():
     seq.add_block(block)
     seq.add_block(_hard("inversion", duration=0.8e-3), turn_x, turn_y)
 
-    entry = rf_profile_data(seq)
+    entry = _rf_profile_data(seq)
     assert entry["labeled"] is True
     assert entry["pulses"] == [dataclasses.asdict(p) for p in rp.pulse_list(seq)]
     assert len(entry["pulses"]) == 4
@@ -206,7 +206,7 @@ def test_pulse_list_and_file_entry_keys():
 
     without_fov = _new()
     without_fov.add_block(_hard("excitation", duration=0.4e-3))
-    assert rf_profile_data(without_fov)["fov_m"] is None
+    assert _rf_profile_data(without_fov)["fov_m"] is None
 
     card = rf_profile_card(seq)
     assert card.body_html.count("<button") == len(entry["pulses"])
@@ -376,7 +376,7 @@ def test_sequence_without_rf_has_an_empty_entry_and_no_pulses_note():
     seq.add_block(_trap("x", 100.0))
     seq.add_block(pp.make_delay(1e-3))
 
-    entry = rf_profile_data(seq)
+    entry = _rf_profile_data(seq)
     assert entry["labeled"] is True
     assert entry["first_rf_block"] is None
     assert entry["pulses"] == []

@@ -21,7 +21,7 @@ def test_timing_card_for_one_sequence_matches_timing_html():
     card = timing.timing_card(seq)
     assert card.id == "timing"
     assert card.title == "Timing check"
-    assert card.body_html == timing._timing_html(timing.timing_errors(seq))
+    assert card.body_html == timing._timing_html(timing._timing_errors(seq))
     assert "Timing check passed" in card.body_html
     assert card.data is None
     assert card.script is None
@@ -29,7 +29,7 @@ def test_timing_card_for_one_sequence_matches_timing_html():
 
 def test_timing_card_lists_timing_errors_for_one_sequence():
     seq = _bad_sequence()
-    errors = timing.timing_errors(seq)
+    errors = timing._timing_errors(seq)
     assert any(e.get("error_type") == "RF_DEAD_TIME" for e in errors)
     card = timing.timing_card(seq)
     assert "Timing check failed" in card.body_html

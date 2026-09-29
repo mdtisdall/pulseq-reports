@@ -490,6 +490,7 @@ def _range_result(
 
 def gradient_limits(
     seq: pp.Sequence,
+    *,
     window: tuple[float, float] | None = None,
     limits: HardwareLimits | None = None,
 ) -> GradientLimits:

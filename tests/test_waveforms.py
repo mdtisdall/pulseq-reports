@@ -101,7 +101,7 @@ def test_range_that_cuts_a_block_includes_it_whole_and_pads_at_its_own_edges():
 
     start_s = refocus.start_s + refocus.duration_s / 2  # inside the RF block
     end_s = crusher2.start_s + crusher2.duration_s / 2  # inside the crusher block
-    by_id = {lane["id"]: lane for lane in waveforms.file_lanes(seq, start_s, end_s)}
+    by_id = {lane["id"]: lane for lane in waveforms.file_lanes(seq, start_s=start_s, end_s=end_s)}
 
     (rf_segment,) = by_id["rf_mag"]["segments"]
     assert rf_segment[0][0] == pytest.approx(refocus.start_s * 1e3, abs=1e-4)
@@ -161,10 +161,10 @@ def test_block_rows_with_max_rows_and_range():
     # A range keeps only the blocks that overlap it: one whole TR out of five.
     period = waveforms.duration_s(seq) / num_trs
     start_s, end_s = 2 * period, 3 * period
-    ranged_rows, ranged_total = waveforms.block_rows(seq, start_s, end_s)
+    ranged_rows, ranged_total = waveforms.block_rows(seq, start_s=start_s, end_s=end_s)
     assert 0 < ranged_total < total
     ranged_limited_rows, ranged_limited_total = waveforms.block_rows(
-        seq, start_s, end_s, max_rows=2
+        seq, start_s=start_s, end_s=end_s, max_rows=2
     )
     assert ranged_limited_total == ranged_total
     assert len(ranged_limited_rows) == 2

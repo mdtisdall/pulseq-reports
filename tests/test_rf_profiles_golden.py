@@ -5,7 +5,7 @@ vb-pulseq-like sequences, the example GRE, and a few more that section 4.2/4.3 o
 plan singles out (a turning gradient, no `SliceThickness`, another nucleus).
 
 `_run_golden` writes one sequence's encoded diagram tables, its lane metadata, its RF
-profile card file entry (`cards.rf_profile.rf_profile_data`, with the RF table) and a
+profile card file entry (`cards.rf_profile._rf_profile_data`, with the RF table) and a
 list of queries to a JSON file; runs `tests/js/golden_rf_profiles.js` with Node on it;
 and reads back the JSON result. The Node half decodes the tables, builds
 `SeqLanes.sequenceView`, decodes the RF table and builds `RfProfiles.fileData`, and
@@ -27,7 +27,7 @@ Tolerances, each with its reason (also see the module-level constants below):
    `freq_offset_hz` are exact (not merely close) because both languages read them
    straight from the RF table's `dt` and `freq_hz` columns, which `rf_profiles.py`'s own
    `_pulse_core` computes with the same formula in the same order as
-   `cards.rf_profile.rf_table`, so the two Python computations already agree bit for bit
+   `cards.rf_profile._rf_table`, so the two Python computations already agree bit for bit
    before either one is ever sent to JavaScript.
 2. **The pulse key partition** (`_check_key_map`): a Python key is a tuple and a
    JavaScript key is a string, so they are never compared by value. Instead, every block
@@ -110,7 +110,7 @@ import test_rf_profiles as cases  # the phase 2 test sequences and their builder
 
 from pulseq_reports import diagram_data
 from pulseq_reports import rf_profiles as rp
-from pulseq_reports.cards.rf_profile import rf_profile_data
+from pulseq_reports.cards.rf_profile import _rf_profile_data
 from pulseq_reports.seq_index import sequence_index
 
 _GOLDEN_SCRIPT = Path(__file__).parent / "js" / "golden_rf_profiles.js"
@@ -845,7 +845,7 @@ def test_rf_profiles_js_matches_python_reference(name, tmp_path):
         "format": 1,
         "tables": diagram_data.encode_tables(tables),
         "lanes": diagram_data.lane_meta(seq, tables=tables),
-        "file": rf_profile_data(seq),
+        "file": _rf_profile_data(seq),
         "queries": queries,
     }
     in_path = tmp_path / "in.json"

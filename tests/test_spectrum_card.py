@@ -2,8 +2,8 @@ import pytest
 from synthetic import empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page
-from pulseq_reports.cards.spectrum import spectrum_card, spectrum_data
-from pulseq_reports.grad_spectrum import AcousticResonance
+from pulseq_reports.cards.spectrum import _spectrum_data, spectrum_card
+from pulseq_reports.grad_spectrum import AcousticResonance, GradientCoil, gradient_spectrum
 
 
 @pytest.fixture(scope="module")
@@ -12,7 +12,7 @@ def default_seq():
 
 
 def test_spectrum_data_for_spin_echo(default_seq):
-    data = spectrum_data(default_seq)
+    data = _spectrum_data(gradient_spectrum(default_seq))
 
     assert data["reason"] is None
     assert data["resonances"] == [
@@ -52,14 +52,10 @@ def test_report_without_gradients_has_no_spectrum_chart():
     assert 'id="gradient-spectrum-diagram"' not in result
 
 
-def test_custom_scanner_label_and_resonances_appear(default_seq):
+def test_custom_coil_label_and_resonances_appear(default_seq):
     custom_resonances = (AcousticResonance(frequency_hz=700.0, bandwidth_hz=40.0),)
 
-    card = spectrum_card(
-        default_seq,
-        resonances=custom_resonances,
-        scanner_label="Acme Scanner",
-    )
+    card = spectrum_card(default_seq, coil=GradientCoil("Acme Scanner", custom_resonances))
 
     assert "Acme Scanner forbidden band (Hz)" in card.body_html
     assert "the Acme Scanner forbidden bands" in card.body_html
@@ -67,18 +63,16 @@ def test_custom_scanner_label_and_resonances_appear(default_seq):
     assert "700 ± 20 Hz" in card.body_html
     assert card.data["resonances"] == [{"frequency_hz": 700.0, "bandwidth_hz": 40.0}]
     assert [(b["low_hz"], b["high_hz"]) for b in card.data["bands"]] == [(680.0, 720.0)]
-    expected_bands = spectrum_data(default_seq, resonances=custom_resonances)["bands"]
+    expected_bands = _spectrum_data(gradient_spectrum(default_seq, resonances=custom_resonances))[
+        "bands"
+    ]
     assert card.data["bands"] == expected_bands
 
 
-def test_scanner_label_is_escaped_in_the_note(default_seq):
+def test_coil_label_is_escaped_in_the_note(default_seq):
     custom_resonances = (AcousticResonance(frequency_hz=700.0, bandwidth_hz=40.0),)
 
-    card = spectrum_card(
-        default_seq,
-        resonances=custom_resonances,
-        scanner_label="Coil <A&B>",
-    )
+    card = spectrum_card(default_seq, coil=GradientCoil("Coil <A&B>", custom_resonances))
 
     assert "Coil <A&B>" not in card.body_html
     assert "the acoustic resonances of the Coil &lt;A&amp;B&gt; gradient coil" in card.body_html

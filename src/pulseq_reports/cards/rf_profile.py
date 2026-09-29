@@ -92,7 +92,7 @@ class _ShapePool:
         return combined.real.copy(), combined.imag.copy()
 
 
-def rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
+def _rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
     """The RF table of `seq` (section 4.5, item 2 of the plan): one row for each dense RF
     index `k` of `seq_index.sequence_index(seq)` (k = 1 .. K), at position k - 1, in
     dense order, plus two pools of baseband samples.
@@ -127,7 +127,7 @@ def rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
     Raises `ValueError` when `rf_profiles.rf_uses_labeled(seq)` is False (the reference's
     own check, `rf_profiles._require_labels`): `use` has no index for `undefined`.
     """
-    _require_labels(seq, "rf_table")
+    _require_labels(seq, "_rf_table")
     index = sequence_index(seq)
     n = index.rf_first.size
 
@@ -189,14 +189,14 @@ def rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
     }
 
 
-def rf_profile_data(seq: pp.Sequence) -> dict:
+def _rf_profile_data(seq: pp.Sequence) -> dict:
     """The file entry of the RF profile card data. `refuse_rotations(seq)` first.
 
     For a sequence where `rf_profiles.rf_uses_labeled(seq)` is True: `labeled`
     True; `slice_thickness_m` (the `SliceThickness` definition, or None);
     `fov_m` (the `FOV` definition as [x, y, z], or None); `b0_t`; `gamma_hz_per_t`
     (`abs(seq.system.gamma)`); `first_rf_block` (the play index of the first RF block,
-    or None without RF); `rf` (`rf_table(seq)`, encoded with `diagram_data.encode_tables`);
+    or None without RF); `rf` (`_rf_table(seq)`, encoded with `diagram_data.encode_tables`);
     `pulses` (`rf_profiles.pulse_list(seq)`, each pulse as `dataclasses.asdict`).
 
     For a sequence where it is False: `labeled` False; `unlabeled_rf_events` (the
@@ -226,7 +226,7 @@ def rf_profile_data(seq: pp.Sequence) -> dict:
         "b0_t": float(seq.system.B0),
         "gamma_hz_per_t": abs(float(seq.system.gamma)),
         "first_rf_block": int(index.rf_first[0]) if index.rf_first.size else None,
-        "rf": diagram_data.encode_tables(rf_table(seq)),
+        "rf": diagram_data.encode_tables(_rf_table(seq)),
         "pulses": [dataclasses.asdict(p) for p in pulse_list(seq)],
     }
 
@@ -349,7 +349,7 @@ def rf_profile_card(
 
     A sequence where `rf_profiles.rf_uses_labeled` is False gets a note in the body
     instead of profiles (section 4.5, item 1), and its data is only the count of RF
-    events without a use label (`rf_profile_data`); this does not raise. `card_id` is
+    events without a use label (`_rf_profile_data`); this does not raise. `card_id` is
     checked by `render_page`, as for the other cards.
 
     The body: a note for an unlabeled sequence, a status line that the card script
@@ -367,7 +367,7 @@ def rf_profile_card(
     _check_extent(extent_m)
     refuse_rotations(seq)
 
-    file = rf_profile_data(seq)
+    file = _rf_profile_data(seq)
     data = {
         "format": 2,
         "views": list(views),

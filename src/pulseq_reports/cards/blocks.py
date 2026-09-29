@@ -26,7 +26,7 @@ def _table(seq, max_rows: int, start_s: float | None = None, end_s: float | None
     """The note and the table for the blocks of `seq` in [start_s, end_s] (the whole
     sequence by default), at most `max_rows` of them. This is vb-pulseq's own
     `__BLOCK_NOTE__` + "\\n" + `__BLOCKS__` text (parity, no range)."""
-    rows, total = block_rows(seq, start_s, end_s, max_rows)
+    rows, total = block_rows(seq, start_s=start_s, end_s=end_s, max_rows=max_rows)
     return f"{_note(total, max_rows)}\n{_rows_table(rows)}"
 
 
@@ -45,7 +45,7 @@ def blocks_card(
     that. `body_html` is exactly vb-pulseq's own block table HTML (parity).
 
     With `windows` given, the card has one table for each window, with the blocks that
-    overlap it (`waveforms.block_rows(seq, w.start_s, w.end_s, max_rows)`), headed by
+    overlap it (`waveforms.block_rows` with the window's `start_s` and `end_s`), headed by
     an `<h3>` with the window's label.
 
     No chart: `data=None` and `script=None`.

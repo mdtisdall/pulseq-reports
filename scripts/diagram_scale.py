@@ -306,7 +306,7 @@ def run(blocks: int, case: str, out_dir: Path, timing_probe: bool) -> dict:
     tables_again = diagram_data.diagram_tables(seq)
     diagram_tables_s = time.perf_counter() - breakdown_start
     lane_meta_start = time.perf_counter()
-    diagram_data.lane_meta(seq, tables_again)
+    diagram_data.lane_meta(seq, tables=tables_again)
     lane_meta_s = time.perf_counter() - lane_meta_start
     encode_start = time.perf_counter()
     diagram_data.encode_tables(tables_again)
@@ -330,7 +330,9 @@ def run(blocks: int, case: str, out_dir: Path, timing_probe: bool) -> dict:
         extra_scripts.append(_timing_probe_script(card.id))
 
     render_start = time.perf_counter()
-    page = render_page(f"Diagram scale check: {case}", subtitle, [card], extra_scripts)
+    page = render_page(
+        f"Diagram scale check: {case}", subtitle, [card], extra_scripts=extra_scripts
+    )
     render_s = time.perf_counter() - render_start
     page_bytes = len(page.encode("utf-8"))
 

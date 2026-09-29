@@ -7,7 +7,7 @@
 //
 // The inputs are the sequence view of a diagram card (`SeqLanes.sequenceView`, section
 // 4.1) and the file data of the card (`fileData`: the RF table of
-// `cards.rf_profile.rf_table`, already decoded to typed arrays by the caller). The
+// `cards.rf_profile._rf_table`, already decoded to typed arrays by the caller). The
 // module is pure and synchronous: the long work (`simulation`, `combinedProfile`) is an
 // object whose `step(budgetMs)` the card calls in slices.
 //
@@ -67,7 +67,7 @@ const RfProfiles = (() => {
 
   const AXIS_NAMES = ["x", "y", "z"];
   const GRAD_ATTRS = ["gx", "gy", "gz"];
-  // The columns of one row of the RF table (`rf_table`), all with one length, and its
+  // The columns of one row of the RF table (`_rf_table`), all with one length, and its
   // two pools of baseband samples.
   const RF_COLUMNS = ["key", "use", "delay", "shape_dur", "center", "dt", "shape_at",
     "shape_n", "freq_hz", "phase_rad"];
@@ -752,7 +752,7 @@ const RfProfiles = (() => {
 
   // ---- The file data ----
 
-  // One labeled file entry of the card data (`cards.rf_profile.rf_profile_data`) and its
+  // One labeled file entry of the card data (`cards.rf_profile._rf_profile_data`) and its
   // RF table (`entry.rf`, decoded to typed arrays by the caller), as the object that the
   // functions below read.
   function fileData(entry, rfTables) {

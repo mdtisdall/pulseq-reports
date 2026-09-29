@@ -52,14 +52,14 @@ def test_windows_give_one_table_each_headed_by_the_window_label():
     assert card.body_html.count("<h3>") == 3
     for k, w in enumerate(windows):
         assert f"<h3>TR {k}</h3>" in card.body_html
-        rows, _ = block_rows(seq, w.start_s, w.end_s)
+        rows, _ = block_rows(seq, start_s=w.start_s, end_s=w.end_s)
         assert _expected_table(rows) in card.body_html
 
 
 def test_windows_note_when_a_window_has_more_blocks_than_max_rows():
     seq = gre_sequence(num_trs=1, tr=20e-3)
     w = TimeWindow("whole", 0.0, duration_s(seq))
-    _, total = block_rows(seq, w.start_s, w.end_s, max_rows=2)
+    _, total = block_rows(seq, start_s=w.start_s, end_s=w.end_s, max_rows=2)
     assert total > 2
 
     card = blocks_card(seq, windows=[w], max_rows=2)

@@ -151,7 +151,7 @@ def duration_s(seq: pp.Sequence) -> float:
     return sequence_index(seq).end_s
 
 
-def block_row(e: _BlockEvents) -> dict:
+def _block_row(e: _BlockEvents) -> dict:
     """One row of the block table: block id, start (ms), duration (ms) and events."""
     return {
         "block": e.block_id,
@@ -163,6 +163,7 @@ def block_row(e: _BlockEvents) -> dict:
 
 def block_rows(
     seq: pp.Sequence,
+    *,
     start_s: float | None = None,
     end_s: float | None = None,
     max_rows: int | None = None,
@@ -179,7 +180,7 @@ def block_rows(
             continue
         total += 1
         if max_rows is None or len(rows) < max_rows:
-            rows.append(block_row(_block_events(block_id, t, duration, seq.get_block(block_id))))
+            rows.append(_block_row(_block_events(block_id, t, duration, seq.get_block(block_id))))
     return rows, total
 
 
@@ -284,7 +285,7 @@ def _lanes(segments: dict, windows: list, peaks: dict, has_events: dict) -> list
 
 
 def file_lanes(
-    seq: pp.Sequence, start_s: float | None = None, end_s: float | None = None
+    seq: pp.Sequence, *, start_s: float | None = None, end_s: float | None = None
 ) -> list[dict]:
     """The exact chart lanes of the blocks of `seq` that overlap [start_s, end_s]: RF
     |B1| (µT), RF phase (rad), the ADC gate, and Gx, Gy, Gz (mT/m), with times in ms.

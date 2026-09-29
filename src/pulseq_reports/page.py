@@ -101,8 +101,8 @@ def render_page(
     title: str,
     subtitle: str,
     cards: Sequence[Card],
-    extra_scripts: Sequence[str] = (),
     *,
+    extra_scripts: Sequence[str] = (),
     extra_css: Sequence[str] = (),
 ) -> str:
     """The HTML of a page with `cards` in the given order.
@@ -173,12 +173,13 @@ def write_page(
     title: str,
     subtitle: str,
     cards: Sequence[Card],
-    extra_scripts: Sequence[str] = (),
     *,
+    extra_scripts: Sequence[str] = (),
     extra_css: Sequence[str] = (),
 ) -> None:
-    """Write `render_page(title, subtitle, cards, extra_scripts, extra_css=extra_css)` to
-    `path` as UTF-8."""
+    """Write `render_page(title, subtitle, cards, extra_scripts=extra_scripts,
+    extra_css=extra_css)` to `path` as UTF-8."""
     Path(path).write_text(
-        render_page(title, subtitle, cards, extra_scripts, extra_css=extra_css), encoding="utf-8"
+        render_page(title, subtitle, cards, extra_scripts=extra_scripts, extra_css=extra_css),
+        encoding="utf-8",
     )

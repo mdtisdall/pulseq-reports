@@ -31,7 +31,7 @@ from .sampling import GradientSampler
 from .seq_index import sequence_index
 
 MAX_FREQUENCY_HZ = 2000.0
-WINDOW_S = 0.05
+FFT_WINDOW_S = 0.05
 FREQUENCY_OVERSAMPLING = 3
 CHUNK_WINDOWS = 256  # windows in each chunk of samples
 
@@ -40,6 +40,9 @@ NO_GRADIENTS = "no gradients"
 
 @dataclass(frozen=True)
 class AcousticResonance:
+    """A band of the gradient coil's mechanical resonance: its centre frequency and its
+    full width, in Hz. `low_hz` and `high_hz` are the edges of the band."""
+
     frequency_hz: float
     bandwidth_hz: float
 
@@ -62,6 +65,20 @@ PRISMA_AS82_RESONANCES = (
 
 
 @dataclass(frozen=True)
+class GradientCoil:
+    """A gradient coil: the label that a card shows, and its acoustic resonances."""
+
+    label: str
+    resonances: tuple[AcousticResonance, ...]
+
+
+PRISMA_AS82 = GradientCoil("MAGNETOM Prisma (AS82)", PRISMA_AS82_RESONANCES)
+
+# The built-in coils, by name.
+COILS = {"prisma-as82": PRISMA_AS82}
+
+
+@dataclass(frozen=True)
 class BandPeak:
     resonance: AcousticResonance
     peak: float  # largest RSS spectrum value in the band, mT/m/sqrt(Hz)
@@ -81,6 +98,7 @@ class GradientSpectrum:
 
 def gradient_spectrum(
     seq: pp.Sequence,
+    *,
     resonances: tuple[AcousticResonance, ...] = PRISMA_AS82_RESONANCES,
 ) -> GradientSpectrum:
     """The spectrum of each gradient axis up to `MAX_FREQUENCY_HZ`, and the largest
@@ -92,7 +110,7 @@ def gradient_spectrum(
     sampler = GradientSampler(seq, index)
 
     dt = seq.system.grad_raster_time
-    nwin = round(WINDOW_S / dt)
+    nwin = round(FFT_WINDOW_S / dt)
     pad = nwin // 2
     # Python's `sum` is compensated (Python 3.12), so this total can differ from
     # `index.end_s`, the sequential sum, by one sample. The oracle

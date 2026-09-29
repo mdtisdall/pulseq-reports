@@ -217,7 +217,7 @@ def _grad_event_peaks(tables: dict[str, np.ndarray]) -> np.ndarray:
     return peaks
 
 
-def lane_meta(seq: pp.Sequence, tables: dict[str, np.ndarray] | None = None) -> list[dict]:
+def lane_meta(seq: pp.Sequence, *, tables: dict[str, np.ndarray] | None = None) -> list[dict]:
     """`waveforms.file_lanes(seq)` without the `segments` and `windows` keys: the six
     lane titles, colors, domains, ticks and tick labels, in `file_lanes` order.
 

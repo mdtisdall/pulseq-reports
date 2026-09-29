@@ -4,12 +4,14 @@ import pypulseq as pp
 
 from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
-from pulseq_reports.rf_exposure import WINDOW_S, RfExposure, rf_exposure
+from pulseq_reports.rf_exposure import B1RMS_WINDOW_S, RfExposure, rf_exposure
 
 
-def rf_exposure_data(seq: pp.Sequence, periodic: bool = True, window_s: float = WINDOW_S) -> dict:
+def _rf_exposure_data(
+    seq: pp.Sequence, *, periodic: bool = True, b1rms_window_s: float = B1RMS_WINDOW_S
+) -> dict:
     """RF exposure (`rf_exposure.rf_exposure`) as JSON-ready data, in ms and µT."""
-    return _to_dict(rf_exposure(seq, window_s=window_s, periodic=periodic), periodic)
+    return _to_dict(rf_exposure(seq, periodic=periodic, b1rms_window_s=b1rms_window_s), periodic)
 
 
 def _to_dict(e: RfExposure, periodic: bool) -> dict:
@@ -20,9 +22,9 @@ def _to_dict(e: RfExposure, periodic: bool) -> dict:
         "peak_block": e.peak_block,
         "energy_ut2_ms": round(e.energy_ut2_s * 1e3, 4),
         "b1rms_ut": round(e.b1rms_ut, 4),
-        "window_s": e.window_s,
+        "window_s": e.b1rms_window_s,
         "b1rms_window_ut": round(e.b1rms_window_ut, 4),
-        "window_used_s": e.window_used_s,
+        "window_used_s": e.b1rms_window_used_s,
         "periodic": periodic,
     }
 
@@ -73,11 +75,11 @@ def rf_exposure_card(
     seq: pp.Sequence,
     *,
     periodic: bool = True,
-    window_s: float = WINDOW_S,
+    b1rms_window_s: float = B1RMS_WINDOW_S,
     card_id: str = "rf-exposure",
 ) -> Card:
-    """The "RF exposure" card: the body is `_rf_exposure_html(rf_exposure_data(seq))`."""
-    exposure = rf_exposure(seq, window_s=window_s, periodic=periodic)
+    """The "RF exposure" card: the body is `_rf_exposure_html(_rf_exposure_data(seq))`."""
+    exposure = rf_exposure(seq, periodic=periodic, b1rms_window_s=b1rms_window_s)
     return Card(
         id=card_id,
         title="RF exposure",
