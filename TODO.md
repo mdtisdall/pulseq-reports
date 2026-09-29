@@ -211,3 +211,48 @@ external reference when a card gets one.
 **When.** Now: phase 2b of `docs/plans/rf-profiles.md` (#59) shows the method, and
 the RF pulse profiles have their references (section 8.4 of that plan). The user
 decides the order of the cards.
+
+## Show where the gradient limits happen
+
+**Why.** `grad_limits.gradient_limits` finds where each extreme happens: for
+each axis, `peak_block` and `peak_time_s` (the largest amplitude) and
+`slew_block` (the largest slew), and for |G|, `GradientLimits.vector_peak_time_s`.
+The gradient limits card shows only the values. The RF exposure card already shows
+the block of its peak. The user chose to show them (C14 of
+`docs/reviews/2026-09-28-code-review.md`, decision 18 of
+`docs/plans/review-cleanup.md`).
+
+**What.** Show the block and the time of each peak and of each largest slew on the
+card, for each file and window. Check the tie rule first (finding L3 of the review:
+on an exact tie, the credited block can be the later one).
+
+**How to check.** `scripts/check`, and a test of the new cells for a sequence whose
+peaks are at known blocks and times.
+
+**When.** After this plan. It changes the card's output, so it is a feature, not
+cleanup.
+
+## Draw the diagram of a file with very many distinct RF events
+
+**Why.** The diagram tables keep every phase sample of each distinct RF event
+(`rf_phase`), and a new `phase_offset` makes a new RF event. Thus a file that
+changes the RF phase in each TR (RF spoiling) gets a table that grows with the
+number of TRs. For `diagram_scale.build_worst` at 10^6 blocks (2 × 10^5 TRs),
+`rf_phase` has 392,000,000 float64 values (3.1 GB): the browser cannot decode
+it (`decodeTable` fails with "Failed to fetch"), so the card does not draw. In
+Python, the diagram card of the same file adds 10.7 GB of RSS, about 13 KB for
+each block, most of it in `diagram_data.diagram_tables` and `encode_tables`.
+Section 8.4 of `docs/plans/review-cleanup.md` has the measurements.
+
+**What.** Find a form of the RF tables that does not repeat the samples of a
+pulse for each phase offset, for example the shape once and the offset for
+each event, in Python and in `seq_lanes.js`. Then measure the worst case of
+`scripts/diagram_scale.py` at 10^6 and 10^7 blocks, in Python and in the
+browser.
+
+**How to check.** `scripts/check`; the Python and JavaScript dumps and the
+golden tests of the diagram lanes give the same lanes; the worst case at 10^6
+blocks draws in the browser.
+
+**When.** After the review cleanup. It changes the card data (a new table
+format), so it needs its own plan.
