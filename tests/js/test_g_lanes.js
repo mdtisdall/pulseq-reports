@@ -776,3 +776,93 @@ test("test_file_without_gradients_is_all_zero_not_empty", () => {
   assert.equal(lane.segments.length, 1, "expected one unbroken segment of zeros");
   for (const [, v] of lane.segments[0]) assert.equal(v, 0);
 });
+
+// ---- 5. More gradient events than one flat numeric key allows (B3) -----------------
+
+// A block table with `numEvents` distinct gradient events (each a 4-point trapezoid
+// from the block start, offsets shared across every event: `grad_offset_at` is all
+// 0, so every event reuses the same 4-entry `grad_offset` and differs only in
+// `grad_value`) and `nBlocks` blocks, most of which reference event indexes within 50
+// of `numEvents` on each axis (`docs/plans/review-bugs.md` section 9.3's repro,
+// restated here as a reusable builder), so `M = numEvents + 1` is exercised at its
+// own top end, not only near 0. 5 distinct block durations (`D = 5`). Event columns
+// are `Uint32Array` (as real `diagram_tables` output uses once a file has this many
+// distinct events), unlike `buildGModel`'s `Uint8Array`. Seeded, so a call with the
+// same arguments always builds the same tables.
+function buildManyEventsTables(numEvents, nBlocks) {
+  const grad_at = new Uint32Array(numEvents);
+  const grad_value = new Float64Array(4 * numEvents);
+  for (let e = 0; e < numEvents; e++) {
+    grad_at[e] = 4 * e;
+    const a = ((e * 7919) % 2001 - 1000) / 40; // -25 to 25 mT/m
+    grad_value.set([0, a, a, 0], 4 * e);
+  }
+  let s = 12345;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const duration_index = new Uint8Array(nBlocks);
+  const durations = Float64Array.from([2e-4, 3.5e-4, 6e-4, 9e-4, 1.2e-3]);
+  const gx = new Uint32Array(nBlocks), gy = new Uint32Array(nBlocks), gz = new Uint32Array(nBlocks);
+  for (let i = 0; i < nBlocks; i++) {
+    duration_index[i] = Math.floor(rnd() * 5);
+    gx[i] = rnd() < 0.3 ? 0 : numEvents - Math.floor(rnd() * 50);
+    gy[i] = rnd() < 0.3 ? 0 : numEvents - Math.floor(rnd() * 50);
+    gz[i] = rnd() < 0.3 ? 0 : numEvents - Math.floor(rnd() * 50);
+  }
+  const nCp = Math.ceil(nBlocks / 1024) || 1;
+  const checkpoints = new Float64Array(nCp);
+  let t = 0;
+  for (let i = 0; i < nBlocks; i++) {
+    if (i % 1024 === 0) checkpoints[i / 1024] = t;
+    t += durations[duration_index[i]];
+  }
+  const tables = {
+    duration_index, durations, checkpoints,
+    rf: new Uint8Array(nBlocks),
+    adc: new Uint8Array(nBlocks),
+    gx, gy, gz,
+    rf_delay: new Float64Array(0),
+    rf_mag_n: new Uint32Array(0),
+    rf_mag_offset_at: new Uint32Array(0),
+    rf_mag_at: new Uint32Array(0),
+    rf_mag_offset: new Float64Array(0),
+    rf_mag: new Float64Array(0),
+    rf_phase_n: new Uint32Array(0),
+    rf_phase_offset_at: new Uint32Array(0),
+    rf_phase_at: new Uint32Array(0),
+    rf_phase_offset: new Float64Array(0),
+    rf_phase: new Float64Array(0),
+    adc_delay: new Float64Array(0),
+    adc_length: new Float64Array(0),
+    grad_delay: new Float64Array(numEvents),
+    grad_n: new Uint32Array(numEvents).fill(4),
+    grad_offset_at: new Uint32Array(numEvents),
+    grad_at,
+    grad_offset: Float64Array.from([0, 5e-5, 1.5e-4, 2e-4]),
+    grad_value,
+  };
+  const seqModel = SeqLanes.decode(1, tables, SEQ_LANES_META);
+  return { tables, seqModel };
+}
+
+// Before the fix, `GLanes.decode`'s single flat cache key
+// `((kx * M + ky) * M + kz) * D + durIdx` stops being an exact integer below 2^53 at
+// about 1.2 * 10^5 gradient events (`M = numGradEvents + 1`); with the two-level key
+// (the comment of `_tripleKeyOf` in g_lanes.js), the limit is about 9.5 * 10^7 events. 150,000 events
+// is past the old limit and far below the new one.
+test("test_decode_accepts_more_gradient_events_than_one_numeric_key_allows", () => {
+  const numEvents = 150000, nBlocks = 300;
+  const { tables, seqModel } = buildManyEventsTables(numEvents, nBlocks);
+  const model = GLanes.decode(seqModel); // must not throw
+  const { starts, durationS } = blockStarts(tables);
+
+  const views = [
+    [0, durationS, 37],
+    [0, durationS, 211],
+    [starts[10], starts[280], 17],
+  ];
+  for (const [t0, t1, bins] of views) {
+    const got = GLanes.minMax(model, t0, t1, bins);
+    const want = bruteMinMax(tables, t0, t1, bins);
+    assertMinMaxMatches(got, want, 1e-12, `[${t0}, ${t1}] bins=${bins}`);
+  }
+});
