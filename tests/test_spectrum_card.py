@@ -72,6 +72,19 @@ def test_custom_scanner_label_and_resonances_appear(default_seq):
     assert card.data["bands"] == expected_bands
 
 
+def test_scanner_label_is_escaped_in_the_note(default_seq):
+    custom_resonances = (AcousticResonance(frequency_hz=700.0, bandwidth_hz=40.0),)
+
+    card = spectrum_card(
+        [NamedSequence("a.seq", default_seq)],
+        resonances=custom_resonances,
+        scanner_label="Coil <A&B>",
+    )
+
+    assert "Coil <A&B>" not in card.body_html
+    assert "the acoustic resonances of the Coil &lt;A&amp;B&gt; gradient coil" in card.body_html
+
+
 def test_two_file_card_uses_combined_spectrum():
     seqs = [
         NamedSequence("spin-echo.seq", spin_echo_sequence()),
