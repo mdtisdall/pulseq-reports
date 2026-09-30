@@ -8461,3 +8461,184 @@ builder, with the same default as the option (decision 17 of the plan); and the 
 **Assumptions:**
 
 - The `windows` of the diagram card is a positional parameter, so it is not in the keywords.
+
+
+### 2.37 Command line (`test_cli.py`)
+
+These tests call `cli.main(argv)` in the test process, with a `.seq` file that `seq.write` wrote from a synthetic sequence. `FAST` is the cards `gradient-limits,blocks,gradient-spectrum`.
+
+#### `test_the_page_of_the_command_line_equals_the_page_of_build_cards`
+
+**Checks:** The page that `main` writes equals `render_page` of `build_cards` for the same file read back, with the file name as title, "pulseq-reports <version>" as subtitle, and the same limits; the status is 0.
+
+**How:** `main` with `--max-grad` and `--max-slew`; the expected page from `Sequence.read`, `build_cards` and `render_page`, compared as text.
+
+**Assumptions:** None.
+
+#### `test_the_default_output_is_the_stem_in_the_current_directory`
+
+**Checks:** Without `-o`, the page of `se.seq` is `se.html` in the current directory.
+
+**How:** `monkeypatch.chdir` into an empty directory.
+
+**Assumptions:** None.
+
+#### `test_max_grad_and_max_slew_reach_the_gradient_limits_card`
+
+**Checks:** With both flags, the page equals the page of `build_cards` with those `HardwareLimits` and stderr is empty. Without them, the page equals the page of `build_cards` with no limits, and the warning on stderr names the sequence's system limits.
+
+**How:** Two `main` calls; the expected values are computed from the read-back sequence's system.
+
+**Assumptions:** None.
+
+#### `test_one_of_max_grad_and_max_slew_alone_exits_1`
+
+**Checks:** One of `--max-grad` and `--max-slew` alone exits 1, stderr names `--max-grad`, and no page is written.
+
+**How:** Parametrized over the two flags.
+
+**Assumptions:** None.
+
+#### `test_two_files_give_two_pages_in_the_output_directory`
+
+**Checks:** Two files and `-o DIR` give `<stem>.html` for each in `DIR`, and `DIR` is made when it does not exist.
+
+**How:** A spin-echo and a GRE file; a nested output directory.
+
+**Assumptions:** None.
+
+#### `test_two_files_with_one_stem_exit_1_and_write_no_page`
+
+**Checks:** Two files in different directories with one stem exit 1, stderr names the stem, and the output directory is not made.
+
+**How:** Two `same.seq` files.
+
+**Assumptions:** None.
+
+#### `test_cards_and_skip_select_the_cards`
+
+**Checks:** `--cards` gives the page of `build_cards` with those cards, and `--skip` removes a card from them.
+
+**How:** Page equality with `build_cards(cards=...)`.
+
+**Assumptions:** None.
+
+#### `test_an_unknown_card_name_exits_1`
+
+**Checks:** An unknown name in `--cards` or `--skip` exits 1, stderr names it, and no page is written.
+
+**How:** Parametrized over the two flags.
+
+**Assumptions:** None.
+
+#### `test_a_file_with_a_failed_check_exits_2_and_names_the_check`
+
+**Checks:** Limits of 5 mT/m and 5 T/m/s make the gradient limits check fail: the status is 2, stderr names the file and the check, and the page is written.
+
+**How:** `--max-grad 5 --max-slew 5`.
+
+**Assumptions:** None.
+
+#### `test_a_file_with_no_failed_check_exits_0`
+
+**Checks:** A file whose cards pass every check exits 0.
+
+**How:** The spin-echo sequence is within the limits of its read-back system.
+
+**Assumptions:** None.
+
+#### `test_an_unreadable_file_exits_1_and_the_good_file_has_its_page`
+
+**Checks:** A text file that is not a sequence and a missing file give status 1 and are named on stderr, and the page of the good file in the same call is written.
+
+**How:** Three files in one call.
+
+**Assumptions:** None.
+
+#### `test_the_status_1_wins_over_the_status_2`
+
+**Checks:** A missing file together with a file that has a failed check gives status 1.
+
+**How:** Limits of 5 and 5.
+
+**Assumptions:** None.
+
+#### `test_card_module_adds_the_card_and_its_option`
+
+**Checks:** `--card-module plugin_card:SPEC` adds the test plugin's card and the flag `--max-rows`: the page has the card with the value, and `discover` does not find the spec after `main` returns.
+
+**How:** `tests/` is on `sys.path`, as for the other tests that import `plugin_card`.
+
+**Assumptions:** The plugin module imports from `tests/`, which pytest puts on `sys.path`.
+
+#### `test_card_module_with_a_bad_spec_exits_1_and_writes_no_page`
+
+**Checks:** A spec given twice (two cards with one name), an attribute that does not exist, a module that does not exist, a label with no attribute, and an attribute that is not a `CardSpec` each exit 1 and name the label or the card on stderr; no page is written.
+
+**How:** `main` for each case.
+
+**Assumptions:** None.
+
+#### `test_each_option_of_the_discovered_specs_has_its_flag_in_the_parser`
+
+**Checks:** The `--help` text has the flag of each option of the discovered specs (with the test plugin added), and the `--no-` form of each `bool` flag.
+
+**How:** `main(["--help"])` returns 0; the flags come from `Option.flags()`.
+
+**Assumptions:** None.
+
+#### `test_a_toml_and_a_json_config_file_give_the_page_of_the_same_flags`
+
+**Checks:** A `.toml` and a `.json` config file with the same values (limits table, coil, max_rows, check_norms, cards) give the page that the same values as flags give.
+
+**How:** The limits label in the files is "command line", the label of the flags.
+
+**Assumptions:** None.
+
+#### `test_a_flag_overrides_the_config_file`
+
+**Checks:** `--max-rows` overrides `max_rows` of the config file: the page equals the page of flags with the flag's value.
+
+**How:** Page equality.
+
+**Assumptions:** None.
+
+#### `test_a_config_file_with_an_unknown_key_exits_1`
+
+**Checks:** A key that no option has exits 1, stderr names the key, and no page is written.
+
+**How:** A misspelled `max_rowz`.
+
+**Assumptions:** None.
+
+#### `test_a_config_file_with_another_suffix_or_a_bad_value_exits_1`
+
+**Checks:** A `.yaml` file, a value of the wrong type, and a missing file each exit 1 with the file named on stderr.
+
+**How:** `main` for each file.
+
+**Assumptions:** None.
+
+#### `test_a_config_key_of_a_skipped_card_is_ignored`
+
+**Checks:** `max_rows` in the config file, with `--cards timing`, exits 0 and gives the page of `build_cards` for the timing card.
+
+**How:** Page equality.
+
+**Assumptions:** None.
+
+#### `test_a_flag_of_a_skipped_card_exits_1_and_names_the_flag_and_the_card`
+
+**Checks:** `--max-rows 5` with `--cards timing` exits 1, stderr names `--max-rows` and the card `blocks`, and no page is written.
+
+**How:** None.
+
+**Assumptions:** None.
+
+#### `test_a_relative_gradient_asc_is_read_from_the_config_file_directory`
+
+**Checks:** A relative `gradient_asc` in a config file is read from the config file's directory, not the current directory: the pns page equals the page of `--gradient-asc` with the absolute path.
+
+**How:** The current directory is another, empty directory.
+
+**Assumptions:** The PNS card's page does not depend on the .asc file's directory beyond its resolved path.

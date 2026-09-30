@@ -12,6 +12,9 @@ dependencies = [
     "scipy",
 ]
 
+[project.scripts]
+pulseq-report = "pulseq_reports.cli:main"
+
 # The library's own cards, on the same interface as a plugin's cards (docs/plans/public-api.md,
 # decision 14). Each entry point is the `SPEC` of a card module.
 [project.entry-points."pulseq_reports.cards"]
