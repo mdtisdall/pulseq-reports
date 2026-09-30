@@ -215,26 +215,6 @@ external reference when a card gets one.
 the RF pulse profiles have their references (section 8.4 of that plan). The user
 decides the order of the cards.
 
-## Show where the gradient limits happen
-
-**Why.** `grad_limits.gradient_limits` finds where each extreme happens: for
-each axis, `peak_block` and `peak_time_s` (the largest amplitude) and
-`slew_block` (the largest slew), and for |G|, `GradientLimits.vector_peak_time_s`.
-The gradient limits card shows only the values. The RF exposure card already shows
-the block of its peak. The user chose to show them (C14 of
-`docs/reviews/2026-09-28-code-review.md`, decision 18 of
-`docs/plans/review-cleanup.md`).
-
-**What.** Show the block and the time of each peak and of each largest slew on the
-card, for each file and window. Check the tie rule first (finding L3 of the review:
-on an exact tie, the credited block can be the later one).
-
-**How to check.** `scripts/check`, and a test of the new cells for a sequence whose
-peaks are at known blocks and times.
-
-**When.** After this plan. It changes the card's output, so it is a feature, not
-cleanup.
-
 ## Draw the diagram of a file with very many distinct RF events
 
 **Why.** The diagram tables keep every phase sample of each distinct RF event

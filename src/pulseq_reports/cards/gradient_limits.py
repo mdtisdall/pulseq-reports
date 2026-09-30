@@ -5,14 +5,16 @@ import html
 import math
 from collections.abc import Sequence
 
+import numpy as np
 import pypulseq as pp
 
 from .. import options
 from ..extensions import refuse_rotations
 from ..grad_limits import GradientLimits, HardwareLimits, _default_limits, gradient_limits
-from ..markup import fmt, html_table
-from ..page import Card, Check
+from ..markup import fmt
+from ..page import Card, Check, card_asset
 from ..registry import CardSpec, ReportContext
+from ..seq_index import SequenceIndex, sequence_index
 from ..waveforms import TimeWindow, _check_windows
 
 _AXES = ("x", "y", "z")
@@ -20,6 +22,10 @@ _AXIS_LABEL = {"x": "Gx", "y": "Gy", "z": "Gz"}
 _NO_VALUE = "—"
 # Relative tolerance: the unit conversions are floats, and a value at the limit passes.
 _LIMIT_TOLERANCE = 1e-9
+# The narrowest view of a "Show" button, as the diagram's `goto` of a block.
+_GOTO_MIN_VIEW_S = 1e-3
+
+PUBLISHES = ("goto",)
 
 
 def _pct(value: float, limit: float) -> str:
@@ -31,8 +37,36 @@ def _vector_rms(axis_rms_mt_per_m: dict[str, float]) -> float:
     return math.sqrt(sum(axis_rms_mt_per_m[axis] ** 2 for axis in _AXES))
 
 
-def _rows(windowed: GradientLimits) -> list[list]:
-    """The four rows (Gx, Gy, Gz, |G|), from one `gradient_limits` call.
+def _goto_button(index: SequenceIndex, block_id: int, time_s: float, what: str) -> str:
+    """A hidden "Show" button whose `goto` message (the card script) shows the block
+    `block_id` in the diagram, with the anchor at `time_s`. The view is the block with half its
+    duration on each side, at least 1 ms wide, as the diagram's own `goto` of a block."""
+    play = int(np.flatnonzero(index.block_id == block_id)[0])
+    start = float(index.start_s[play])
+    duration = float(index.duration_s[play])
+    half = max(2 * duration, _GOTO_MIN_VIEW_S) / 2
+    middle = start + duration / 2
+    label = html.escape(f"Show the {what} in the diagram", quote=True)
+    return (
+        f'<button type="button" data-t0="{middle - half!r}" data-t1="{middle + half!r}" '
+        f'data-anchor="{time_s!r}" aria-label="{label}" hidden>Show</button>'
+    )
+
+
+def _value_cell(
+    value: float, block_id: int | None, time_s: float, index: SequenceIndex, what: str
+) -> str:
+    """The HTML of a peak or slew cell: the value, then the block ID and the time (ms from the
+    sequence start) where it is reached and a "Show" button, when a block is credited."""
+    text = fmt(value)
+    if block_id is None:
+        return html.escape(text)
+    text += f" (block {block_id}, {time_s * 1e3:.3f} ms)"
+    return f"{html.escape(text)} {_goto_button(index, block_id, time_s, what)}"
+
+
+def _rows(windowed: GradientLimits, index: SequenceIndex) -> list[list[str]]:
+    """The four rows (Gx, Gy, Gz, |G|) of HTML cells, from one `gradient_limits` call.
     `windowed.whole_rms_mt_per_m` gives the extra "RMS over whole file" column when
     `windowed` is over a window (computed in that same call); it is None when there is
     no window."""
@@ -41,11 +75,14 @@ def _rows(windowed: GradientLimits) -> list[list]:
     rows = []
     for axis in _AXES:
         a = windowed.axes[axis]
+        label = _AXIS_LABEL[axis]
         row = [
-            _AXIS_LABEL[axis],
-            fmt(a.peak_mt_per_m),
+            label,
+            _value_cell(a.peak_mt_per_m, a.peak_block, a.peak_time_s, index, f"{label} peak"),
             _pct(a.peak_mt_per_m, limits.max_grad_mt_per_m),
-            fmt(a.max_slew_t_per_m_per_s),
+            _value_cell(
+                a.max_slew_t_per_m_per_s, a.slew_block, a.slew_time_s, index, f"{label} max slew"
+            ),
             _pct(a.max_slew_t_per_m_per_s, limits.max_slew_t_per_m_per_s),
             fmt(a.rms_mt_per_m),
         ]
@@ -59,7 +96,13 @@ def _rows(windowed: GradientLimits) -> list[list]:
     # physical axis.
     vector_row = [
         "|G|",
-        fmt(windowed.vector_peak_mt_per_m),
+        _value_cell(
+            windowed.vector_peak_mt_per_m,
+            windowed.vector_peak_block,
+            windowed.vector_peak_time_s,
+            index,
+            "|G| peak",
+        ),
         _pct(windowed.vector_peak_mt_per_m, limits.max_grad_mt_per_m),
         _NO_VALUE,
         _NO_VALUE,
@@ -69,6 +112,14 @@ def _rows(windowed: GradientLimits) -> list[list]:
         vector_row.append(fmt(_vector_rms(whole_rms)))
     rows.append(vector_row)
     return rows
+
+
+def _table_html(headers: list[str], rows: list[list[str]]) -> str:
+    """The markup of `markup.html_table`, written locally because the peak and slew cells
+    hold a "Show" button: every cell of `rows` is HTML already."""
+    head = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows)
+    return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
 def _table(
@@ -94,7 +145,7 @@ def _table(
     # call for it.
     windowed = gradient_limits(seq, window=window, limits=limits)
 
-    body = html_table(headers, _rows(windowed))
+    body = _table_html(headers, _rows(windowed, sequence_index(seq)))
     if windowed.reason is not None:
         body += f'<p class="muted">{html.escape(f"{windowed.reason}.")}</p>'
     return body, windowed
@@ -162,9 +213,18 @@ def gradient_limits_card(
     column is split into "RMS over window" and "RMS over whole file". With
     `windows=None`, there is one table, with one RMS column, over the whole file.
 
+    The peak and max slew cells also give where the value is reached: the block ID and the
+    time in ms from the sequence start (`AxisResult.peak_block` and `peak_time_s`,
+    `slew_block` and `slew_time_s`, `GradientLimits.vector_peak_block` and
+    `vector_peak_time_s`), and a "Show" button. Its script (`assets/cards/gradient-limits.js`)
+    sends a `goto` message that shows the block in the diagram with the anchor at that time,
+    and shows the button only while a card (the diagram) acts on `goto`. A value of 0 has no
+    block, no time and no button.
+
     The note at the end of the card gives the limits, with their label and their values.
 
-    No chart: `data=None` and `script=None`.
+    No chart and no data (`data=None`). The card publishes `PUBLISHES` (`goto`), and has
+    `scripts` with `assets/cards/gradient-limits.js` when a table has a button.
 
     The card has one check, `gradient-limits`. It fails when the peak amplitude or the peak
     slew of Gx, Gy or Gz in a table is above 100 % of its limit; the message names the
@@ -207,7 +267,10 @@ def gradient_limits_card(
         "the RMS of that magnitude. These are the logical "
         "sequence axes: the scanner rotates them onto the physical gradient axes, so on "
         "an oblique slice, one physical axis can reach up to the |G| row's peak even "
-        f"when no logical axis is near the limit. Limits: {html.escape(limits_text)}.</p>"
+        "when no logical axis is near the limit. The block and the time after a value are "
+        "where it is first reached, in ms from the start of the sequence; for the max "
+        "slew, the start of the steepest segment, or the block junction. "
+        f"Limits: {html.escape(limits_text)}.</p>"
     )
     check = Check(
         name="gradient-limits",
@@ -220,13 +283,16 @@ def gradient_limits_card(
             + f" is above its limit ({used.label})."
         ),
     )
+    has_button = "<button" in body
     return Card(
         id=card_id,
         title="Gradient limits",
         body_html=body,
         data=None,
-        script=None,
+        script="gradient-limits" if has_button else None,
+        scripts=(card_asset("gradient-limits"),) if has_button else (),
         checks=(check,),
+        publishes=PUBLISHES,
     )
 
 
@@ -239,4 +305,6 @@ def _build(ctx: ReportContext) -> Card:
     )
 
 
-SPEC = CardSpec("gradient-limits", 70, _build, (options.limits, options.check_norms))
+SPEC = CardSpec(
+    "gradient-limits", 70, _build, (options.limits, options.check_norms), publishes=PUBLISHES
+)

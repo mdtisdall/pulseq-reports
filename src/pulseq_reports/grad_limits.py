@@ -54,20 +54,22 @@ class AxisResult:
     `peak_block` and `slew_block` are the block ID (`seq_index.SequenceIndex.block_id`)
     where the peak amplitude, respectively the peak slew, was found. For the slew, this is
     the block after the junction when the peak slew is a junction step (see the module
-    docstring), otherwise the block whose event has the segment. When several blocks reach
-    the same largest value, the credited block is the first of them in play order, and
-    `peak_time_s` is the first time in that block where the peak is reached. A largest value
-    of 0 credits no block (None). `rms_mt_per_m` is the RMS amplitude over the range that
-    `GradientLimits.range_s` gives, not over the whole sequence when a window is used.
-
-    The gradient limits card does not show `peak_block`, `slew_block`, `peak_time_s` or
-    `GradientLimits.vector_peak_time_s` yet.
+    docstring), otherwise the block whose event has the segment. `peak_time_s` is the time of
+    the peak, and `slew_time_s` the start of the steepest segment (the start of the range
+    when a range edge cuts that segment), or the time of the junction for a junction step;
+    both are in seconds from the sequence start. When several blocks reach the same largest
+    value, the credited block is the first of them in play order, and the time is the first
+    time in that block where the value is reached (a junction step is before every segment
+    of its block). A largest value of 0 credits no block (None) and has the time 0.0.
+    `rms_mt_per_m` is the RMS amplitude over the range that `GradientLimits.range_s` gives,
+    not over the whole sequence when a window is used.
     """
 
     peak_mt_per_m: float
     peak_time_s: float
     peak_block: int | None
     max_slew_t_per_m_per_s: float
+    slew_time_s: float
     slew_block: int | None
     rms_mt_per_m: float
 
@@ -80,12 +82,13 @@ class GradientLimits:
     is a short human-readable string, for example "no gradient events in the sequence", and
     every numeric field is its zero value, except `whole_rms_mt_per_m`, which is the RMS of the
     whole file when `window` is given. The zero value is 0.0 for an amplitude, slew or RMS
-    field, and 0.0 for `vector_peak_time_s`; every block field (`AxisResult.peak_block`,
-    `AxisResult.slew_block`) is None. `range_s` still holds the range that was used.
+    field, and 0.0 for a time field; every block field (`AxisResult.peak_block`,
+    `AxisResult.slew_block`, `vector_peak_block`) is None. `range_s` still holds the range that was used.
 
     `vector_peak_mt_per_m` is the largest magnitude of the three-axis gradient vector over the
-    range, and `vector_peak_time_s` is the first time in the range where it is reached (0.0
-    when it is 0). There is no vector slew field. The RMS of the vector magnitude is the square
+    range, `vector_peak_time_s` is the first time in the range where it is reached, and
+    `vector_peak_block` is the block ID of the block that holds that time, by the rule of
+    `AxisResult` (0.0 and None when the peak is 0). There is no vector slew field. The RMS of the vector magnitude is the square
     root of the sum of the squares of the three axis RMS values, because the mean of |G|² is the
     sum of the three axis means of G².
 
@@ -100,6 +103,7 @@ class GradientLimits:
     axes: dict[str, AxisResult]
     vector_peak_mt_per_m: float
     vector_peak_time_s: float
+    vector_peak_block: int | None
     limits: HardwareLimits
     whole_rms_mt_per_m: dict[str, float] | None = None
 
@@ -168,6 +172,7 @@ class _EventData:
     peak: np.ndarray  # K: the largest |amplitude| of the event's own corner points
     peak_offset: np.ndarray  # K: the time (from the block start) of that peak
     slew: np.ndarray  # K: the largest slope between neighbouring corner points
+    slew_offset: np.ndarray  # K: the start time (from the block start) of the first such segment
     first: np.ndarray  # K: the value of the event's first corner point
     last: np.ndarray  # K: the value of the event's last corner point
     integral: np.ndarray  # K: the integral of amplitude^2 dt over the whole event
@@ -183,6 +188,7 @@ def _event_values(seq: pp.Sequence, index: SequenceIndex) -> _EventData:
     peak = np.zeros(k)
     peak_offset = np.zeros(k)
     slew = np.zeros(k)
+    slew_offset = np.zeros(k)
     first = np.zeros(k)
     last = np.zeros(k)
     integral = np.zeros(k)
@@ -204,12 +210,15 @@ def _event_values(seq: pp.Sequence, index: SequenceIndex) -> _EventData:
         integral[i] = float(np.sum(dt * (a * a + a * b + b * b) / 3.0))
         valid = dt >= TIME_TOLERANCE
         if np.any(valid):
-            slew[i] = float(np.max(np.abs((b - a)[valid] / dt[valid])))
+            seg_slew = np.abs((b - a)[valid] / dt[valid])
+            j = int(np.argmax(seg_slew))
+            slew[i] = float(seg_slew[j])
+            slew_offset[i] = float(t[:-1][valid][j])
 
         t_rel[i] = t
         amp_list[i] = amp
 
-    return _EventData(peak, peak_offset, slew, first, last, integral, t_rel, amp_list)
+    return _EventData(peak, peak_offset, slew, slew_offset, first, last, integral, t_rel, amp_list)
 
 
 def _triple_vector_peak(
@@ -283,13 +292,15 @@ def _axis_slice_stats(
     max_slew = float(np.max(slew_vals))
     peak_events = np.flatnonzero(peak_vals == max_peak) + 1
     slew_events = np.flatnonzero(slew_vals == max_slew) + 1
-    peak_play, peak_time, slew_play = None, 0.0, None
+    peak_play, peak_time, slew_play, slew_time = None, 0.0, None, 0.0
     if max_peak > 0.0:
         peak_local = int(np.argmax(np.isin(col_slice, peak_events)))
         peak_play = i0 + peak_local
         peak_time = float(start_s[peak_play] + ev.peak_offset[int(col_slice[peak_local]) - 1])
     if max_slew > 0.0:
-        slew_play = i0 + int(np.argmax(np.isin(col_slice, slew_events)))
+        slew_local = int(np.argmax(np.isin(col_slice, slew_events)))
+        slew_play = i0 + slew_local
+        slew_time = float(start_s[slew_play] + ev.slew_offset[int(col_slice[slew_local]) - 1])
 
     return {
         "peak": max_peak,
@@ -297,6 +308,7 @@ def _axis_slice_stats(
         "peak_time": peak_time,
         "slew": max_slew,
         "slew_play": slew_play,
+        "slew_time": slew_time,
         "rms_sum": float(np.sum(counts * ev.integral)),
     }
 
@@ -308,9 +320,9 @@ def _range_result(
     lo: float,
     hi: float,
     grad_raster: float,
-) -> tuple[dict[str, AxisResult], float, float, bool]:
-    """`axes`, `vector_peak_mt_per_m`, `vector_peak_time_s` and whether any axis has an event,
-    for the range `[lo, hi]`.
+) -> tuple[dict[str, AxisResult], float, float, int | None, bool]:
+    """`axes`, `vector_peak_mt_per_m`, `vector_peak_time_s`, `vector_peak_block` and whether any
+    axis has an event, for the range `[lo, hi]`.
 
     Blocks fully inside the range use the per-event values (`_axis_slice_stats`,
     `_triple_vector_peak`), over the contiguous play-index range that
@@ -337,6 +349,7 @@ def _range_result(
             "peak_time": 0.0,
             "slew": 0.0,
             "slew_play": None,
+            "slew_time": 0.0,
             "rms_sum": 0.0,
             "has_event": False,
         }
@@ -344,8 +357,8 @@ def _range_result(
     }
 
     if n == 0:
-        axes = {axis: AxisResult(0.0, 0.0, None, 0.0, None, 0.0) for axis in _AXES}
-        return axes, 0.0, 0.0, False
+        axes = {axis: AxisResult(0.0, 0.0, None, 0.0, 0.0, None, 0.0) for axis in _AXES}
+        return axes, 0.0, 0.0, None, False
 
     end_s = start_s + index.duration_s
     skip = (end_s <= lo) | (start_s >= hi)
@@ -397,7 +410,11 @@ def _range_result(
                         seg_slew = np.abs((b - a)[valid] / dt[valid])
                         j = int(np.argmax(seg_slew))
                         if _credit_goes_to(seg_slew[j], play, st["slew"], st["slew_play"]):
-                            st["slew"], st["slew_play"] = float(seg_slew[j]), play
+                            st["slew"], st["slew_play"], st["slew_time"] = (
+                                float(seg_slew[j]),
+                                play,
+                                float(t_c[:-1][valid][j]),
+                            )
                 if axis_points:
                     axis_points_by_play[play] = axis_points
 
@@ -469,14 +486,17 @@ def _range_result(
 
         st = state[axis]
         seg_max, seg_play = st["slew"], st["slew_play"]
-        if seg_play is None:
+        # A junction is at its block's start, before every segment of that block, so it
+        # also takes the credit from a segment of equal slew in the same block.
+        if junction_play is not None and (
+            seg_play is None
+            or junction_max > seg_max
+            or (junction_max == seg_max and junction_play <= seg_play)
+        ):
             final_slew, final_slew_play = junction_max, junction_play
-        elif junction_play is None or seg_max > junction_max:
-            final_slew, final_slew_play = seg_max, seg_play
-        elif junction_max > seg_max:
-            final_slew, final_slew_play = junction_max, junction_play
-        else:  # an exact tie: credit the smaller play index (`_credit_goes_to`)
-            final_slew, final_slew_play = seg_max, min(seg_play, junction_play)
+            final_slew_time = float(start_s[junction_play])
+        else:
+            final_slew, final_slew_play, final_slew_time = seg_max, seg_play, st["slew_time"]
 
         # A credited junction step means a real, non-zero step was found even when no
         # segment of this axis lies inside the range (for example a window that starts
@@ -498,13 +518,17 @@ def _range_result(
             if st["peak_play"] is not None
             else None,
             max_slew_t_per_m_per_s=final_slew / GAMMA,
+            slew_time_s=final_slew_time,
             slew_block=(
                 int(index.block_id[final_slew_play]) if final_slew_play is not None else None
             ),
             rms_mt_per_m=rms,
         )
 
-    return axes, vector_peak_hz / GAMMA * 1e3, vector_peak_time, has_event_any
+    vector_peak_block = (
+        int(index.block_id[vector_peak_play]) if vector_peak_play is not None else None
+    )
+    return axes, vector_peak_hz / GAMMA * 1e3, vector_peak_time, vector_peak_block, has_event_any
 
 
 def gradient_limits(
@@ -560,7 +584,7 @@ def gradient_limits(
         whole_rms_mt_per_m = _whole_file_rms(index, ev, total_duration)
 
     lo, hi = range_s
-    axes, vector_peak_mt_per_m, vector_peak_time_s, has_event = _range_result(
+    axes, vector_peak_mt_per_m, vector_peak_time_s, vector_peak_block, has_event = _range_result(
         seq, index, ev, lo, hi, grad_raster
     )
 
@@ -577,6 +601,7 @@ def gradient_limits(
         axes=axes,
         vector_peak_mt_per_m=vector_peak_mt_per_m,
         vector_peak_time_s=vector_peak_time_s,
+        vector_peak_block=vector_peak_block,
         limits=limits,
         whole_rms_mt_per_m=whole_rms_mt_per_m,
     )

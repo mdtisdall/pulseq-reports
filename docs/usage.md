@@ -652,7 +652,7 @@ The topics of the library:
 | `cursor` | state | the diagram card | |
 | `anchor` | state | the diagram card | |
 | `view` | state | the diagram card | |
-| `goto` | request | the RF pulse profiles card and the PNS card | the diagram card |
+| `goto` | request | the RF pulse profiles card, the PNS card and the gradient limits card | the diagram card |
 
 A card gives its topics in `Card.publishes` and `Card.subscribes` (tuples of
 topic names; the `CardSpec` of a plugin gives the same topics, section 7).
@@ -737,7 +737,7 @@ Each builder takes one `pp.Sequence`. The options after `seq` (and after
 | `rf_exposure_card(seq, *, periodic=True, b1rms_window_s=10.0, card_id="rf-exposure")` | Peak B1, RF energy and B1+rms. |
 | `spectrum_card(seq, *, coil=PRISMA_AS82, card_id="gradient-spectrum")` | The gradient spectrum of each axis and their root-sum-of-squares, against a gradient coil's acoustic resonance bands. |
 | `pns_card(seq, *, gradient_asc=None, card_id="pns")` | The SAFE-model PNS prediction summary: a status line, a table of the peaks (all axes, Gx, Gy, Gz), a button that shows the peak in the diagram, and the hardware note. No chart: the stimulation over time is `diagram_card`'s PNS lane. |
-| `gradient_limits_card(seq, *, windows=None, limits=None, check_norms=False, card_id="gradient-limits")` | Peak amplitude, peak slew rate and RMS amplitude of each logical axis and of the three-axis vector, as a percent of the hardware limits. |
+| `gradient_limits_card(seq, *, windows=None, limits=None, check_norms=False, card_id="gradient-limits")` | Peak amplitude, peak slew rate and RMS amplitude of each logical axis and of the three-axis vector, as a percent of the hardware limits. The peak and slew cells give the block and the time where each value is reached, and a "Show" button that shows that block in the diagram (the button sends `goto`). |
 | `diagram_card(seq, windows, *, pns_lane=False, gradient_asc=None, card_id="diagram")` | RF magnitude and phase, the ADC gate, Gx, Gy, Gz, \|G\| and, with `pns_lane`, a PNS lane, against time, with one button for each window and one for each lane group. |
 | `blocks_card(seq, *, windows=None, max_rows=500, card_id="blocks")` | A collapsed, block-by-block table: block id, start, duration and events. |
 | `rf_profile_card(seq, *, views=("profile",), plane=None, extent_m=None, card_id="rf-profile")` | The RF pulses of the period at the cursor of the diagram card, simulated in the browser: each distinct pulse with its 1D profile and its widths, the combined profile of the first echo, optional maps, and the distinct pulses with a button that moves the diagram to each one. Needs RF use labels. |
@@ -964,8 +964,8 @@ T/m/s, B1 in µT, and times in seconds.
 
 | Type | Fields |
 |---|---|
-| `GradientLimits` | `reason` (`None`, or why there is no value, for example "no gradient events in the sequence"), `range_s`, `axes` (a dict from `"x"`, `"y"`, `"z"` to `AxisResult`), `vector_peak_mt_per_m`, `vector_peak_time_s`, `limits` (the `HardwareLimits` used), `whole_rms_mt_per_m` (a dict of the RMS of each axis over the whole sequence; `None` unless `window` was given). There is no vector slew rate. |
-| `AxisResult` | `peak_mt_per_m`, `peak_time_s`, `peak_block`, `max_slew_t_per_m_per_s`, `slew_block`, `rms_mt_per_m`. The slew is the largest of the slope of each straight segment of a gradient event, and the step at each block junction divided by the gradient raster time. |
+| `GradientLimits` | `reason` (`None`, or why there is no value, for example "no gradient events in the sequence"), `range_s`, `axes` (a dict from `"x"`, `"y"`, `"z"` to `AxisResult`), `vector_peak_mt_per_m`, `vector_peak_time_s`, `vector_peak_block`, `limits` (the `HardwareLimits` used), `whole_rms_mt_per_m` (a dict of the RMS of each axis over the whole sequence; `None` unless `window` was given). There is no vector slew rate. |
+| `AxisResult` | `peak_mt_per_m`, `peak_time_s`, `peak_block`, `max_slew_t_per_m_per_s`, `slew_time_s`, `slew_block`, `rms_mt_per_m`. The slew is the largest of the slope of each straight segment of a gradient event, and the step at each block junction divided by the gradient raster time; its time is the start of the steepest segment, or the time of the junction. A block field is the pypulseq block ID. When several blocks reach the same largest value, the first block in play order, and the first time in it, are given. A largest value of 0 has no block (`None`). |
 | `RfExposure` | `duration_s` (one period), `num_pulses`, `peak_b1_ut`, `peak_block`, `energy_ut2_s` (the integral of B1² over one period), `b1rms_ut` (the square root of the energy over the duration), `b1rms_window_s` (the window you asked for), `b1rms_window_ut` (the highest B1+rms over any such window), `b1rms_window_used_s` (the real length of the window that `b1rms_window_ut` covers). |
 | `GradientSpectrum` | `reason`, `resonances`, `frequency_hz`, `axes` (a dict from `"x"`, `"y"`, `"z"` to the spectrum in mT/m/√Hz: the maximum over the windows), `rss` (the root-sum-of-squares of the axes in each window, then the maximum), `band_peaks` (a tuple of `BandPeak`: `resonance`, `peak`, `frequency_hz`, `relative` to the largest RSS value). |
 | `PnsPrediction` | `reason`, `hardware`, `asc_file`, `peak` (the largest total, the root-sum-of-squares of the axes: 1 is the stimulation limit), `peak_time_s`, `axis_peaks` (a dict from `"x"`, `"y"`, `"z"`). |
@@ -1087,7 +1087,7 @@ provisional interface:
 | `rf-profile` | 40 | `views`, `plane`, `extent_m` | `goto` | `sequence`, `cursor`, `anchor` | |
 | `gradient-spectrum` | 50 | `coil` | | | |
 | `pns` | 60 | `gradient_asc` | `goto` | | `pns` |
-| `gradient-limits` | 70 | `limits`, `check_norms` | | | `gradient-limits` |
+| `gradient-limits` | 70 | `limits`, `check_norms` | `goto` | | `gradient-limits` |
 | `definitions` | 80 | | | | |
 | `blocks` | 90 | `max_rows` | | | |
 

@@ -237,7 +237,8 @@ def test_largest_over_several_blocks_and_axes_credits_the_first_block_with_that_
 def test_window_that_cuts_a_ramp_gives_the_slew_of_the_part_inside_the_window():
     """A window that includes only part of an extended trapezoid, over a segment with a
     smaller slope than another segment outside the window: the slew over the window is
-    the slope of the part inside the window, not the largest slope of the whole event."""
+    the slope of the part inside the window, not the largest slope of the whole event, and its
+    time is the window start, where the window cuts that segment."""
     mg = SYSTEM.max_grad
     times = [0.0, 200e-6, 400e-6, 900e-6, 1100e-6]
     amplitudes = [0.0, 0.1 * mg, 0.15 * mg, 0.15 * mg, 0.0]
@@ -252,12 +253,30 @@ def test_window_that_cuts_a_ramp_gives_the_slew_of_the_part_inside_the_window():
     expected_slew_t_per_m_per_s = (500 * mg) / GAMMA  # the slope of the 0-200 us segment
 
     assert result.axes["x"].max_slew_t_per_m_per_s == pytest.approx(expected_slew_t_per_m_per_s)
+    assert result.axes["x"].slew_time_s == pytest.approx(100e-6)
+
+
+def test_slew_time_is_the_start_of_the_steepest_segment():
+    """An extended trapezoid whose steepest segment is its last one (900 to 1100 us): the
+    slew time is the start of that segment, 900 us."""
+    mg = SYSTEM.max_grad
+    times = [0.0, 200e-6, 400e-6, 900e-6, 1100e-6]
+    amplitudes = [0.0, 0.1 * mg, 0.15 * mg, 0.15 * mg, 0.0]
+    gx = pp.make_extended_trapezoid(channel="x", times=times, amplitudes=amplitudes, system=SYSTEM)
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(gx)
+
+    result = gradient_limits(seq)
+
+    assert result.axes["x"].max_slew_t_per_m_per_s == pytest.approx(750 * mg / GAMMA)
+    assert result.axes["x"].slew_time_s == pytest.approx(900e-6)
 
 
 def test_vector_peak_of_g_compares_different_triples_across_blocks():
     """Two blocks with different triples of active gradients: the vector peak of `|G|`
     is the largest magnitude found across the two different triples, not just the
-    largest single-axis peak."""
+    largest single-axis peak, and its block and time are those of block B (the end of its
+    rise, after the 0.8 ms of block A)."""
     amp_a = 0.9 * SYSTEM.max_grad
     gx_a = pp.make_trapezoid(
         channel="x", amplitude=amp_a, rise_time=300e-6, flat_time=200e-6, system=SYSTEM
@@ -278,6 +297,9 @@ def test_vector_peak_of_g_compares_different_triples_across_blocks():
     expected_vector_peak_mt_per_m = math.sqrt(2) * amp_b / GAMMA * 1e3
     assert expected_vector_peak_mt_per_m > amp_a / GAMMA * 1e3  # block B's triple wins
     assert result.vector_peak_mt_per_m == pytest.approx(expected_vector_peak_mt_per_m)
+    _block_a_id, block_b_id = seq.block_events
+    assert result.vector_peak_block == block_b_id
+    assert result.vector_peak_time_s == pytest.approx(1.0e-3)
 
 
 def test_default_limits_come_from_seq_system():
@@ -312,7 +334,7 @@ def test_junction_step_between_extended_trapezoids_is_reported_as_the_slew():
     `add_block` accepts (`max_slew * grad_raster_time`, section 1.1 of
     `docs/notes/slew-definitions.md`) and larger than any segment's own slope: the
     reported slew is the step divided by `grad_raster_time`, credited to the block after
-    the junction."""
+    the junction, and its time is the junction (0.2 ms)."""
     step = 0.9 * _MAX_STEP
     x = 0.3 * SYSTEM.max_grad
     y = x - step
@@ -332,6 +354,7 @@ def test_junction_step_between_extended_trapezoids_is_reported_as_the_slew():
     expected_slew_t_per_m_per_s = step / _RASTER / GAMMA
     assert result.axes["x"].max_slew_t_per_m_per_s == pytest.approx(expected_slew_t_per_m_per_s)
     assert result.axes["x"].slew_block == block_b_id
+    assert result.axes["x"].slew_time_s == pytest.approx(200e-6)
 
 
 def test_gradient_ending_non_zero_before_a_block_with_no_gradient_is_a_junction_step():
@@ -445,7 +468,8 @@ def test_window_that_cuts_a_block_credits_it_on_a_tie_with_a_later_block():
 def test_vector_peak_time_on_a_tie_is_the_first_time_in_play_order():
     """The same trapezoid on x in block 1 and on y in block 2: |G| reaches the same peak in
     both blocks, from two different triples of events, and the vector peak time is the first
-    time that block 1 reaches it (the end of its rise, 0.2 ms), not a time in block 2."""
+    time that block 1 reaches it (the end of its rise, 0.2 ms), not a time in block 2, and the
+    vector peak block is block 1."""
     seq = pp.Sequence(SYSTEM)
     seq.add_block(_tie_trapezoid("x"))
     seq.add_block(_tie_trapezoid("y"))
@@ -453,6 +477,7 @@ def test_vector_peak_time_on_a_tie_is_the_first_time_in_play_order():
     result = gradient_limits(seq)
 
     assert result.vector_peak_time_s == pytest.approx(200e-6)
+    assert result.vector_peak_block == next(iter(seq.block_events))
 
 
 def test_axis_whose_only_event_is_zero_credits_no_block():

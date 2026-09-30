@@ -165,9 +165,9 @@ Click the chart to mark the centre for the zoom buttons. Drag across the chart t
 <script type="application/json" id="pns-data">{"format":1,"goto":{"t0S":0.0,"t1S":0.012,"anchorS":0.008405000000000001}}</script>
 </section>
 
-<section class="card" id="gradient-limits">
+<section class="card" id="gradient-limits" data-card-script="gradient-limits">
 <h2>Gradient limits</h2>
-<div class="scroll"><table><thead><tr><th>Axis</th><th>Peak (mT/m)</th><th>% of limit</th><th>Max slew (T/m/s)</th><th>% of limit</th><th>RMS (mT/m)</th></tr></thead><tbody><tr><td>Gx</td><td>28</td><td>99.9</td><td>147</td><td>98.1</td><td>4.99</td></tr><tr><td>Gy</td><td>3.41</td><td>12.2</td><td>24.4</td><td>16.3</td><td>0.722</td></tr><tr><td>Gz</td><td>28</td><td>99.9</td><td>149</td><td>99.4</td><td>11</td></tr><tr><td>|G|</td><td>39.7</td><td>142</td><td>—</td><td>—</td><td>12.1</td></tr></tbody></table></div><p class="muted">Peak is the largest gradient amplitude at any point of the waveform. Max slew is the largest rate of change between neighbouring points of one gradient event, or the step at a block junction divided by the gradient raster time, as pypulseq's <code>add_block</code> checks it. RMS is the root-mean-square amplitude over the range shown. For |G|, the peak is the largest magnitude of the three-axis gradient vector, evaluated at every point where any axis changes slope, and the RMS is the RMS of that magnitude. These are the logical sequence axes: the scanner rotates them onto the physical gradient axes, so on an oblique slice, one physical axis can reach up to the |G| row's peak even when no logical axis is near the limit. Limits: pypulseq system limits (28 mT/m, 150 T/m/s).</p>
+<div class="scroll"><table><thead><tr><th>Axis</th><th>Peak (mT/m)</th><th>% of limit</th><th>Max slew (T/m/s)</th><th>% of limit</th><th>RMS (mT/m)</th></tr></thead><tbody><tr><td>Gx</td><td>28 (block 5, 8.410 ms) <button type="button" data-t0="0.0063300000000000006" data-t1="0.013890000000000001" data-anchor="0.008409999999999999" aria-label="Show the Gx peak in the diagram" hidden>Show</button></td><td>99.9</td><td>147 (block 5, 8.220 ms) <button type="button" data-t0="0.0063300000000000006" data-t1="0.013890000000000001" data-anchor="0.00822" aria-label="Show the Gx max slew in the diagram" hidden>Show</button></td><td>98.1</td><td>4.99</td></tr><tr><td>Gy</td><td>3.41 (block 2, 3.310 ms) <button type="button" data-t0="0.00267" data-t1="0.0046700000000000005" data-anchor="0.00331" aria-label="Show the Gy peak in the diagram" hidden>Show</button></td><td>12.2</td><td>24.4 (block 2, 3.170 ms) <button type="button" data-t0="0.00267" data-t1="0.0046700000000000005" data-anchor="0.00317" aria-label="Show the Gy max slew in the diagram" hidden>Show</button></td><td>16.3</td><td>0.722</td></tr><tr><td>Gz</td><td>28 (block 5, 8.410 ms) <button type="button" data-t0="0.0063300000000000006" data-t1="0.013890000000000001" data-anchor="0.008409999999999999" aria-label="Show the Gz peak in the diagram" hidden>Show</button></td><td>99.9</td><td>149 (block 1, 0.030 ms) <button type="button" data-t0="-0.001585" data-t1="0.0047550000000000005" data-anchor="3.0000000000000004e-05" aria-label="Show the Gz max slew in the diagram" hidden>Show</button></td><td>99.4</td><td>11</td></tr><tr><td>|G|</td><td>39.7 (block 5, 8.410 ms) <button type="button" data-t0="0.0063300000000000006" data-t1="0.013890000000000001" data-anchor="0.008409999999999999" aria-label="Show the |G| peak in the diagram" hidden>Show</button></td><td>142</td><td>—</td><td>—</td><td>12.1</td></tr></tbody></table></div><p class="muted">Peak is the largest gradient amplitude at any point of the waveform. Max slew is the largest rate of change between neighbouring points of one gradient event, or the step at a block junction divided by the gradient raster time, as pypulseq's <code>add_block</code> checks it. RMS is the root-mean-square amplitude over the range shown. For |G|, the peak is the largest magnitude of the three-axis gradient vector, evaluated at every point where any axis changes slope, and the RMS is the RMS of that magnitude. These are the logical sequence axes: the scanner rotates them onto the physical gradient axes, so on an oblique slice, one physical axis can reach up to the |G| row's peak even when no logical axis is near the limit. The block and the time after a value are where it is first reached, in ms from the start of the sequence; for the max slew, the start of the steepest segment, or the block junction. Limits: pypulseq system limits (28 mT/m, 150 T/m/s).</p>
 </section>
 
 <section class="card" id="definitions">
@@ -7508,6 +7508,29 @@ PulseqReport.registerCard("pns", (section, data) => {
   button.addEventListener("click", () => {
     PulseqReport.publish("goto", {source: id, ...data.goto});
   });
+});
+
+</script>
+<script>
+// Gradient limits card (cards/gradient_limits.py): the "Show" button of each peak and max
+// slew. A button holds the view and the anchor of its `goto` message in `data-t0`, `data-t1`
+// and `data-anchor` (seconds): the block where the value is reached, with half the block's
+// duration on each side, and the time of the value. The buttons are shown only while a card
+// subscribes to `goto` (decision 22 of docs/plans/public-api.md), so on a page with no
+// diagram they stay hidden. The card has no data.
+PulseqReport.registerCard("gradient-limits", section => {
+  const id = section.id;
+  for (const button of section.querySelectorAll("button[data-anchor]")) {
+    PulseqReport.requestButton(button, "goto");
+    button.addEventListener("click", () => {
+      PulseqReport.publish("goto", {
+        source: id,
+        t0S: Number(button.dataset.t0),
+        t1S: Number(button.dataset.t1),
+        anchorS: Number(button.dataset.anchor),
+      });
+    });
+  }
 });
 
 </script>

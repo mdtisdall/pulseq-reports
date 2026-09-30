@@ -2783,14 +2783,25 @@ trapezoid's amplitude.
 **Checks:** A window that includes only part of an extended trapezoid, over a
 segment with a smaller slope than another segment outside the window: the
 slew over the window is the slope of the part inside the window, not the
-largest slope of the whole event.
+largest slope of the whole event, and the slew time is the window start, where
+the window cuts that segment.
 
 **How:** The test builds an x extended trapezoid with four segments of
 different slopes and a window that lies inside the two segments with the
 smallest slopes, excluding the segment with the largest. It computes the
 expected slew by hand from the times and amplitudes of the segment the window
 keeps. It checks that the x axis slew matches, not the whole event's own
-largest segment slope.
+largest segment slope, and that `slew_time_s` is the window start (100 µs).
+
+**Assumptions:** None.
+
+#### `test_slew_time_is_the_start_of_the_steepest_segment`
+
+**Checks:** The slew time of an axis is the start of its steepest segment.
+
+**How:** The test builds one x extended trapezoid whose last segment (900 to
+1100 µs) is its steepest. It checks that the x slew is that segment's slope,
+computed by hand, and that `slew_time_s` is 900 µs.
 
 **Assumptions:** None.
 
@@ -2798,13 +2809,16 @@ largest segment slope.
 
 **Checks:** Two blocks with different triples of active gradients: the
 vector peak of `|G|` is the largest magnitude found across the two different
-triples, not just the largest single-axis peak.
+triples, not just the largest single-axis peak, and the vector peak block and
+time are those of the block that reaches it.
 
 **How:** The test builds one block with a large x trapezoid alone, and a
 second block with a smaller, equal-amplitude trapezoid on both x and y (whose
 combined vector magnitude, `sqrt(2)` times the smaller amplitude, is larger
 than the first block's lone peak). It checks that the vector peak equals the
-hand-computed combined magnitude of the second block's triple.
+hand-computed combined magnitude of the second block's triple, that
+`vector_peak_block` is the second block, and that `vector_peak_time_s` is the
+end of the second block's rise (1.0 ms, after the 0.8 ms of the first block).
 
 **Assumptions:** None.
 
@@ -2813,13 +2827,14 @@ hand-computed combined magnitude of the second block's triple.
 **Checks:** A step at the junction between two extended trapezoids, within
 the tolerance that `add_block` accepts (`max_slew * grad_raster_time`) and
 larger than any segment's own slope: the reported slew is the step divided
-by `grad_raster_time`, credited to the block after the junction.
+by `grad_raster_time`, credited to the block after the junction, at the time
+of the junction.
 
 **How:** The test builds two x extended trapezoids whose junction step is 90%
 of the largest step `add_block` accepts, and whose own segment slopes are
 smaller than that step. It computes the expected slew by hand as the step
-divided by `grad_raster_time`. It checks that the x axis slew matches and is
-credited to the second block.
+divided by `grad_raster_time`. It checks that the x axis slew matches, is
+credited to the second block, and that `slew_time_s` is the junction (0.2 ms).
 
 **Assumptions:** None.
 
@@ -2894,10 +2909,12 @@ times, so its slope of block 2 differs by a rounding error.
 
 **Checks:** When two blocks with different triples of events reach the same |G| peak, the
 vector peak time is the first time the earlier block reaches it, not a time in the later
-block. The triples are found with `numpy.unique`, whose order is not the play order.
+block, and the vector peak block is the earlier block. The triples are found with
+`numpy.unique`, whose order is not the play order.
 
 **How:** The test builds the same trapezoid on x in block 1 and on y in block 2, and checks
-that `vector_peak_time_s` is 0.2 ms, the end of block 1's rise.
+that `vector_peak_time_s` is 0.2 ms, the end of block 1's rise, and that
+`vector_peak_block` is block 1.
 
 **Assumptions:** None.
 
@@ -2965,11 +2982,12 @@ compares `whole_rms_mt_per_m` against a fresh whole-file oracle call.
 `test_gradient_limits_card.py` tests `cards/gradient_limits.py`: the "Gradient
 limits" table (Gx, Gy, Gz and |G| rows, with the peak, its percent of the
 limit, the max slew, its percent, and the RMS), one table for each `TimeWindow`
-(with the extra RMS column), and the limits in the note.
+(with the extra RMS column), the block and the time of each peak and max slew with
+its "Show" button, and the limits in the note.
 Every expected numeric cell is computed by hand from the trapezoid the test
-builds, using the same formulas as `test_grad_limits.py`, and compared through
-`markup.html_table`, so a test also fixes the exact table that `html_table` would
-render from those rows.
+builds, using the same formulas as `test_grad_limits.py`. The tests read the card's
+tables with Python's `html.parser` (`_CardParser`): the text of each cell, without a
+button's own text, and the attributes of each button.
 
 Since phase 4 of `docs/plans/cards-at-scale.md`, a window's "RMS over whole file" column comes
 from the one `gradient_limits` call's own `whole_rms_mt_per_m`, not a second call with
@@ -2981,15 +2999,17 @@ from the one `gradient_limits` call's own `whole_rms_mt_per_m`, not a second cal
 |G| rows hold the hand-computed peak,
 percent of the limit, max slew, its percent, and RMS, with "—" for the
 max slew of |G| and its percent. The |G| RMS equals the Gx RMS, because only x
-has a gradient.
+has a gradient. The Gx and |G| peak cells give block 1 and the end of the rise
+(0.200 ms), the Gx max slew cell gives block 1 and the start of the rise (0.000
+ms), and the zero values of Gy and Gz give no block.
 
 **How:** The test builds a sequence with an x trapezoid, computes the expected
 peak, slew and RMS from the trapezoid's parameters (as in
 `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`) and their
-percents of `SYSTEM.max_grad` and `SYSTEM.max_slew`, and builds the expected
-table HTML with `markup.html_table` from the hand-computed rows. It calls
-`gradient_limits_card` and checks that the card's `id`, `title`, `data` and
-`script`, and that its body starts with the expected table HTML.
+percents of `SYSTEM.max_grad` and `SYSTEM.max_slew`, and the expected cell texts,
+with "(block N, t ms)" after a value that has a block. It calls
+`gradient_limits_card` and checks the card's `id`, `title` and `data`, and that
+its one table has exactly the expected cell texts.
 
 **Assumptions:** None.
 
@@ -3003,9 +3023,10 @@ window.
 the rising ramp, given as a `TimeWindow`. It computes the expected peak, slew and window RMS from the
 ramp alone (RMS from `amplitude^2 * rise_time / 3` divided by the window
 length), and the expected whole-file RMS as in the first test. It builds
-the expected table HTML with `markup.html_table` from these hand-computed rows,
-with both RMS columns, and checks that the card's body starts with the `<h3>`
-of the window's label and this table.
+the expected cell texts from these hand-computed values, with both RMS columns
+(the peak is at the window end, 0.200 ms, and the slew segment starts at the
+window start, 0.000 ms), and checks that the card's body starts with the `<h3>`
+of the window's label and that its one table has these cell texts.
 
 **Assumptions:** None.
 
@@ -3016,9 +3037,10 @@ label, with the values that `gradient_limits` gives for that window's range.
 
 **How:** The test builds a sequence with an x trapezoid and a y trapezoid of
 different amplitudes, and two windows, one half of the sequence each. For each
-window it builds the expected table with `markup.html_table` from the fields of
-`gradient_limits(seq, window=...)`, checks that the two tables differ, and
-checks that the card's body starts with the two `<h3>` and table pairs.
+window it builds the expected cell texts from the fields of
+`gradient_limits(seq, window=...)`, with the block and time of each value, checks
+that the two tables differ, and checks that the card's body starts with the first
+`<h3>`, has the second, and that its two tables have these cell texts in order.
 
 **Assumptions:** None.
 
@@ -3047,11 +3069,13 @@ next to its label.
 #### `test_no_gradients_adds_a_reason_note`
 
 **Checks:** A sequence with no gradient events gets a muted note in the card
-that gives the reason, with no file name in front of it.
+that gives the reason, with no file name in front of it. The card has no "Show"
+button, and so no script.
 
 **How:** The test builds a sequence with a delay block only, calls
 `gradient_limits_card`, and checks that the body contains
-`<p class="muted">no gradient events in the sequence.</p>`.
+`<p class="muted">no gradient events in the sequence.</p>`, that the body has no
+button, and that `script` is None and `scripts` is empty.
 
 **Assumptions:** None.
 
@@ -3071,11 +3095,42 @@ checks that the wrapper was called exactly once.
 #### `test_render_page_accepts_gradient_limits_card`
 
 **Checks:** `render_page` accepts the card that `gradient_limits_card`
-returns.
+returns, and the page has the card's script, registered under the name in
+`Card.script`.
 
 **How:** The test builds a card from a sequence with a trapezoid, calls
-`render_page` with it, and checks that the card's section and its `<h2>`
-title are in the result.
+`render_page` with it, and checks that the card's section (with
+`data-card-script="gradient-limits"`), its `<h2>` title and the script's
+`registerCard("gradient-limits"` call are in the result.
+
+**Assumptions:** None.
+
+#### `test_show_buttons_send_the_block_of_each_value_with_its_time`
+
+**Checks:** The card has one "Show" button for each peak and max slew that has a
+block. A button's `goto` range is the block with half its duration on each side,
+and its anchor is the time of the value. The buttons start hidden, and the card
+has the script that sends their messages and publishes `goto`.
+
+**How:** The test builds an x trapezoid block (0.2 of the limit) and a y
+trapezoid block (0.5), each 1.4 ms. It checks that the buttons' `aria-label`s name
+exactly the Gx and Gy peaks and max slews and the |G| peak; that the Gy peak and
+|G| peak buttons have `data-t0` 0.7 ms, `data-t1` 3.5 ms and `data-anchor` 1.6 ms
+(block 2 from 1.4 ms to 2.8 ms, the end of its rise at 1.6 ms) and the `hidden`
+attribute; and that the card's `script` is `gradient-limits`, it has one script
+text, and `publishes` is `("goto",)`.
+
+**Assumptions:** The script itself runs only in a browser: no test runs it (there
+are no DOM tests). It is checked by hand in a browser.
+
+#### `test_show_button_view_of_a_short_block_is_1_ms_wide`
+
+**Checks:** For a block shorter than 0.5 ms, a button's view is 1 ms wide, centred
+on the block, as the diagram's own `goto` of a block.
+
+**How:** The test builds one x trapezoid block of 0.3 ms and checks that every
+button's `data-t0` and `data-t1` are 0.5 ms before and after the block's middle
+(0.15 ms).
 
 **Assumptions:** None.
 
