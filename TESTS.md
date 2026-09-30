@@ -2871,6 +2871,46 @@ block.
 
 **Assumptions:** None.
 
+#### `test_window_that_cuts_a_block_credits_it_on_a_tie_with_a_later_block`
+
+**Checks:** When a block that the window start cuts and a later block fully inside the
+window reach the same peak and the same slew, both are credited to the cut block, the first
+in play order, as a single pass over the blocks would (finding L3 of
+`docs/reviews/2026-09-28-code-review.md`). The peak time and the vector peak time are the
+first time the cut block reaches the peak.
+
+**How:** The test builds two blocks with the same x trapezoid (rise 0.2 ms, flat 0.4 ms,
+fall 0.2 ms), then a delay block. The window starts at 0.4 ms, in the flat top of block 1,
+so block 1's fall ramp and all of block 2 are inside the window. It checks that the x
+`peak_block` and `slew_block` are block 1, and that the x `peak_time_s` and
+`vector_peak_time_s` are 0.4 ms, the window start.
+
+**Assumptions:** The slope of block 1's fall ramp, clipped by the window, equals bit for bit
+the slope of the same event in block 2, because block 1 starts at 0 and the clip keeps the
+ramp's own corner points. The oracle is not used: it computes slopes from absolute corner
+times, so its slope of block 2 differs by a rounding error.
+
+#### `test_vector_peak_time_on_a_tie_is_the_first_time_in_play_order`
+
+**Checks:** When two blocks with different triples of events reach the same |G| peak, the
+vector peak time is the first time the earlier block reaches it, not a time in the later
+block. The triples are found with `numpy.unique`, whose order is not the play order.
+
+**How:** The test builds the same trapezoid on x in block 1 and on y in block 2, and checks
+that `vector_peak_time_s` is 0.2 ms, the end of block 1's rise.
+
+**Assumptions:** None.
+
+#### `test_axis_whose_only_event_is_zero_credits_no_block`
+
+**Checks:** An axis whose only event has amplitude 0 has a peak and a slew of 0, and no block
+is credited for either (`peak_block` and `slew_block` are None).
+
+**How:** The test builds one block with an x trapezoid and a y trapezoid scaled to amplitude
+0 with `pp.scale_grad`, and checks the y axis's peak, slew and block fields.
+
+**Assumptions:** None.
+
 #### `test_matches_oracle_on_synthetic_sequences`
 
 **Checks:** `gradient_limits` matches the oracle (`tests/oracles/grad_limits.py`, the
