@@ -19,8 +19,7 @@ import numpy as np
 import pypulseq as pp
 
 import pulseq_reports
-from pulseq_reports.page import write_page
-from pulseq_reports.registry import build_cards
+from pulseq_reports import build_cards, write_page
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "docs" / "examples" / "gre.html"
 

@@ -8642,3 +8642,13 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 **How:** The current directory is another, empty directory.
 
 **Assumptions:** The PNS card's page does not depend on the .asc file's directory beyond its resolved path.
+
+### 2.38 Package exports (`test_exports.py`)
+
+#### `test_an_exported_name_is_the_object_of_its_module`
+
+**Checks:** Each name that `pulseq_reports` or `pulseq_reports.cards` exports is the same object as the name in the module that defines it, for example `pulseq_reports.build_cards is pulseq_reports.registry.build_cards`.
+
+**How:** Parametrized over the 20 (package, name, module) triples.
+
+**Assumptions:** None.
