@@ -83,6 +83,8 @@ Each item says what a caller of `v0.2.0rc1` changes.
   - `PnsLanes.statusText(result, onRaster)` is `statusText(result)`.
 - **`report.css`** has no `--col-seq-*` tokens and no rules for vb-pulseq's own
   cards (#65).
+- **`AxisResult` has `slew_time_s`** between `max_slew_t_per_m_per_s` and
+  `slew_block` (#99). A caller that makes an `AxisResult` by position adds it.
 
 ### Added
 
@@ -122,6 +124,11 @@ Each item says what a caller of `v0.2.0rc1` changes.
   that holds it, or the block that holds it when the sequence has no `TR`
   definition. It replaces the "Peak-PNS TR" window. The button is shown only
   while a card acts on `goto` (the diagram).
+- **Where the gradient limits happen** (#99). The peak and max slew cells of the
+  gradient limits card give the block ID and the time where each value is reached,
+  and a "Show" button that shows that block in the diagram (it sends `goto`, and is
+  shown only while a card acts on it). `AxisResult.slew_time_s` and
+  `GradientLimits.vector_peak_block` are new.
 - **Gradient coils** (#90). `grad_spectrum.GradientCoil`, `PRISMA_AS82` and `COILS`
   (`{"prisma-as82": PRISMA_AS82}`).
 - **Limits in the note** (#90). The note of the gradient limits card gives the
@@ -167,3 +174,6 @@ Each item says what a caller of `v0.2.0rc1` changes.
 - `pns.peak_tr_window` returns `None` for a sequence with no block. Before, it
   raised `StopIteration` (P3, #79).
 - The `aria-label` of the diagram names every lane (C13, #78).
+- On an exact tie, `gradient_limits` credits the first block in play order, and
+  the first time in it, for each peak, slew and the |G| peak; a value of 0 has no
+  block (L3, #98).
