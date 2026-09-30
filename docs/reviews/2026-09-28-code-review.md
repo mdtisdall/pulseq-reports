@@ -35,7 +35,7 @@ comments), L (model details with a low reach).
 
 The findings were checked again against `main` at `4e17c66`, after #48 to
 #63 (the RF pulse profiles), and then updated for the pull requests below,
-up to `e8ed751`. The line numbers in the sections below are still those of
+up to `034e135`. The line numbers in the sections below are still those of
 the review state.
 
 - **Fixed:**
@@ -77,7 +77,30 @@ the review state.
     C25, C26 and C27 were fixed in the phase that edited each file, with the
     parts that #71 and #74 fixed before.
 
+  - The public API, the card plugins and the command line (step 3 of
+    section 10, and F1, F2 and a part of F3 of step 4): the plan
+    `docs/plans/public-api.md`. Its section 8 has the results. The user
+    decided that each card, and each page, shows one sequence.
+
+    | Phase | Findings | Pull request |
+    |---|---|---|
+    | 1 | A3 (the card builders), A4 (`TimeWindow` has no file index), and the one-sequence decision | #88 |
+    | 2 | A1, A5, D3, S7, and A3 and A8 for the PNS modules | #89 |
+    | 3 | A3, A4, A7, A8 | #90 |
+    | 4 | F2, and a part of F3 | #91 |
+    | 5 | F1 | #92 |
+    | 6 | A6, A8 (the documentation), C3, C4, C5, C6 | #93 |
+
+- **Closed by the one-sequence decision** (#88): A2 (every builder takes
+  one sequence, as `pns_card` did) and S2 (the "All files" code of the RF
+  exposure card is removed).
 - **Partly fixed:**
+  - F3: #91 gives each card its checks (`Card.checks`): the timing check, a
+    gradient value over 100 % of its limit (and the |G| peak with
+    `check_norms`), and a PNS peak of 100 % or more; the command line exits
+    with 2 when a check fails (#92). Open: a status line in each card, a
+    limit column in the PNS and RF exposure cards, and a B1+rms limit that
+    the caller gives.
   - C14: #78 corrected the docstrings (the tie rule, and that the card does
     not show where the limits happen). To show the blocks and times on the
     card is a feature: an item of `TODO.md`.
@@ -88,9 +111,9 @@ the review state.
 - **No longer apply:** D5, S17 and C11, because #55 deleted
   `scripts/vb_parity.py`. The `vb_parity.py` parts of A8 no longer apply
   either.
-- **Open:** all the other findings: A1 to A8, F1 to F7, D3, S2, S7, C3 to
-  C8, C10, C12, and L1 to L3. D3, S2 and S7 go with the API decisions (A1,
-  A2 and A8).
+- **Open:** all the other findings: F3 (in part, above), F4 to F7, C7,
+  C8, C10, C12, and L1 to L3. C7 goes with the version change to
+  `0.2.0rc2`, a chore after the plan `docs/plans/public-api.md`.
 - **New cases of the same findings,** in the code of #48 to #63:
   - B3: the `goto` message (#53), which the "Show" buttons of the RF profile
     card send, also called `showWindow`. A `GLanes` error there also left
@@ -99,7 +122,8 @@ the review state.
   - A8: `rf_profile_data` and `rf_table` (`cards/rf_profile.py`) have public
     names and are not in `docs/usage.md`.
   - A10: the reserved script names are now `diagram`, `spectrum` and
-    `rf-profile`. Fixed with A10 (#65).
+    `rf-profile`. Fixed with A10 (#65). #91 removed the reserved names: a
+    card gives its own scripts in `Card.scripts`.
   - C7: the sentence is already false on `main`. The RF profiles, `mapChart`
     and the message bus are not in `v0.2.0rc1`.
   - C8: the RF profile card adds more `<h3>` and `<h4>` headings.
