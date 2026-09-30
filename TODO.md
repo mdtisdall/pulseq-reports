@@ -123,9 +123,7 @@ needs the gamma of each file (or values that are already converted), and
 nucleus: the physical values (mT/m, µT) of an event made with physical units
 equal those units. The existing tests (`scripts/check`) for proton sequences.
 
-**When.** After phases 3 and 4 of `docs/plans/cards-at-scale.md` are merged
-(they change `rf_exposure.py` and `grad_limits.py`), and after phase 4 of
-`docs/plans/diagram-lanes.md` (the diagram data).
+**When.** Any time. Write a plan in `docs/plans/` first.
 
 ## Study the two definitions of the gradient slew rate
 
@@ -140,8 +138,7 @@ equal those units. The existing tests (`scripts/check`) for proton sequences.
     `grad_raster_time`, with half-raster edge segments.
 
   At a block junction, it is the step / `grad_raster_time`, as `add_block`
-  checks it. (Decided on 2026-09-24. The card gets the junction steps in phase 4 of
-  `docs/plans/cards-at-scale.md`.)
+  checks it. (Decided on 2026-09-24.)
 - **The SAFE PNS model** (pypulseq `safe_gwf_to_pns`) uses
   `dgdt = diff(g) / dt` of the gradient sampled at the half-raster times
   `(k + 0.5) * dt`.
