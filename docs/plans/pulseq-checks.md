@@ -4,9 +4,9 @@ Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
 Status: design. The design was written on 2026-09-30, from a discussion with
-the user. This is not an implementation plan. It gives the concepts, the
-structure and the decisions that are still open (section 11). An
-implementation plan follows after the user answers the open decisions.
+the user. The user answered the open decisions on the same day (section 11).
+This is not an implementation plan. It gives the concepts, the structure and
+the decisions. An implementation plan comes next.
 
 ## 1. Goal
 
@@ -133,9 +133,18 @@ The target profile tells which model applies to that scanner.
 
 Each check rule declares the profile fields and the models that it needs.
 
-The target profile replaces `HardwareLimits` and the card options `limits`,
-`gradient_asc` and `check_norms`. A report can use a target profile as
-context, for example to show a limit as a line on a chart.
+A target profile is a TOML or JSON file. It gives the vendor, the rasters,
+the dead times, B0 and the gradient limits. It can name a Siemens `.asc`
+file. The `.asc` file gives the SAFE parameters, the acoustic resonances and
+the GPA limits. When the profile file and the `.asc` file both give one
+value, the result is an error, not a silent override (decision 6). A site
+keeps its profiles where it wants, for example next to its sequences.
+
+`HardwareLimits` moves to `pulseq-checks`, and a target profile contains it.
+`pulseq-reports` exports it again, so its callers do not break (decision 8).
+The target profile replaces the card options `limits`, `gradient_asc` and
+`check_norms`. A report can use a target profile as context, for example to
+show a limit as a line on a chart.
 
 ### 5.3 Results
 
@@ -203,18 +212,26 @@ checks were run. It does not use default limits.
 
 | Status | Meaning |
 |---|---|
-| 0 | Each check passed. |
+| 0 | Each check passed. Each required check was evaluated. |
 | 2 | At least one check failed. |
-| 1 | An error in the arguments or the profiles, or a check that was not evaluated. |
+| 1 | An error in the arguments or the profiles, or a required check that was not evaluated. |
 
-Decision 3 in section 11 asks if "not evaluated" gives 1, or a status of its
-own. The command writes a result that a machine can read (JSON, and maybe
+A check is required when the caller names it, in the configuration file or
+with a flag. A check that runs by default and does not have its inputs gives
+"not evaluated" in the output, and the status does not change (decision 3).
+
+A check uses the limits of the sequence (`seq.system`) only when the caller
+permits it explicitly, with a flag or an entry in the profile. The result
+records that the limits came from the sequence (decision 4).
+
+The command writes a result that a machine can read (JSON, and maybe
 JUnit XML for CI dashboards) and a short summary for a person.
 
 `pulseq-report`, in `pulseq-reports`: the status is 0 when each page is
 written, also when a check in the summary failed. To stop CI on a failed
-check is the work of `pulseq-check`. If the report command must also stop CI,
-an explicit flag does it (decision 2).
+check is the work of `pulseq-check`. An opt-in flag, for example
+`--fail-on-check`, makes the report command give a non-zero status when a
+check in its summary fails (decision 2).
 
 ### 5.7 Plugins
 
@@ -222,9 +239,11 @@ an explicit flag does it (decision 2).
 check rules. `pulseq-reports` keeps its entry-point group for cards. A
 project can add a check for its site without a card.
 
-The configuration file and option code of the command line
-(`options.py`, and the configuration reader in `cli.py`) is written for
-cards now. Decision 9 asks where the shared part goes.
+Each package has its own command line (decision 9). `pulseq-checks` has a
+public function that reads a check configuration: the targets and the
+selected checks. `pulseq-reports` keeps its card options (`options.py`,
+`cli.py`) and calls that function. Thus the two commands read the same check
+configuration file.
 
 ### 5.8 Rely on pypulseq
 
@@ -233,6 +252,27 @@ A check uses the pypulseq rule when pypulseq has one. The timing check calls
 limits check uses the slew definition of pypulseq
 (`docs/notes/slew-definitions.md`). `pulseq-checks` does not copy a rule that
 pypulseq has.
+
+### 5.9 Cost classes
+
+Each check declares a cost class, `fast` or `slow` (decision 7). The cost
+class is one field of the specification of the check, and its default is
+`slow`. Thus a plugin check that nobody measured does not make the fast set
+slow. A plugin author changes one field to put a check in the fast set.
+
+The caller can select checks, or run only the fast checks. The fast checks of
+`pulseq-checks` have a tested time budget on a file with 10⁶ blocks. The
+implementation plan sets the number after a measurement. The budget test does
+not include plugin checks. A plugin author can use the same timing helper to
+measure a plugin check.
+
+### 5.10 Rasters
+
+`seq.read` keeps the raster times of the file. `check_timing` uses the
+rasters of `seq.system`, which come from the target. A separate check, the
+raster check, compares the rasters that the file declares with the rasters of
+the target. The target profile gives the rule: equal, or an integer multiple.
+The timing check then runs with the rasters of the target (decision 5).
 
 ## 6. Kinds of checks that we can see now
 
@@ -275,8 +315,11 @@ Two checks are possible:
 
 The correct location for the declaration is the `[DEFINITIONS]` section of
 the `.seq` file. That is a convention for the Pulseq community. This library
-must not invent it alone. Until a convention exists, the declaration can be in
-the check configuration file, next to the targets (decision 10).
+must not invent it alone.
+
+TODO (decision 10): the location of the declaration is deferred. Version 1
+has no convention checks. When `pulseq-checks` exists, this item goes into its
+`TODO.md`.
 
 ## 7. Two packages
 
@@ -347,31 +390,41 @@ consumers depend on it.
 
 Version 1 is small:
 
-- one target profile format, and a Siemens `.asc` profile reader,
+- one target profile format (TOML or JSON), and a Siemens `.asc` profile
+  reader,
 - a list of targets for each check run,
+- the cost classes and the time budget of the fast checks (section 5.9),
+- the raster check (section 5.10),
 - the timing check (a wrapper of `check_timing`),
 - the gradient amplitude check and the gradient slew check of each axis, for
-  a finished file. The \|G\| amplitude check is optional (it replaces
-  `check_norms`).
+  a finished file,
+- the worst-case amplitude under rotation: the peak of \|G\| against the
+  amplitude limit. It replaces `check_norms` (decision 11).
 - the PNS check with the SAFE model of pypulseq, only with a real `.asc` file,
 - the result matrix, the JSON output and the `pulseq-check` command,
-- the check summary card in `pulseq-reports`.
+- the check summary card in `pulseq-reports`, and its `--fail-on-check` flag.
 
-The other kinds of section 6 come later. The structure of section 5 accepts
-them without a new design.
+The worst-case slew under rotation needs a vector slew measurement. The
+library does not have one yet, so that check comes later. The convention
+checks come later (decision 10). The other kinds of section 6 come later.
+The structure of section 5 accepts them without a new design.
 
 ## 9. Order of work
 
 1. **Before `0.2.0` final.** Remove `Card.checks`, the `check_norms` option
    and the exit status 2 from `pulseq-reports`. Then no final release has an
-   API that this design removes (decision 1).
-2. **Make `pulseq-checks`.** Use the dev-workflow `project-setup` skill. Move
+   API that this design removes (decision 1). `HardwareLimits` stays. The
+   gradient limits card uses it to show the percent of each limit, with no
+   verdict.
+2. **Make `pulseq-checks`** (`mdtisdall/pulseq-checks`, decision 12). Use the
+   dev-workflow `project-setup` skill. Move
    the measurement modules of section 7.2 with their tests. Add the target
    profile, the profile reader, the check rules, the results and
    `pulseq-check`. Compare the results of the new timing, gradient and PNS
    checks with the current checks of the cards.
 3. **Change `pulseq-reports` to use `pulseq-checks`.** Remove the copies of the
-   moved modules. Add the check summary card. Update `docs/usage.md`,
+   moved modules. Export `HardwareLimits` again from `pulseq_reports`. Add the
+   check summary card and `--fail-on-check`. Update `docs/usage.md`,
    `TESTS.md` and `CHANGELOG.md`.
 4. **Later.** More kinds of checks (section 6), more profile readers, JUnit
    output, and proposals to pypulseq.
@@ -389,40 +442,24 @@ is not built two times.
 - A proposal to pypulseq or to MATLAB Pulseq stands alone. It does not name
   `pulseq-reports` or `pulseq-checks`.
 
-## 11. Decisions still open
+## 11. Decisions
 
-1. **Timing against `0.2.0`.** Remove `Card.checks` and the exit status 2
-   before `0.2.0` final (recommended), or release them and replace them in
-   `0.3.0`?
-2. **The exit status of `pulseq-report`.** Is it always 0 when the page is
-   written (recommended)? Or is there an opt-in flag, for example
-   `--fail-on-check`?
-3. **The exit status of "not evaluated".** Is it 1, like an error, or a
-   status of its own? Can a caller mark a check as "may be not evaluated"?
-4. **Limits from the sequence.** Can a check use the `seq.system` limits of
-   the file? Recommended: only with an explicit opt-in, and the result records
-   the source of the limits.
-5. **Rasters.** `seq.read` keeps the raster times of the file.
-   `check_timing` uses the rasters of `seq.system`. Must a separate check
-   compare the rasters of the file with the rasters of the target?
-6. **The target profile format.** TOML, or another format? How much comes
-   from the Siemens `.asc` file (the GPA limits, the SAFE parameters, the
-   acoustic resonances), and how much from the profile file? Is a site
-   profile a file in the repository of the sequence?
-7. **The speed budget.** For example: "the version 1 checks of a file with
-   10⁶ blocks take less than N seconds". PNS can be slow for a large file.
-   Does each check have a cost class, and can the caller select checks?
-8. **`HardwareLimits`.** It is public in `0.2.0`. Does it move to
-   `pulseq-checks` and `pulseq-reports` export it again? Or does the target
-   profile replace it?
-9. **The shared command-line code.** Does the option and configuration code
-   move to `pulseq-checks`, or does each package have its own?
-10. **The convention declaration.** Where does it go until the Pulseq
-    community has a convention? Do we propose a `[DEFINITIONS]` key to
-    pypulseq and MATLAB Pulseq?
-11. **The worst case under rotation.** Version 1 or later?
-12. **The name and the repository.** `mdtisdall/pulseq-checks`, public, MIT,
-    with the same dev-workflow as `pulseq-reports`?
+The user made these decisions on 2026-09-30. Do not open them again.
+
+| # | Decision | Answer | Where |
+|---|---|---|---|
+| 1 | `Card.checks` and exit status 2, against `0.2.0` | Remove them before `0.2.0` final. | 9 |
+| 2 | The exit status of `pulseq-report` when a check in its summary fails | 0. The opt-in flag `--fail-on-check` gives a non-zero status. | 5.6 |
+| 3 | The exit status of "not evaluated" | Status 1 only for a required check (a check that the caller names). A default check that is not evaluated does not change the status. | 5.6 |
+| 4 | The limits of the sequence (`seq.system`) | Only with an explicit opt-in. The result records the source of the limits. | 5.6 |
+| 5 | The rasters of the file and of the target | A separate raster check. The target profile gives the rule (equal, or an integer multiple). The timing check uses the rasters of the target. | 5.10 |
+| 6 | The target profile format | A TOML or JSON file that can name a Siemens `.asc` file. A value in both files is an error. | 5.2 |
+| 7 | The speed budget | Cost classes (`fast`, `slow`) and a tested budget for the fast checks of the library. The user's condition: other developers must be able to add their own checks easily. The cost class is one field, with the default `slow`. | 5.9 |
+| 8 | `HardwareLimits` | It moves to `pulseq-checks`. `pulseq-reports` exports it again. | 5.2, 9 |
+| 9 | The command-line code | Each package has its own. `pulseq-checks` has a public function that reads a check configuration, and `pulseq-reports` uses it. | 5.7 |
+| 10 | The location of the convention declaration | Deferred. It is a TODO. Version 1 has no convention checks. | 6.2 |
+| 11 | The worst case under rotation | Worst-case amplitude (the peak of \|G\|) in version 1. Worst-case slew later, after a vector slew measurement. | 8 |
+| 12 | The name and the repository | `mdtisdall/pulseq-checks`: public, MIT, with the same dev-workflow as `pulseq-reports`. | 9 |
 
 ## 12. Terms
 
