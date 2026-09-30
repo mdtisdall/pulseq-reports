@@ -23,20 +23,21 @@ In `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.1.0",
+    "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.2.0rc2",
 ]
 ```
 
 With uv:
 
 ```
-uv add "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.1.0"
+uv add "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.2.0rc2"
 ```
 
-To move to a later tag, change `@v0.1.0` and run `uv lock --upgrade-package
+To move to a later tag, change `@v0.2.0rc2` and run `uv lock --upgrade-package
 pulseq-reports` (or the equivalent command of your tool). This document
-describes `main`; the release candidate `v0.2.0rc1` has everything in it. To
-try it, pin `@v0.2.0rc1`, and read the next paragraph about pypulseq.
+describes `main`. [`CHANGELOG.md`](../CHANGELOG.md) gives the changes of each
+tag; a change under a heading marked "not released" is on `main` but in no tag
+yet. Read the next paragraph about pypulseq.
 
 The PNS summary card and the diagram card's PNS lane need a chunked SAFE
 recursion that stock pypulseq does not have: `pns_levels.py` imports a

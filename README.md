@@ -121,7 +121,7 @@ Add the dependency by git URL and tag, for example in `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.2.0rc1",
+    "pulseq-reports @ git+https://github.com/mdtisdall/pulseq-reports@v0.2.0rc2",
 ]
 ```
 
@@ -182,9 +182,10 @@ Chrome or Edge 80, Firefox 113, Safari 16.4, or later.
 
 ## Status
 
-The first release is v0.1.0. v0.2.0rc1 is a release candidate for 0.2.0:
-every card for files of up to 10^7 blocks, and the PNS and |G| lanes of the
-sequence diagram. The design is in
+The first release is v0.1.0. v0.2.0rc2 is the second release candidate for
+0.2.0: the command line, card plugins and checks, one sequence per card, the
+RF pulse profiles, and every card for files of up to 10^7 blocks.
+[CHANGELOG.md](CHANGELOG.md) lists the changes since v0.2.0rc1. The design is in
 [docs/plans/pulseq-reports.md](docs/plans/pulseq-reports.md), the planned work
 is in [TODO.md](TODO.md), and each test that CI runs is in
 [TESTS.md](TESTS.md).

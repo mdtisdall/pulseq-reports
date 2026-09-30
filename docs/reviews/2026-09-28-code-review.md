@@ -35,7 +35,7 @@ comments), L (model details with a low reach).
 
 The findings were checked again against `main` at `4e17c66`, after #48 to
 #63 (the RF pulse profiles), and then updated for the pull requests below,
-up to #99. The line numbers in the sections below are still those of
+up to #101. The line numbers in the sections below are still those of
 the review state.
 
 - **Fixed:**
@@ -101,6 +101,9 @@ the review state.
     cases: the |G| peak time on a tie between two triples of events
     (`numpy.unique` does not give them in play order), and a block credited
     for a peak or slew of 0.
+  - C7: the version change to `0.2.0rc2` (#101) corrects the sentence in
+    `docs/usage.md`, which now points to `CHANGELOG.md` for what each tag has,
+    and the install pins of `docs/usage.md`, which named `v0.1.0`.
   - C14: #78 corrected the docstrings, and #99 shows the blocks and times on
     the card: each peak and max slew cell gives the block ID and the time,
     with a "Show" button that sends `goto` to the diagram. #99 adds
@@ -123,9 +126,8 @@ the review state.
 - **No longer apply:** D5, S17 and C11, because #55 deleted
   `scripts/vb_parity.py`. The `vb_parity.py` parts of A8 no longer apply
   either.
-- **Open:** all the other findings: F3 (in part, above), F4 to F7, C7, L1
-  and L2. C7 goes with the version change to
-  `0.2.0rc2`, a chore after the plan `docs/plans/public-api.md`.
+- **Open:** all the other findings: F3 (in part, above), F4 to F7, L1 and
+  L2.
 - **New cases of the same findings,** in the code of #48 to #63:
   - B3: the `goto` message (#53), which the "Show" buttons of the RF profile
     card send, also called `showWindow`. A `GLanes` error there also left
@@ -136,8 +138,8 @@ the review state.
   - A10: the reserved script names are now `diagram`, `spectrum` and
     `rf-profile`. Fixed with A10 (#65). #91 removed the reserved names: a
     card gives its own scripts in `Card.scripts`.
-  - C7: the sentence is already false on `main`. The RF profiles, `mapChart`
-    and the message bus are not in `v0.2.0rc1`.
+  - C7: the sentence was already false on `main`. The RF profiles, `mapChart`
+    and the message bus are not in `v0.2.0rc1`. Fixed with C7 (#101).
   - C8: the RF profile card adds more `<h3>` and `<h4>` headings.
   - S14: `tests/test_rf_profile_card.py` copies helpers from
     `tests/test_rf_profiles.py`. Fixed with S14 (#84).
