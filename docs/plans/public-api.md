@@ -3,9 +3,9 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: ready. The plan was written on 2026-09-29. The user answered the
-questions of section 7 on the same day, in five rounds; section 4 uses the
-answers.
+Status: complete (2026-09-29). The results are in section 8. The plan was
+written on 2026-09-29. The user answered the questions of section 7 on the
+same day, in five rounds; section 4 uses the answers.
 
 ## 1. Goal
 
@@ -1169,7 +1169,103 @@ Fifth round (how the cards find each other):
 
 ## 8. Results
 
-Not started.
+All phases were done on 2026-09-29.
+
+### 8.1 Pull requests
+
+| Phase | Findings | PR | Merge commit |
+|---|---|---|---|
+| Plan | | #87 | `b2e7a77` |
+| 1 | One sequence per card; A3 (the card builders), A4 (`TimeWindow`); A2 and S2 closed | #88 | `d7df864` |
+| 2 | A1, A5, D3, S7; A3 and A8 for the PNS modules | #89 | `1bdb1ce` |
+| 3 | A3, A4, A7, A8 | #90 | `ac53f09` |
+| 4 | F2, a part of F3 | #91 | `e6cccf0` |
+| 5 | F1 | #92 | `5526ee4` |
+| 6 | A6, A8 (the documentation), C3 to C6 | #93 | `034e135` |
+| 7 | results | this PR | |
+
+### 8.2 Decisions made during the work
+
+1. **`--card-module` stays on a private hook** (the user). `cli.py` wraps
+   `registry._load_entry_points` for the run (`_extra_specs`), so a spec
+   from `--card-module` gets the checks of `discover`. There is no public
+   `discover(extra=...)`.
+2. **Phase 1: one window check.** `waveforms._check_windows` is the check of
+   the diagram, blocks and (phase 3) gradient limits cards. It allows 1e-7 s
+   past the end, because `full_window` rounds its end to 1e-4 ms.
+3. **Phase 1: two format numbers.** `diagram.js` checks the card data
+   format (2) itself, and gives the table format (1) to `SeqLanes.decode`,
+   which is a separate version. The rotation item of `TODO.md` reserves data
+   format 3.
+4. **Phase 1: tests.** `test_value_error_cases` of the RF profile card lost
+   three items, not two: `bad_diagram_card_id` went with the parameter. The
+   RF profile card's status line starts with a capital letter now that the
+   file name is gone, and its note "The diagram shows ..., which this card
+   does not have" is removed (it applied only to several files).
+   `tests/test_pns.py`, a phase 2 file, had one `diagram_card` call in the
+   new form in phase 1 (decision 1).
+5. **Phase 2: `docs/usage.md` waited for phase 6** (section 3.4, rule 3),
+   although section 4.2, item 7 names it.
+6. **Phase 2: the block of the peak.** Without a `TR` definition, the PNS
+   card's `goto` names the first block that ends after the peak time, so a
+   block of zero duration is never chosen (as `SeqLanes.blockAt`). The
+   button is `hidden` in the markup, so it stays hidden when the script does
+   not run. `pns.js` refuses a data format other than 1.
+7. **Phase 3 merged after phase 2.** Rule 1 of section 3.4 put the keyword
+   call `lane_meta(seq, tables=tables)` in phase 2's `cards/diagram.py`, so
+   phase 3's CI could pass only after phase 2. Phase 3 was committed, then
+   `origin/main` was merged into it after #89, and its PR was opened. Its
+   comparison set ran two times, against `d7df864` (with that call patched
+   in a scratch copy) and against `1bdb1ce`: the same entries changed, with
+   the same values.
+8. **Phase 3: small choices.** `cards.spectrum.spectrum_data` is removed,
+   not renamed: it wrapped the private `_spectrum_data` that phase 1 left.
+   The internal dict of `_rf_exposure_data` keeps the keys `window_s` and
+   `window_used_s` (it is not page data). The gradient limits card resolves
+   its limits one time (`grad_limits._default_limits`). Three comments of
+   `rf_profiles.js` name the new private function names, although phase 3
+   does not own the file.
+9. **Phase 4: the interface.** `OptionCli.from_config(value, base_dir)`
+   takes the directory of the config file, for `gradient_asc`. Two `Option`
+   objects are equal only when they are the same object (`eq=False`), which
+   is the rule of decision 15. A `build` that reads an undeclared option
+   gives an error card (item 6); `ReportContext.option` raises
+   `ValueError`. The gradient limits check has a relative tolerance of 1e-9,
+   so a value at its limit passes after the float conversions of the units.
+   The PNS card declares `publishes=("goto",)` also without a button. The
+   `write_gradient_asc` fixture moved to `tests/conftest.py`.
+10. **Phase 4: the entry points.** `uv sync --frozen` installed the entry
+    points after the change of `pyproject.toml` (uv rebuilds the project
+    when `pyproject.toml` changes). CI makes a new environment for each run.
+11. **Phase 5:** an error in the arguments exits 1, not argparse's 2, so 2
+    means only "a check failed". `--card-module` imports with the current
+    directory at the end of `sys.path`, and then removes that entry.
+12. **Phase 6:** `import pulseq_reports` takes about 1 s with the eager
+    exports (it took less than 1 ms): it now loads pypulseq, numpy and
+    scipy, which every caller loads (section 2.1). A test of the contents of
+    `__all__` was not kept (decision 6). The README note on the resonance
+    bands names their source (the safety check of the QIS-MRI Pulseq
+    workshop), not "published values".
+13. **The workers.** Two workers edited `TESTS.md` with a script, not with
+    the Edit tool, while other workers edited it; a check after each wave
+    found no lost entry. The worker of task 2.2 stalled one time before any
+    edit, and went on when it was resumed. The browser checks used
+    JavaScript snapshots in the hidden pane (decision 24).
+
+### 8.3 The comparison sets
+
+| Phase | Example page | Python dump | Browser |
+|---|---|---|---|
+| 1 | Only the changes of section 3.5 | Equal, with the formats of section 4.1 normalized | Diagram equal (11 snapshots, both themes); RF profile card equal except its status line; buttons hidden without a diagram |
+| 2 | Only the changes of section 3.5 | Only `*/card/pns`, as section 4.2 says | The PNS button gives the view and anchor of the old window and click; the diagram equal (7 snapshots) |
+| 3 | Only the gradient limits note | Equal after the field renames, the note and the window heading | Not run |
+| 4 | Byte-equal | Equal without the new `Card` fields | Not run |
+| 5 | Byte-equal | Not run; the command line's page equals `build_cards`' page | The command line's pages draw; the PNS button works |
+| 6 | Byte-equal | Byte-equal | Not run |
+| 7 | The sum of phases 1 to 3 against `600fd12` | Not run | The nine cards draw, in both themes; the PNS button moves the diagram to the peak's TR |
+
+At the end, `scripts/check` has 981 pytest tests (542 `TESTS.md` entries)
+and 169 node tests.
 
 ## 9. Scripts
 
