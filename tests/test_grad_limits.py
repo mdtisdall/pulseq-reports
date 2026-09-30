@@ -409,6 +409,68 @@ def test_window_inside_a_block_with_no_gradient_ignores_the_junction_before_it()
     assert junction_result.axes["x"].slew_block == block_b_id
 
 
+def _tie_trapezoid(channel: str):
+    """A trapezoid of 0.8 ms: rise 0 to 0.2 ms, flat to 0.6 ms, fall to 0.8 ms."""
+    return pp.make_trapezoid(
+        channel=channel,
+        amplitude=0.5 * SYSTEM.max_grad,
+        rise_time=200e-6,
+        flat_time=400e-6,
+        system=SYSTEM,
+    )
+
+
+def test_window_that_cuts_a_block_credits_it_on_a_tie_with_a_later_block():
+    """A window that starts in the flat top of block 1, then block 2 with the same trapezoid
+    fully inside the window: the two blocks reach the same peak and the same slew (the fall
+    ramp of block 1 is fully inside the window), so both are credited to block 1, the first in
+    play order, and the peak time is the window start, the first time block 1 reaches the
+    peak."""
+    g = _tie_trapezoid("x")
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(g)
+    seq.add_block(g)
+    seq.add_block(pp.make_delay(1e-3))
+    block_1_id = next(iter(seq.block_events))
+
+    result = gradient_limits(seq, window=(0.4e-3, 2.0e-3))
+
+    axis = result.axes["x"]
+    assert axis.peak_block == block_1_id
+    assert axis.peak_time_s == pytest.approx(0.4e-3)
+    assert axis.slew_block == block_1_id
+    assert result.vector_peak_time_s == pytest.approx(0.4e-3)
+
+
+def test_vector_peak_time_on_a_tie_is_the_first_time_in_play_order():
+    """The same trapezoid on x in block 1 and on y in block 2: |G| reaches the same peak in
+    both blocks, from two different triples of events, and the vector peak time is the first
+    time that block 1 reaches it (the end of its rise, 0.2 ms), not a time in block 2."""
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(_tie_trapezoid("x"))
+    seq.add_block(_tie_trapezoid("y"))
+
+    result = gradient_limits(seq)
+
+    assert result.vector_peak_time_s == pytest.approx(200e-6)
+
+
+def test_axis_whose_only_event_is_zero_credits_no_block():
+    """A y event scaled to amplitude 0 (as a phase encode loop makes for the centre line of
+    k-space), with an x trapezoid in the same block: the y axis has a peak and a slew of 0, and
+    no block is credited for either."""
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(_tie_trapezoid("x"), pp.scale_grad(_tie_trapezoid("y"), 0.0))
+
+    result = gradient_limits(seq)
+
+    axis = result.axes["y"]
+    assert axis.peak_mt_per_m == 0.0
+    assert axis.max_slew_t_per_m_per_s == 0.0
+    assert axis.peak_block is None
+    assert axis.slew_block is None
+
+
 # ---- Comparisons with the oracle (task 4.4) ----
 #
 # `tests/oracles/grad_limits.py` is the implementation from before phase 4 of

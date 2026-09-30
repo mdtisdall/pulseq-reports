@@ -54,9 +54,11 @@ class AxisResult:
     `peak_block` and `slew_block` are the block ID (`seq_index.SequenceIndex.block_id`)
     where the peak amplitude, respectively the peak slew, was found. For the slew, this is
     the block after the junction when the peak slew is a junction step (see the module
-    docstring), otherwise the block whose event has the segment. `rms_mt_per_m` is the RMS
-    amplitude over the range that `GradientLimits.range_s` gives, not over the whole sequence
-    when a window is used.
+    docstring), otherwise the block whose event has the segment. When several blocks reach
+    the same largest value, the credited block is the first of them in play order, and
+    `peak_time_s` is the first time in that block where the peak is reached. A largest value
+    of 0 credits no block (None). `rms_mt_per_m` is the RMS amplitude over the range that
+    `GradientLimits.range_s` gives, not over the whole sequence when a window is used.
 
     The gradient limits card does not show `peak_block`, `slew_block`, `peak_time_s` or
     `GradientLimits.vector_peak_time_s` yet.
@@ -82,9 +84,10 @@ class GradientLimits:
     `AxisResult.slew_block`) is None. `range_s` still holds the range that was used.
 
     `vector_peak_mt_per_m` is the largest magnitude of the three-axis gradient vector over the
-    range. There is no vector slew field. The RMS of the vector magnitude is the square root of
-    the sum of the squares of the three axis RMS values, because the mean of |G|² is the sum of
-    the three axis means of G².
+    range, and `vector_peak_time_s` is the first time in the range where it is reached (0.0
+    when it is 0). There is no vector slew field. The RMS of the vector magnitude is the square
+    root of the sum of the squares of the three axis RMS values, because the mean of |G|² is the
+    sum of the three axis means of G².
 
     `whole_rms_mt_per_m` is the RMS amplitude of each axis (mT/m) over the whole sequence,
     computed in the same call that computes `axes`, so that a caller that wants both the
@@ -244,6 +247,17 @@ def _whole_file_rms(
     return result
 
 
+def _credit_goes_to(value: float, play: int, best: float, best_play: int | None) -> bool:
+    """Whether a candidate `value` at play index `play` takes the credit from the current
+    `best` at `best_play`: it is larger, or equal (and not 0) at a smaller play index. This
+    gives the result of a single pass over the blocks in play order that keeps a value only when
+    a later one is strictly larger, whatever order the candidates come in. A value of 0 never
+    takes the credit, because `best` starts at 0.0 with `best_play` None."""
+    if value > best:
+        return True
+    return value == best and best_play is not None and play < best_play
+
+
 def _axis_slice_stats(
     col_slice: np.ndarray, ev: _EventData, i0: int, start_s: np.ndarray
 ) -> dict | None:
@@ -252,8 +266,8 @@ def _axis_slice_stats(
     (every block of the slice fully inside the range). None when the axis has no event there.
 
     The credited block for the peak (respectively the slew) is the smallest play index in the
-    slice whose event reaches the largest value, matching a single pass over the blocks in play
-    order that keeps a value only when a later one is strictly larger.
+    slice whose event reaches the largest value (`_credit_goes_to`); a largest value of 0
+    credits no block (`None`).
     """
     k = ev.peak.size
     if k == 0 or col_slice.size == 0:
@@ -269,17 +283,20 @@ def _axis_slice_stats(
     max_slew = float(np.max(slew_vals))
     peak_events = np.flatnonzero(peak_vals == max_peak) + 1
     slew_events = np.flatnonzero(slew_vals == max_slew) + 1
-    peak_local = int(np.argmax(np.isin(col_slice, peak_events)))
-    slew_local = int(np.argmax(np.isin(col_slice, slew_events)))
-    peak_play = i0 + peak_local
-    peak_time = float(start_s[peak_play] + ev.peak_offset[int(col_slice[peak_local]) - 1])
+    peak_play, peak_time, slew_play = None, 0.0, None
+    if max_peak > 0.0:
+        peak_local = int(np.argmax(np.isin(col_slice, peak_events)))
+        peak_play = i0 + peak_local
+        peak_time = float(start_s[peak_play] + ev.peak_offset[int(col_slice[peak_local]) - 1])
+    if max_slew > 0.0:
+        slew_play = i0 + int(np.argmax(np.isin(col_slice, slew_events)))
 
     return {
         "peak": max_peak,
         "peak_play": peak_play,
         "peak_time": peak_time,
         "slew": max_slew,
-        "slew_play": i0 + slew_local,
+        "slew_play": slew_play,
         "rms_sum": float(np.sum(counts * ev.integral)),
     }
 
@@ -305,9 +322,10 @@ def _range_result(
     inside (a block of zero duration at 0 or at the end is skipped, and it has no gradient), so
     this same code computes the whole-file result too.
 
-    On an exact tie between a block of the slice and a block that the range start cuts, the
-    block of the slice gets the credit, not the earlier block. The oracle credits the earlier
-    block (finding L3 of the review).
+    The slice is computed before the edge blocks, and its triples are not in play order, so
+    each candidate for a credit (an edge block, a triple of the slice) is compared with
+    `_credit_goes_to`, which gives the result of a single pass over the blocks in play order.
+    The junction steps follow the same rule.
     """
     n = index.num_blocks
     start_s = index.start_s
@@ -365,7 +383,7 @@ def _range_result(
                     st["has_event"] = True
                     abs_amp = np.abs(amp_c)
                     i = int(np.argmax(abs_amp))
-                    if abs_amp[i] > st["peak"]:
+                    if _credit_goes_to(abs_amp[i], play, st["peak"], st["peak_play"]):
                         st["peak"], st["peak_time"], st["peak_play"] = (
                             float(abs_amp[i]),
                             float(t_c[i]),
@@ -378,7 +396,7 @@ def _range_result(
                     if np.any(valid):
                         seg_slew = np.abs((b - a)[valid] / dt[valid])
                         j = int(np.argmax(seg_slew))
-                        if seg_slew[j] > st["slew"]:
+                        if _credit_goes_to(seg_slew[j], play, st["slew"], st["slew_play"]):
                             st["slew"], st["slew_play"] = float(seg_slew[j]), play
                 if axis_points:
                     axis_points_by_play[play] = axis_points
@@ -386,7 +404,7 @@ def _range_result(
     # The vector peak of |G|: the distinct triples of the "fully inside" range, one
     # _triple_vector_peak call for each (section 4.6, item 3), plus the edge blocks' own
     # clipped points, exactly as the oracle computes them.
-    vector_peak_hz, vector_peak_time = 0.0, 0.0
+    vector_peak_hz, vector_peak_time, vector_peak_play = 0.0, 0.0, None
     k = ev.peak.size
     if i1 > i0 and k:
         gx_s = index.gx[i0:i1].astype(np.int64)
@@ -406,14 +424,15 @@ def _range_result(
                 if triple is None:
                     continue
                 rel_t, mag = triple
-                if mag > vector_peak_hz:
-                    vector_peak_hz = mag
+                # `first_local` is in the order of `combo`, not of play.
+                if _credit_goes_to(mag, i0 + local, vector_peak_hz, vector_peak_play):
+                    vector_peak_hz, vector_peak_play = mag, i0 + local
                     vector_peak_time = float(start_s[i0 + local]) + rel_t
 
-    for axis_points in axis_points_by_play.values():
+    for play, axis_points in axis_points_by_play.items():
         block_time, block_peak = _vector_peak_in_block(axis_points)
-        if block_peak > vector_peak_hz:
-            vector_peak_hz, vector_peak_time = block_peak, block_time
+        if _credit_goes_to(block_peak, play, vector_peak_hz, vector_peak_play):
+            vector_peak_hz, vector_peak_time, vector_peak_play = block_peak, block_time, play
 
     # The junction steps (decision 6 of section 2.5): for each axis, the step at the
     # incoming junction of each processed block that starts at or after the range
@@ -456,7 +475,7 @@ def _range_result(
             final_slew, final_slew_play = seg_max, seg_play
         elif junction_max > seg_max:
             final_slew, final_slew_play = junction_max, junction_play
-        else:  # an exact tie: credit the smaller play index, as a single pass would
+        else:  # an exact tie: credit the smaller play index (`_credit_goes_to`)
             final_slew, final_slew_play = seg_max, min(seg_play, junction_play)
 
         # A credited junction step means a real, non-zero step was found even when no
