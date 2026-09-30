@@ -29,8 +29,15 @@ Terms used below:
 Contents:
 
 1. [Static checks](#1-static-checks)
-2. [Tests](#2-tests): the shared sequence helpers, the HTML and lane markup,
-   the report page, the report page's chart math, and the report cards
+2. [Tests](#2-tests): the shared sequence helpers, the sequence index, the
+   raster sampler and the sequence extensions; the HTML and lane markup, the
+   report page, the chart math and the messages between cards; the analyses
+   (RF exposure, the gradient spectrum, PNS and the PNS levels, the gradient
+   limits, the RF simulation, the profile metrics and the RF profiles); the
+   waveform data, the diagram tables and the lane modules in JavaScript (the
+   sequence lanes, the PNS lane and the |G| lane), with their golden tests
+   against Python; the report cards; the card registry, the command line and
+   the package exports
 
 ---
 
@@ -157,9 +164,12 @@ the pattern matches no file, the step fails.
 
 **Assumptions:**
 
-- Only the pure functions in `chart_math.js` are tested. `lane_chart.js` and
-  `page.js`, and the card scripts, are not run by any test: there are no DOM
-  tests. The charts are checked by hand in a browser before a pull request.
+- The tests run the modules that do not use the DOM: `chart_math.js`,
+  `seq_lanes.js`, `pns_lanes.js`, `g_lanes.js`, `rf_profiles.js`, and the
+  message bus of `lane_chart.js`. The drawing code of `lane_chart.js` and
+  `map_chart.js`, `page.js`, and the card scripts in `assets/cards/` are not
+  run by any test: there are no DOM tests. The charts are checked by hand in
+  a browser before a pull request.
 - The Node.js version is the one from the Nix devShell. No other version is
   tested.
 
