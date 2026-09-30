@@ -600,7 +600,7 @@ wheels = [
 
 [[package]]
 name = "pulseq-reports"
-version = "0.2.0rc1"
+version = "0.2.0rc2"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },

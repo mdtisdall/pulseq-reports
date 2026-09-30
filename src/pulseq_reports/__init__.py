@@ -6,7 +6,7 @@ from .page import Card, Check, render_page, write_page
 from .registry import build_cards
 from .waveforms import TimeWindow, first_adc_window, full_window
 
-__version__ = "0.2.0rc1"
+__version__ = "0.2.0rc2"
 
 __all__ = [
     "PRISMA_AS82",

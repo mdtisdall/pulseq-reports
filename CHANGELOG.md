@@ -3,7 +3,7 @@
 The changes since `v0.2.0rc1`. The public API is the names in
 [docs/usage.md](docs/usage.md). The number of a pull request is in brackets.
 
-## 0.2.0rc2 (not released)
+## 0.2.0rc2 (2026-09-30)
 
 ### Breaking changes
 
