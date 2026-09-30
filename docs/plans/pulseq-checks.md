@@ -8,6 +8,12 @@ the user. The user answered the open decisions on the same day (section 11).
 This is not an implementation plan. It gives the concepts, the structure and
 the decisions. An implementation plan comes next.
 
+The work in `pulseq-checks` continues in that repository, in
+[`docs/plans/pulseq-checks.md`](https://github.com/mdtisdall/pulseq-checks/blob/main/docs/plans/pulseq-checks.md).
+For that work, the document in `pulseq-checks` is the reference. It goes
+further than this document in decisions 4 and 6, and it adds the decisions
+R1 to R7 of a review of the design.
+
 ## 1. Goal
 
 The library mixes two different uses:
@@ -385,6 +391,12 @@ consumers depend on it.
   more of these changes at the start, while the measurement code changes for
   the checks.
 - The option and configuration code of the command line (section 5.7).
+- From the move of step 2 to step 3 (section 9), both repositories have
+  copies of the moved modules. A change to a moved module happens in
+  `pulseq-checks` first. `pulseq-reports` changes its copy only for a bug fix,
+  and the same fix goes to `pulseq-checks`. Step 3 then removes the copy in
+  `pulseq-reports`, with no differences to merge (`pulseq-checks` decision
+  R7).
 
 ## 8. Version 1
 
@@ -415,7 +427,9 @@ The structure of section 5 accepts them without a new design.
    and the exit status 2 from `pulseq-reports`. Then no final release has an
    API that this design removes (decision 1). `HardwareLimits` stays. The
    gradient limits card uses it to show the percent of each limit, with no
-   verdict.
+   verdict. Step 1 waits until step 2 has compared the new checks with the
+   checks of the cards, because step 1 removes those checks (`pulseq-checks`
+   decision R7).
 2. **Make `pulseq-checks`** (`mdtisdall/pulseq-checks`, decision 12). Use the
    dev-workflow `project-setup` skill. Move
    the measurement modules of section 7.2 with their tests. Add the target
