@@ -23,6 +23,27 @@ def _asset(name: str) -> str:
     return _ASSETS.joinpath(name).read_text(encoding="utf-8")
 
 
+# The library's message topics and their kinds (the bus of `page.js`). A state topic has
+# at most one publisher on a page; a request topic has at most one card that acts on it.
+# A topic that is not here is not checked.
+TOPIC_KINDS: dict[str, str] = {
+    "sequence": "state",
+    "cursor": "state",
+    "anchor": "state",
+    "view": "state",
+    "goto": "request",
+}
+
+
+@dataclass(frozen=True)
+class Check:
+    """One pass or fail result of a card: `name` is short, `message` says the values."""
+
+    name: str
+    passed: bool
+    message: str
+
+
 @dataclass(frozen=True)
 class Card:
     """One section of the report page.
@@ -33,6 +54,11 @@ class Card:
     id="{id}-data">`. `script` is the name that a card script registered with
     `PulseqReport.registerCard`, or None for a card with no JavaScript. With `collapsed`,
     the title and the body are in a closed `<details>` element.
+
+    `scripts` and `css` are the texts that the card needs on the page; `render_page`
+    includes each distinct text one time. `checks` are the card's results; `render_page`
+    does not show them. `publishes` and `subscribes` are the topics of the card's messages
+    (see `TOPIC_KINDS`).
     """
 
     id: str
@@ -41,6 +67,11 @@ class Card:
     data: object | None = None
     script: str | None = None
     collapsed: bool = False
+    scripts: tuple[str, ...] = ()
+    css: tuple[str, ...] = ()
+    checks: tuple[Check, ...] = ()
+    publishes: tuple[str, ...] = ()
+    subscribes: tuple[str, ...] = ()
 
 
 def card_asset(name: str) -> str:
@@ -90,6 +121,23 @@ def _script_element(source: str) -> str:
     return f"<script>\n{source}\n</script>"
 
 
+def _check_topics(cards: Sequence[Card]) -> None:
+    """Raises ValueError when two cards publish one state topic or subscribe to one
+    request topic."""
+    for topic, kind in TOPIC_KINDS.items():
+        if kind == "state":
+            ids = [card.id for card in cards if topic in card.publishes]
+            verb = "publish"
+        else:
+            ids = [card.id for card in cards if topic in card.subscribes]
+            verb = "subscribe to"
+        if len(ids) > 1:
+            raise ValueError(
+                f"cards {', '.join(repr(i) for i in ids)} {verb} the {kind} topic {topic!r}; "
+                f"a page has at most one"
+            )
+
+
 def _style_text(extra_css: Sequence[str]) -> str:
     for source in extra_css:
         if re.search(r"</style", source, re.IGNORECASE):
@@ -108,42 +156,38 @@ def render_page(
     """The HTML of a page with `cards` in the given order.
 
     Scripts, in this order: chart_math.js, lane_chart.js, map_chart.js, rf_profiles.js,
-    seq_lanes.js, pns_lanes.js, g_lanes.js, the library card script of each distinct
-    `Card.script` name (one time each), `extra_scripts` in the given order, and page.js.
-    A card whose script is not a library card script gets it from `extra_scripts`, which
-    registers it with `PulseqReport.registerCard`. Each script is in its own `<script>`
-    element, so an error in one does not stop the others.
+    seq_lanes.js, pns_lanes.js, g_lanes.js, each distinct text of the cards' `scripts` (in
+    the order of first use), `extra_scripts` in the given order, and page.js. The script
+    of a card registers it with `PulseqReport.registerCard`. Each script is in its own
+    `<script>` element, so an error in one does not stop the others.
 
-    The page's one `<style>` element has report.css and then `extra_css` in the given
-    order, so a rule of `extra_css` wins over a library rule of the same specificity.
+    The page's one `<style>` element has report.css, each distinct text of the cards'
+    `css` (in the order of first use) and then `extra_css` in the given order, so a rule
+    of `extra_css` wins over a library rule of the same specificity. The page does not
+    show `Card.checks`.
 
     Raises ValueError when two cards have the same id, when a card id or a script name
-    does not match `[a-z][a-z0-9-]*`, when a script contains `</script`, or when
-    `extra_css` contains `</style`. Raises TypeError when `extra_scripts` or `extra_css`
-    is a `str` (a `str` is a sequence of one-character texts; pass a list).
+    does not match `[a-z][a-z0-9-]*`, when a script contains `</script`, when a CSS text
+    contains `</style`, when two cards publish one state topic, or when two cards
+    subscribe to one request topic (`TOPIC_KINDS`). Raises TypeError when `extra_scripts`
+    or `extra_css` is a `str` (a `str` is a sequence of one-character texts; pass a list).
     """
     for name, value in (("extra_scripts", extra_scripts), ("extra_css", extra_css)):
         if isinstance(value, str):
             raise TypeError(f"{name} must be a list of texts, not a str")
     seen: set[str] = set()
-    script_names: list[str] = []
     for card in cards:
         if not _ID_RE.fullmatch(card.id):
             raise ValueError(f"card id {card.id!r} does not match [a-z][a-z0-9-]*")
         if card.id in seen:
             raise ValueError(f"two cards have the id {card.id!r}")
         seen.add(card.id)
-        if card.script is not None:
-            if not _ID_RE.fullmatch(card.script):
-                raise ValueError(f"card script name {card.script!r} does not match [a-z][a-z0-9-]*")
-            if card.script not in script_names:
-                script_names.append(card.script)
+        if card.script is not None and not _ID_RE.fullmatch(card.script):
+            raise ValueError(f"card script name {card.script!r} does not match [a-z][a-z0-9-]*")
+    _check_topics(cards)
 
-    library_card_scripts = [
-        card_asset(name)
-        for name in script_names
-        if _ASSETS.joinpath("cards", f"{name}.js").is_file()
-    ]
+    card_scripts = list(dict.fromkeys(text for card in cards for text in card.scripts))
+    card_css = list(dict.fromkeys(text for card in cards for text in card.css))
     scripts = [
         _asset("chart_math.js"),
         _asset("lane_chart.js"),
@@ -152,7 +196,7 @@ def render_page(
         _asset("seq_lanes.js"),
         _asset("pns_lanes.js"),
         _asset("g_lanes.js"),
-        *library_card_scripts,
+        *card_scripts,
         *extra_scripts,
         _asset("page.js"),
     ]
@@ -162,7 +206,7 @@ def render_page(
             "__TITLE__": html.escape(title),
             "__SUBTITLE__": html.escape(subtitle),
             "__CARDS__": "\n\n".join(_card_html(card) for card in cards),
-            "__CSS__": _style_text(extra_css),
+            "__CSS__": _style_text([*card_css, *extra_css]),
             "__JS__": "\n".join(_script_element(s) for s in scripts),
         },
     )

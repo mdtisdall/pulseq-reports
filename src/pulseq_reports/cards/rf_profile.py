@@ -20,10 +20,11 @@ from collections.abc import Sequence
 import numpy as np
 import pypulseq as pp
 
-from pulseq_reports import diagram_data
+from pulseq_reports import diagram_data, options
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.markup import fmt
-from pulseq_reports.page import Card
+from pulseq_reports.page import Card, card_asset
+from pulseq_reports.registry import CardSpec, ReportContext
 from pulseq_reports.rf_profiles import (
     _PHASE_ITEMS,
     _RF_COLUMN,
@@ -38,6 +39,8 @@ from pulseq_reports.seq_index import rf_events, sequence_index
 from pulseq_reports.seq_utils import hold_samples
 
 VIEWS = ("profile", "z_df", "2d")
+PUBLISHES = ("goto",)
+SUBSCRIBES = ("sequence", "cursor", "anchor")
 PRIMARY_ECHO_TITLE = "Primary echo pathway only."
 PRIMARY_ECHO_NOTE = (
     "This is the excitation |Mxy| times |β|² of each refocusing pulse before the first "
@@ -338,6 +341,9 @@ def rf_profile_card(
     gradient direction changes during the RF (else the two axes with the largest RMS
     gradient); `extent_m` picks the extent of that view (else the `FOV` definition).
 
+    The card's `scripts` has `assets/cards/rf-profile.js`. It publishes `PUBLISHES` (`goto`)
+    and subscribes to `SUBSCRIBES` (`sequence`, `cursor` and `anchor`).
+
     Checks, before any other work:
 
     1. `views` has a name that is not in `VIEWS`, has a name twice, or does not have
@@ -377,5 +383,39 @@ def rf_profile_card(
     }
     body = _body_html(card_id, file)
     return Card(
-        id=card_id, title="RF pulse profiles", body_html=body, data=data, script="rf-profile"
+        id=card_id,
+        title="RF pulse profiles",
+        body_html=body,
+        data=data,
+        script="rf-profile",
+        scripts=(card_asset("rf-profile"),),
+        publishes=PUBLISHES,
+        subscribes=SUBSCRIBES,
     )
+
+
+def _applies(ctx: ReportContext) -> bool:
+    """The card needs RF use labels, and a selected card that publishes `anchor` (the
+    diagram) to follow."""
+    return rf_uses_labeled(ctx.seq) and ctx.publishes("anchor")
+
+
+def _build(ctx: ReportContext) -> Card:
+    return rf_profile_card(
+        ctx.seq,
+        views=ctx.option(options.views),
+        plane=ctx.option(options.plane),
+        extent_m=ctx.option(options.extent_m),
+        card_id=SPEC.name,
+    )
+
+
+SPEC = CardSpec(
+    "rf-profile",
+    40,
+    _build,
+    (options.views, options.plane, options.extent_m),
+    publishes=PUBLISHES,
+    subscribes=SUBSCRIBES,
+    when=_applies,
+)

@@ -5,8 +5,10 @@ from collections.abc import Sequence
 
 import pypulseq as pp
 
+from .. import options
 from ..markup import html_table
 from ..page import Card
+from ..registry import CardSpec, ReportContext
 from ..waveforms import TimeWindow, _check_windows, block_rows
 
 
@@ -69,3 +71,10 @@ def blocks_card(
         script=None,
         collapsed=True,
     )
+
+
+def _build(ctx: ReportContext) -> Card:
+    return blocks_card(ctx.seq, max_rows=ctx.option(options.max_rows), card_id=SPEC.name)
+
+
+SPEC = CardSpec("blocks", 90, _build, (options.max_rows,))

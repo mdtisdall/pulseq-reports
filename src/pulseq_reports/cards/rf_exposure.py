@@ -2,8 +2,10 @@
 
 import pypulseq as pp
 
+from pulseq_reports import options
 from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
+from pulseq_reports.registry import CardSpec, ReportContext
 from pulseq_reports.rf_exposure import B1RMS_WINDOW_S, RfExposure, rf_exposure
 
 
@@ -85,3 +87,15 @@ def rf_exposure_card(
         title="RF exposure",
         body_html=_rf_exposure_html(_to_dict(exposure, periodic)),
     )
+
+
+def _build(ctx: ReportContext) -> Card:
+    return rf_exposure_card(
+        ctx.seq,
+        periodic=ctx.option(options.periodic),
+        b1rms_window_s=ctx.option(options.b1rms_window_s),
+        card_id=SPEC.name,
+    )
+
+
+SPEC = CardSpec("rf-exposure", 20, _build, (options.periodic, options.b1rms_window_s))

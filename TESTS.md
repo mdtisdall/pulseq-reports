@@ -379,10 +379,12 @@ the given list; and that the second result is the same dict object.
 `test_page.py` tests `page.py`. `render_page` builds the report page's HTML
 from a list of `Card` objects, in order: each card's title is escaped, its
 JSON data (if any) is placed in a `<script type="application/json">`
-element, and its script (if any) is included once, even when more than one
-card uses it. The tests also cover card and script id validation, the
-project CSS (`extra_css`), the library CSS, the `__NAME__` placeholder
-substitution, `card_asset`, and `write_page`.
+element, and the scripts and CSS texts of the cards (`Card.scripts`,
+`Card.css`) are included once each, even when more than one card has the
+same text. The tests also cover card and script id validation, the topic
+check (`TOPIC_KINDS`), the card checks (`Card.checks`), the project CSS
+(`extra_css`), the library CSS, the `__NAME__` placeholder substitution,
+`card_asset`, and `write_page`.
 
 #### `test_cards_appear_in_order_with_escaped_titles`
 
@@ -472,34 +474,31 @@ and has no `<h2>`.
 
 **Assumptions:** None.
 
-#### `test_card_script_included_once_for_two_cards`
+#### `test_card_scripts_and_css_are_on_the_page_once_in_order_of_first_use`
 
-**Checks:** A library card script is included in the page once, even when
-two cards use it.
+**Checks:** `render_page` includes each distinct text of the cards'
+`scripts` and `css` one time, in the order of first use. The scripts come
+after the library scripts and before `extra_scripts`; the CSS comes before
+`extra_css`.
 
-**How:** The test copies the real assets directory into a temporary
-directory, adds a card script file with a marker comment, points
-`page._ASSETS` at the copy, builds two cards that both use that script,
-calls `render_page`, and checks that the marker text appears exactly once in
-the result.
+**How:** The test builds two cards. The second repeats one script and one CSS
+text of the first, and adds one new script and one new CSS text. Each text is a
+comment with a marker. The test renders the page with one extra script and one
+`extra_css` text. It checks that each card marker appears exactly once, that
+the script markers are in the order of first use and then the extra script's
+marker, after the last library script (`g_lanes.js`) and before `page.js`, and
+that the CSS markers are in the order of first use and then the `extra_css`
+marker.
 
-**Assumptions:**
+**Assumptions:** None.
 
-- The test uses `monkeypatch` to point `page._ASSETS` at a temporary copy of
-  the real assets directory, so it can add a card script without changing
-  the real assets directory.
+#### `test_card_css_with_close_tag_raises`
 
-#### `test_card_script_without_library_file_uses_extra_scripts`
+**Checks:** `render_page` raises `ValueError` when the `css` of a card
+contains `</style`, because the tag would end the page's `<style>` element.
 
-**Checks:** A card whose script name has no library file under
-`assets/cards/` gets its script from `extra_scripts`, and library card
-scripts that are unrelated to it are not included.
-
-**How:** The test builds a card with `script="consumer"`, for which no
-`assets/cards/consumer.js` file exists, and passes an extra script that
-registers "consumer" with `PulseqReport.registerCard`. It checks that the
-extra script's marker is in the result and that the unrelated demo card
-script's marker is not.
+**How:** The test builds a card whose `css` text contains `</style>` and
+checks that `render_page` raises `ValueError`.
 
 **Assumptions:** None.
 
@@ -507,16 +506,63 @@ script's marker is not.
 
 **Checks:** The page's scripts appear in this order: `chart_math.js`,
 `lane_chart.js`, `map_chart.js`, `rf_profiles.js`, `seq_lanes.js`, `pns_lanes.js`,
-`g_lanes.js`, each card's library script, the extra scripts in the given order, and
+`g_lanes.js`, each card's `scripts`, the extra scripts in the given order, and
 `page.js`.
 
-**How:** The test builds one card with a library script and two extra
+**How:** The test builds one card with one script text and two extra
 scripts, calls `render_page`, and checks that the string indices of a
 `chart_math.js` marker, a `lane_chart.js` (`PulseqReport`) marker, a
 `map_chart.js` (`PulseqReport.mapChart = mapChart;`) marker, an `rf_profiles.js`
 (`RfProfiles`) marker, a `seq_lanes.js` (`SeqLanes`) marker, a `pns_lanes.js` (`PnsLanes`) marker, a `g_lanes.js`
 (`GLanes`) marker, the card script's marker, each extra script's marker, and a
 `page.js` marker are in increasing order.
+
+**Assumptions:** None.
+
+---
+
+#### `test_two_publishers_of_a_state_topic_raise`
+
+**Checks:** `render_page` raises `ValueError`, with the topic and the two
+card ids in the message, when two cards publish one state topic (`sequence`).
+
+**How:** The test builds two cards that both publish `sequence` and checks
+that `render_page` raises `ValueError` and that the message has `sequence`
+and both card ids.
+
+**Assumptions:** None.
+
+#### `test_two_subscribers_of_a_request_topic_raise`
+
+**Checks:** `render_page` raises `ValueError`, with the topic and the two
+card ids in the message, when two cards subscribe to one request topic
+(`goto`).
+
+**How:** The test builds two cards that both subscribe to `goto` and checks
+that `render_page` raises `ValueError` and that the message has `goto` and
+both card ids.
+
+**Assumptions:** None.
+
+#### `test_topics_that_pass_the_check`
+
+**Checks:** `render_page` does not raise for one publisher of a state topic
+with many subscribers, one subscriber of a request topic with many
+publishers, and any number of publishers and subscribers of a topic that is
+not in `TOPIC_KINDS`.
+
+**How:** The test builds three cards with those topics and checks that
+`render_page` does not raise.
+
+**Assumptions:** None.
+
+#### `test_checks_are_not_on_the_page`
+
+**Checks:** `render_page` does not show `Card.checks`.
+
+**How:** The test renders a card with one failed `Check` whose name and
+message have markers. It checks that neither marker is in the page, and that
+the page equals the page of the same card without the check.
 
 **Assumptions:** None.
 
@@ -2098,7 +2144,7 @@ example hardware, which is not a real scanner.
 
 The real `.asc` files are confidential, so the tests write a test `.asc` file
 with the PNS parameters of pypulseq's example hardware, with the
-`write_gradient_asc` fixture at the top of this file. The stimulation limits
+`write_gradient_asc` fixture of `tests/conftest.py`. The stimulation limits
 and thresholds in it can be multiplied by a scale factor. The test file can
 also have the layout of a scanner file: a main file with an `ASCCONV` block,
 CRLF line ends and the name in `asCOMP[0].tName`, which includes a
@@ -2393,7 +2439,7 @@ an earlier file does not compute again.
 
 **How:** The test patches `pns.pns_levels` the same way as the test above, and calls
 `pns.pns_levels_for(seq, gradient_asc=path)` for two different `.asc` files (`path_a`,
-`path_b`) built by the file's `write_gradient_asc` fixture, in the order a, a, b, a. It
+`path_b`) built by the `write_gradient_asc` fixture of `tests/conftest.py`, in the order a, a, b, a. It
 checks the call count is 1, 1 (cached), 2 (a different file), 2 (back to `path_a`,
 restored from the kept results).
 
@@ -3316,8 +3362,8 @@ and a peak time, and that `levels` has `min` and `max` tables of dtype `float32`
 file's hardware, not the example hardware.
 
 **How:** The test writes a minimal gradient `.asc` file with pypulseq's example
-hardware's own PNS parameters (a local helper, the same technique as `test_pns.py`'s
-`write_gradient_asc` fixture: the real files are confidential), builds a diagram card
+hardware's own PNS parameters (a local helper, the same technique as the
+`write_gradient_asc` fixture of `tests/conftest.py`: the real files are confidential), builds a diagram card
 with `pns_lane=True` and `gradient_asc` set to that path, and checks that the `"pns"` entry's `hardware` is the
 file's name, `example` is False and `asc_file` is the file's name.
 
@@ -8183,3 +8229,235 @@ pulse), and it falls with it; the tolerances are the measured values times 3, ro
 up. The two simulations take about 1.3 s.
 
 **Assumptions:** None.
+
+### 2.36 Card registry (`test_registry.py`)
+
+`test_registry.py` tests `registry.py` (`docs/plans/public-api.md`, section 4.4, items 3 to
+6 and 10): `discover` and `build_cards`. The tests use the test plugin in
+`tests/plugin_card.py`, which is not a test file. Its spec makes a card that reads the
+options that it declares and shows their values in `data-` attributes of its body. The
+`add_specs` fixture adds specs to the ones that `discover` finds, by replacing
+`registry._load_entry_points`, so every spec goes through the same checks as an entry
+point. The first tests select the cards of the test plugin with `cards=`, so they do not
+depend on the library's own cards. The tests from `test_discovery_finds_the_nine_library_cards_in_their_order`
+on use the library's nine cards, which are the entry points of `pyproject.toml`: the
+installed project must have them (`uv sync`).
+
+#### `test_plugin_card_is_in_the_report_in_its_order_with_its_assets_once`
+
+**Checks:** The plugin's card is in the cards that `build_cards` makes, between a card with
+a lower `order` and a card with a higher `order` that were added after it; the card shows
+the value of the shared option `max_rows` that the caller gave, and its default when the
+caller gives none. On the page of the three cards, the cards' one script and one CSS text
+each appear one time.
+
+**How:** Two more specs of the plugin (`order` 1 and 99999) are added in the opposite
+order, and all three read `options.max_rows`. `render_page` gets the three cards.
+
+**Assumptions:**
+
+- `render_page` includes each distinct text of `Card.scripts` and `Card.css` one time:
+  `test_page.py` tests it. This test checks that the assets of a card reach the page
+  through `build_cards`.
+
+#### `test_two_specs_with_one_name_raise_and_no_card_is_built`
+
+**Checks:** Two specs with one name make `build_cards` raise `ValueError` with the names of
+both entry points, before any card is built.
+
+**How:** A second spec with the name of the plugin, and a spec whose `build` records that it
+ran.
+
+**Assumptions:** None.
+
+#### `test_two_options_with_one_name_raise`
+
+**Checks:** Two cards that declare options with one name, where the options are not the
+same object, make `discover` raise `ValueError` with the names of both cards and of the
+option.
+
+**How:** The second option is `dataclasses.replace` of `options.max_rows`: a different
+object with the same fields.
+
+**Assumptions:** None.
+
+#### `test_a_spec_reads_only_the_options_it_declares`
+
+**Checks:** `ReportContext.option` raises `ValueError` for an option that no selected spec
+declares. In a report, a card whose spec does not declare an option that another selected
+card declares is an error card that names the option, with a failed check, and the other
+card is built.
+
+**How:** A spec that declares no option and reads `options.max_rows`, with the plugin's
+card, which declares it.
+
+**Assumptions:** None.
+
+#### `test_a_card_that_raises_is_an_error_card_and_the_others_are_built`
+
+**Checks:** When the `build` or the `when` of a spec raises (here `NotImplementedError`,
+the error of a card that refuses a sequence), `build_cards` makes an error card in its
+place: the spec's name as `id`, the title "<name>: error", the message with the error's
+type name in the body with its HTML characters escaped, and one failed check. The error
+with its traceback goes to the logger `pulseq_reports`, one time. The other card is built,
+and a page of the two cards renders.
+
+**How:** The message of the error has `<b>`, so the test can see the escape. The test reads
+the logger's records with `caplog`, and checks that the record holds the error object.
+
+**Assumptions:** None.
+
+#### `test_cards_and_skip_select_cards`
+
+**Checks:** `cards` keeps the named cards, in the order of their specs and not in the order
+of the names; `skip` leaves out the named cards, with `cards` and without it.
+
+**How:** Three cards of the test plugin with different `order` values, and the cards of the
+installed entry points, if any: the last two checks look only at the test card.
+
+**Assumptions:** None.
+
+#### `test_an_unknown_card_name_raises`
+
+**Checks:** A name in `cards`, and a name in `skip`, that no spec has raises `ValueError`
+with the name.
+
+**How:** One known and one unknown name, for each argument.
+
+**Assumptions:** None.
+
+#### `test_an_option_of_no_selected_card_raises`
+
+**Checks:** An option that no selected card declares raises `TypeError`, when no card
+declares it, and when the card that declares it is not selected (by `cards` or `skip`).
+When the card is selected, the option reaches it.
+
+**How:** `periodic`, declared by one added spec.
+
+**Assumptions:** None.
+
+#### `test_when_can_depend_on_the_topics_of_the_selected_cards`
+
+**Checks:** A card whose `when` is `ctx.publishes("anchor")` (and, in the second case,
+`ctx.subscribes("goto")`) is built when a selected card declares the topic, and is not
+built when none does.
+
+**How:** Two specs: one with the `when`, and one that declares the topic. The test selects
+both, and then the first with a card that does not declare the topic.
+
+**Assumptions:** None.
+
+#### `test_discovery_finds_the_nine_library_cards_in_their_order`
+
+**Checks:** `discover` finds the nine library cards, `timing`, `rf-exposure`, `diagram`,
+`rf-profile`, `gradient-spectrum`, `pns`, `gradient-limits`, `definitions` and `blocks`, in
+this order, and no other card; their `order` values do not decrease.
+
+**How:** The entry points of the installed project, with no added spec.
+
+**Assumptions:** None.
+
+#### `test_a_check_passes_for_a_sequence_inside_its_limits`
+
+**Checks:** The check of the timing card, of the gradient limits card and of the PNS card is
+passed for a sequence that has no timing error, has gradients below the system limits of the
+sequence, and has a predicted PNS peak below 100 %.
+
+**How:** `synthetic.spin_echo_sequence`, with `build_cards(seq, cards=[name])` for each of the
+three cards; each card has exactly one check.
+
+**Assumptions:** None.
+
+#### `test_the_timing_check_fails_for_a_timing_error`
+
+**Checks:** The check of the timing card is failed when pypulseq's timing check gives an error.
+
+**How:** A sequence of one RF block whose delay (0) is below the RF dead time.
+
+**Assumptions:** None.
+
+#### `test_the_gradient_limits_check_fails_for_limits_below_the_peak`
+
+**Checks:** The check of the gradient limits card is failed when the peak amplitude of an axis
+is above its limit, and when the peak slew of an axis is above its limit (each alone, with the
+other limit far above the sequence). The message names the axis, the quantity and the table
+(here the whole file).
+
+**How:** `HardwareLimits` of 5 mT/m with a very large slew limit, and of 10 T/m/s with a very
+large amplitude limit, for the spin echo sequence, whose readout is on x.
+
+**Assumptions:** None.
+
+#### `test_the_gradient_limits_check_of_the_norm_needs_check_norms`
+
+**Checks:** For a sequence whose axes are each below `max_grad` and whose |G| peak is above it,
+the check is passed by default, is failed with `check_norms=True` (the message names |G|), and
+is passed with `check_norms=False`.
+
+**How:** One block with Gx and Gy trapezoids at 0.8 of `max_grad` with a rise time that keeps
+the slew below `max_slew`; |G| peaks at 0.8 times the square root of 2, 1.13 times the limit.
+
+**Assumptions:** None.
+
+#### `test_the_pns_check_fails_for_a_peak_of_100_percent_or_more`
+
+**Checks:** The check of the PNS card is failed when the predicted peak is 100 % or more of
+the stimulation limit.
+
+**How:** The spin echo sequence, with a test gradient `.asc` file (the `write_gradient_asc`
+fixture of `tests/conftest.py`) whose stimulation limits and thresholds are 0.1 of the example
+hardware's, so the same sequence has a peak above 100 %.
+
+**Assumptions:** None.
+
+#### `test_without_the_diagram_the_rf_profile_card_is_not_built`
+
+**Checks:** The RF profile card, for a sequence with RF use labels, is not built when it is
+the only selected card, and when the diagram is skipped (no selected card publishes `anchor`);
+with the diagram selected, both cards are built.
+
+**How:** `build_cards` with `cards=["rf-profile"]`, with `skip=["diagram"]`, and with
+`cards=["diagram", "rf-profile"]`, on the spin echo sequence.
+
+**Assumptions:** None.
+
+#### `test_render_page_raises_for_two_diagram_cards`
+
+**Checks:** `render_page` raises `ValueError`, with the topic `sequence`, for two diagram cards:
+they are two publishers of a state topic.
+
+**How:** Two `diagram_card` calls for one sequence with different `card_id`s.
+
+**Assumptions:** None.
+
+#### `test_render_page_raises_for_two_cards_that_subscribe_to_goto`
+
+**Checks:** `render_page` raises `ValueError`, with the topic `goto`, for the diagram card and
+a second card that subscribes to `goto`: a request topic has at most one card that acts on it.
+
+**How:** A `diagram_card`, and a `Card` with `subscribes=("goto",)`.
+
+**Assumptions:** None.
+
+#### `test_render_page_does_not_check_a_plugin_topic`
+
+**Checks:** `render_page` accepts two cards that publish and subscribe to a topic that
+`page.TOPIC_KINDS` does not list.
+
+**How:** Two `Card` objects with the topic `plugin-topic`.
+
+**Assumptions:** None.
+
+#### `test_the_options_of_each_spec_are_the_keywords_of_its_builder`
+
+**Checks:** For each of the nine library cards, each keyword-only parameter of its builder is
+an option that its spec declares, except `card_id` and (for the blocks and gradient limits
+cards) `windows`; each option that the spec declares is a keyword-only parameter of the
+builder, with the same default as the option (decision 17 of the plan); and the default
+`card_id` is the spec's name.
+
+**How:** `inspect.signature` of the nine builders, against the specs from `discover`.
+
+**Assumptions:**
+
+- The `windows` of the diagram card is a positional parameter, so it is not in the keywords.

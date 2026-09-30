@@ -1,7 +1,6 @@
 import numpy as np
 import pypulseq as pp
 import pytest
-from pypulseq.utils.safe_pns_prediction import safe_example_hw
 from synthetic import SYSTEM, block_pulse, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import pns
@@ -12,55 +11,6 @@ from pulseq_reports.cards.pns import pns_card
 from pulseq_reports.pns import pns_levels_for
 from pulseq_reports.pns_levels import NO_GRADIENTS
 from pulseq_reports.waveforms import full_window
-
-
-@pytest.fixture
-def write_gradient_asc(tmp_path):
-    """A function that writes a gradient .asc file with the PNS parameters of pypulseq's
-    example hardware, with the stimulation limits and thresholds multiplied by
-    `limit_scale`, and returns its path. The real .asc files are confidential.
-
-    With `split`, it writes the layout of a scanner file: an `ASCCONV` block with CRLF line
-    ends and `asCOMP[0].tName`, which includes a `_GSWD_SAFETY.asc` file with the SAFE
-    parameters under `GradPatSup.Phys.PNS`."""
-
-    def write(limit_scale: float = 1.0, name: str = "MP_GPA_TEST", split: bool = False):
-        hw = safe_example_hw()
-        prefix = "GradPatSup.Phys.PNS." if split else ""
-        pns_lines, scale_lines = [], []
-        for axis in "xyz":
-            a, suffix = getattr(hw, axis), axis.upper()
-            pns_lines += [
-                f"{prefix}flGSWDTau{suffix}[{i}] = {getattr(a, f'tau{i + 1}')!r}" for i in range(3)
-            ]
-            pns_lines += [
-                f"{prefix}flGSWDA{suffix}[{i}] = {getattr(a, f'a{i + 1}')!r}" for i in range(3)
-            ]
-            pns_lines += [
-                f"{prefix}flGSWDStimulationLimit{suffix} = {a.stim_limit * limit_scale!r}",
-                f"{prefix}flGSWDStimulationThreshold{suffix} = {a.stim_thresh * limit_scale!r}",
-            ]
-            scale_lines.append(
-                f"asGPAParameters[0].sGCParameters.flGScaleFactor{suffix} = {a.g_scale!r}"
-            )
-        path = tmp_path / f"{name}_{limit_scale:g}.asc"
-        if not split:
-            path.write_text(
-                "\n".join([f'asCOMP.tName = "{name}"', *pns_lines, *scale_lines]) + "\n"
-            )
-            return path
-
-        def ascconv(lines):
-            block = ["### ASCCONV BEGIN @Checksum=mp2:0 ###", "", *lines, "", "### ASCCONV END ###"]
-            return "\r\n".join(block) + "\r\n"
-
-        safety = path.with_name(f"{path.stem}_GSWD_SAFETY.asc")
-        safety.write_bytes(ascconv(pns_lines).encode())
-        main = [f'asCOMP[0].tName = "{name}"', *scale_lines, f"$INCLUDE {safety.name}"]
-        path.write_bytes(ascconv(main).encode())
-        return path
-
-    return write
 
 
 @pytest.fixture(scope="module")

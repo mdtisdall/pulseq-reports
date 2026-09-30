@@ -179,6 +179,10 @@ its SAFE model disagree in a way that matters, tell the pypulseq maintainers
 **When.** Before the slew lane of the sequence diagram is built. Until then,
 keep both definitions as they are.
 
+**Note (card checks).** The check of the gradient limits card looks at the peak
+slew of each axis. The library has no vector slew yet, so a check on the slew
+of the gradient vector waits for this study.
+
 ## Validate every card against external references
 
 **Why.** The first cards moved from vb-pulseq, and `scripts/vb_parity.py` checked

@@ -4,6 +4,7 @@ import pypulseq as pp
 
 from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card
+from pulseq_reports.registry import CardSpec, ReportContext
 
 
 def _value_cell(value: object) -> object:
@@ -19,3 +20,10 @@ def definitions_card(seq: pp.Sequence, *, card_id: str = "definitions") -> Card:
     rows = [[k, _value_cell(v)] for k, v in seq.definitions.items()]
     body = html_table(["Definition", "Value"], rows)
     return Card(id=card_id, title="Definitions", body_html=body, data=None, script=None)
+
+
+def _build(ctx: ReportContext) -> Card:
+    return definitions_card(ctx.seq, card_id=SPEC.name)
+
+
+SPEC = CardSpec("definitions", 80, _build)

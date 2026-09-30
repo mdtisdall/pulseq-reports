@@ -19,17 +19,8 @@ import numpy as np
 import pypulseq as pp
 
 import pulseq_reports
-from pulseq_reports.cards.blocks import blocks_card
-from pulseq_reports.cards.definitions import definitions_card
-from pulseq_reports.cards.diagram import diagram_card
-from pulseq_reports.cards.gradient_limits import gradient_limits_card
-from pulseq_reports.cards.pns import pns_card
-from pulseq_reports.cards.rf_exposure import rf_exposure_card
-from pulseq_reports.cards.rf_profile import rf_profile_card
-from pulseq_reports.cards.spectrum import spectrum_card
-from pulseq_reports.cards.timing import timing_card
 from pulseq_reports.page import write_page
-from pulseq_reports.waveforms import first_adc_window, full_window
+from pulseq_reports.registry import build_cards
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "docs" / "examples" / "gre.html"
 
@@ -118,19 +109,7 @@ def gre_sequence() -> pp.Sequence:
 def main(output: Path) -> None:
     seq = gre_sequence()
 
-    windows = [first_adc_window(seq), full_window(seq)]
-
-    cards = [
-        timing_card(seq),
-        rf_exposure_card(seq),
-        diagram_card(seq, windows, pns_lane=True),
-        rf_profile_card(seq, views=("profile", "z_df")),
-        spectrum_card(seq),
-        pns_card(seq),
-        gradient_limits_card(seq),
-        definitions_card(seq),
-        blocks_card(seq),
-    ]
+    cards = build_cards(seq, pns_lane=True, views=("profile", "z_df"))
 
     output.parent.mkdir(parents=True, exist_ok=True)
     write_page(
