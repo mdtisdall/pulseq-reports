@@ -35,7 +35,7 @@ comments), L (model details with a low reach).
 
 The findings were checked again against `main` at `4e17c66`, after #48 to
 #63 (the RF pulse profiles), and then updated for the pull requests below,
-up to `034e135`. The line numbers in the sections below are still those of
+up to #99. The line numbers in the sections below are still those of
 the review state.
 
 - **Fixed:**
@@ -91,6 +91,21 @@ the review state.
     | 5 | F1 | #92 |
     | 6 | A6, A8 (the documentation), C3, C4, C5, C6 | #93 |
 
+  - C8: #95 adds the `h3` and `h4` rules to `report.css` (the RF profile card
+    also has `h4` headings).
+  - C10: #96 removes the two stale statements from `TODO.md`.
+  - C12: #97 corrects what `TESTS.md` says the JavaScript tests cover, and
+    its contents list.
+  - L3: #98. Every credit (peak, slew, |G| peak) now goes to the first block
+    in play order, and the first time in it. The same fix found two more
+    cases: the |G| peak time on a tie between two triples of events
+    (`numpy.unique` does not give them in play order), and a block credited
+    for a peak or slew of 0.
+  - C14: #78 corrected the docstrings, and #99 shows the blocks and times on
+    the card: each peak and max slew cell gives the block ID and the time,
+    with a "Show" button that sends `goto` to the diagram. #99 adds
+    `AxisResult.slew_time_s` and `GradientLimits.vector_peak_block`.
+
 - **Closed by the one-sequence decision** (#88): A2 (every builder takes
   one sequence, as `pns_card` did) and S2 (the "All files" code of the RF
   exposure card is removed).
@@ -101,9 +116,6 @@ the review state.
     with 2 when a check fails (#92). Open: a status line in each card, a
     limit column in the PNS and RF exposure cards, and a B1+rms limit that
     the caller gives.
-  - C14: #78 corrected the docstrings (the tie rule, and that the card does
-    not show where the limits happen). To show the blocks and times on the
-    card is a feature: an item of `TODO.md`.
 - **Measured, no change:** P6. At 10^5 distinct gradient events, the PNS
   and |G| lanes add less than the budget of decision 14 of
   `docs/plans/review-cleanup.md` (400 MB and 3 s). Section 8 of that plan
@@ -111,8 +123,8 @@ the review state.
 - **No longer apply:** D5, S17 and C11, because #55 deleted
   `scripts/vb_parity.py`. The `vb_parity.py` parts of A8 no longer apply
   either.
-- **Open:** all the other findings: F3 (in part, above), F4 to F7, C7,
-  C8, C10, C12, and L1 to L3. C7 goes with the version change to
+- **Open:** all the other findings: F3 (in part, above), F4 to F7, C7, L1
+  and L2. C7 goes with the version change to
   `0.2.0rc2`, a chore after the plan `docs/plans/public-api.md`.
 - **New cases of the same findings,** in the code of #48 to #63:
   - B3: the `goto` message (#53), which the "Show" buttons of the RF profile

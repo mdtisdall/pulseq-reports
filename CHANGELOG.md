@@ -174,6 +174,8 @@ Each item says what a caller of `v0.2.0rc1` changes.
 - `pns.peak_tr_window` returns `None` for a sequence with no block. Before, it
   raised `StopIteration` (P3, #79).
 - The `aria-label` of the diagram names every lane (C13, #78).
+- The `h3` and `h4` headings inside the cards have a style, smaller than the card
+  title; they had the browser's default size (C8, #95).
 - On an exact tie, `gradient_limits` credits the first block in play order, and
   the first time in it, for each peak, slew and the |G| peak; a value of 0 has no
   block (L3, #98).
