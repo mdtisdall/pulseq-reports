@@ -3,7 +3,8 @@
 import pypulseq as pp
 
 from pulseq_reports.markup import html_table
-from pulseq_reports.page import Card
+from pulseq_reports.page import Card, Check
+from pulseq_reports.registry import CardSpec, ReportContext
 
 
 def _timing_errors(seq: pp.Sequence) -> list[dict]:
@@ -56,6 +57,28 @@ def timing_card(seq: pp.Sequence, *, card_id: str = "timing") -> Card:
 
     `body_html` is exactly the vb-pulseq timing check HTML: a status paragraph, and an
     error table when there are errors (parity).
+
+    The card has one check, `timing`, which fails when pypulseq's timing check gives errors.
     """
-    body = _timing_html(_timing_errors(seq))
-    return Card(id=card_id, title="Timing check", body_html=body, data=None, script=None)
+    errors = _timing_errors(seq)
+    body = _timing_html(errors)
+    check = Check(
+        name="timing",
+        passed=not errors,
+        message=(
+            "pypulseq's timing check gave no errors."
+            if not errors
+            else f"pypulseq's timing check gave {len(errors)} "
+            f"error{'s' if len(errors) != 1 else ''}."
+        ),
+    )
+    return Card(
+        id=card_id, title="Timing check", body_html=body, data=None, script=None, checks=(check,)
+    )
+
+
+def _build(ctx: ReportContext) -> Card:
+    return timing_card(ctx.seq, card_id=SPEC.name)
+
+
+SPEC = CardSpec("timing", 10, _build)

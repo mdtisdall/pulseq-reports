@@ -12,6 +12,19 @@ dependencies = [
     "scipy",
 ]
 
+# The library's own cards, on the same interface as a plugin's cards (docs/plans/public-api.md,
+# decision 14). Each entry point is the `SPEC` of a card module.
+[project.entry-points."pulseq_reports.cards"]
+timing = "pulseq_reports.cards.timing:SPEC"
+rf-exposure = "pulseq_reports.cards.rf_exposure:SPEC"
+diagram = "pulseq_reports.cards.diagram:SPEC"
+rf-profile = "pulseq_reports.cards.rf_profile:SPEC"
+gradient-spectrum = "pulseq_reports.cards.spectrum:SPEC"
+pns = "pulseq_reports.cards.pns:SPEC"
+gradient-limits = "pulseq_reports.cards.gradient_limits:SPEC"
+definitions = "pulseq_reports.cards.definitions:SPEC"
+blocks = "pulseq_reports.cards.blocks:SPEC"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

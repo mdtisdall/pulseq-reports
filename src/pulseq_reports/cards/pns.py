@@ -9,11 +9,15 @@ from pathlib import Path
 import numpy as np
 import pypulseq as pp
 
+from pulseq_reports import options
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.markup import html_table
-from pulseq_reports.page import Card
+from pulseq_reports.page import Card, Check, card_asset
 from pulseq_reports.pns import peak_tr_window, pns_prediction
+from pulseq_reports.registry import CardSpec, ReportContext
 from pulseq_reports.seq_index import sequence_index
+
+PUBLISHES = ("goto",)
 
 _GOTO_TR_TEXT = "Show the peak's TR in the diagram"
 _GOTO_BLOCK_TEXT = "Show the peak's block in the diagram"
@@ -52,6 +56,26 @@ def _goto_data(seq: pp.Sequence, peak_time_s: float) -> dict:
         block = min(int(np.searchsorted(ends, peak_time_s, side="right")), index.num_blocks - 1)
         goto = {"block": block}
     return {"format": 1, "goto": goto}
+
+
+def _check(p: dict) -> Check:
+    """The card's check: failed when the predicted peak is 100 % or more of the stimulation
+    limit (the rule of the status line), from `_pns_data`. A prediction with a `reason`
+    passes."""
+    if p["reason"] is not None:
+        return Check(name="pns", passed=True, message=f"No PNS prediction: {p['reason']}.")
+    peak = p["peak_percent"]
+    if peak >= 100:
+        return Check(
+            name="pns",
+            passed=False,
+            message=f"Predicted PNS peak {peak:.1f} % is at or above the 100 % limit.",
+        )
+    return Check(
+        name="pns",
+        passed=True,
+        message=f"Predicted PNS peak {peak:.1f} % is below the 100 % limit.",
+    )
 
 
 def _pns_html(p: dict, goto_text: str | None, card_id: str) -> str:
@@ -127,13 +151,25 @@ def pns_card(
     card (the diagram) acts on `goto`. A sequence with no gradients has no prediction:
     then the card has no button, no script and no data.
 
+    The card has one check, `pns`, which fails when the predicted peak is 100 % or more of
+    the stimulation limit; a card with no prediction passes. The card publishes `PUBLISHES`
+    (`goto`), as its spec says, and a card with a button has `scripts` with
+    `assets/cards/pns.js`.
+
     Raises `NotImplementedError` for a sequence with the rotation extension
     (`extensions.refuse_rotations`).
     """
     refuse_rotations(seq)
     summary = _pns_data(seq, gradient_asc=gradient_asc)
+    check = _check(summary)
     if summary["reason"] is not None:
-        return Card(id=card_id, title="PNS prediction", body_html=_pns_html(summary, None, card_id))
+        return Card(
+            id=card_id,
+            title="PNS prediction",
+            body_html=_pns_html(summary, None, card_id),
+            checks=(check,),
+            publishes=PUBLISHES,
+        )
     peak_time_s = pns_prediction(seq, gradient_asc=gradient_asc).peak_time_s
     data = _goto_data(seq, peak_time_s)
     goto_text = _GOTO_BLOCK_TEXT if "block" in data["goto"] else _GOTO_TR_TEXT
@@ -143,4 +179,14 @@ def pns_card(
         body_html=_pns_html(summary, goto_text, card_id),
         data=data,
         script="pns",
+        scripts=(card_asset("pns"),),
+        checks=(check,),
+        publishes=PUBLISHES,
     )
+
+
+def _build(ctx: ReportContext) -> Card:
+    return pns_card(ctx.seq, gradient_asc=ctx.option(options.gradient_asc), card_id=SPEC.name)
+
+
+SPEC = CardSpec("pns", 60, _build, (options.gradient_asc,), publishes=PUBLISHES)

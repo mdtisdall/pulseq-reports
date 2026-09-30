@@ -5,6 +5,7 @@ import html
 
 import pypulseq as pp
 
+from pulseq_reports import options
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.grad_spectrum import (
     FFT_WINDOW_S,
@@ -23,7 +24,8 @@ from pulseq_reports.markup import (
     lanes_json,
     zoom_controls,
 )
-from pulseq_reports.page import Card
+from pulseq_reports.page import Card, card_asset
+from pulseq_reports.registry import CardSpec, ReportContext
 
 _SPECTRUM_UNIT = "mT/m/√Hz"
 _SPECTRUM_DB_FLOOR = -80  # the lowest value drawn on the spectrum's dB scale
@@ -158,7 +160,8 @@ def spectrum_card(
     of `grad_spectrum.gradient_spectrum(seq, resonances=coil.resonances)`.
 
     `data` is always the JSON-ready spectrum dict and `script` is always `"spectrum"`,
-    even when there are no gradients, so the card script can still read `data.reason`.
+    even when there are no gradients, so the card script can still read `data.reason`. The
+    card's `scripts` has `assets/cards/spectrum.js`.
 
     Raises `NotImplementedError` for a sequence with the rotation extension
     (`extensions.refuse_rotations`).
@@ -166,4 +169,18 @@ def spectrum_card(
     refuse_rotations(seq)
     data = _spectrum_data(gradient_spectrum(seq, resonances=coil.resonances))
     body = _spectrum_html(data, coil.label, card_id)
-    return Card(id=card_id, title="Gradient spectrum", body_html=body, data=data, script="spectrum")
+    return Card(
+        id=card_id,
+        title="Gradient spectrum",
+        body_html=body,
+        data=data,
+        script="spectrum",
+        scripts=(card_asset("spectrum"),),
+    )
+
+
+def _build(ctx: ReportContext) -> Card:
+    return spectrum_card(ctx.seq, coil=ctx.option(options.coil), card_id=SPEC.name)
+
+
+SPEC = CardSpec("gradient-spectrum", 50, _build, (options.coil,))

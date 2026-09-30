@@ -24,14 +24,19 @@ from pathlib import Path
 
 import pypulseq as pp
 
+from .. import options
 from ..diagram_data import diagram_tables, encode_tables, lane_meta
 from ..extensions import refuse_rotations
 from ..markup import zoom_controls
-from ..page import Card
+from ..page import Card, card_asset
 from ..pns import pns_levels_for
 from ..pns_levels import PnsLevels
+from ..registry import CardSpec, ReportContext
 from ..seq_utils import GAMMA
 from ..waveforms import TimeWindow, _check_windows, duration_s
+
+PUBLISHES = ("sequence", "cursor", "anchor", "view")
+SUBSCRIBES = ("goto",)
 
 
 def _ms(t_s: float) -> float:
@@ -133,6 +138,10 @@ def diagram_card(
     function. The explanation paragraph under the chart always gets one sentence about
     the |G| lane, and one more about the PNS lane when the card has PNS data.
 
+    The card's `scripts` has `assets/cards/diagram.js`. It publishes `PUBLISHES` (the
+    topics `sequence`, `cursor`, `anchor` and `view`) and subscribes to `SUBSCRIBES`
+    (`goto`).
+
     Raises `TypeError` when `pns_lane` is not a `bool`. Raises `ValueError` when
     `gradient_asc` is given and `pns_lane` is False, when `windows` is empty, or when a
     window is not inside the sequence or does not end after its start (the message names
@@ -184,4 +193,36 @@ def diagram_card(
         f"zoom to that range. Hold Shift and drag, or scroll sideways, to pan.{g_note}"
         f"{pns_note}</p>"
     )
-    return Card(id=card_id, title="Sequence diagram", body_html=body, data=data, script="diagram")
+    return Card(
+        id=card_id,
+        title="Sequence diagram",
+        body_html=body,
+        data=data,
+        script="diagram",
+        scripts=(card_asset("diagram"),),
+        publishes=PUBLISHES,
+        subscribes=SUBSCRIBES,
+    )
+
+
+def _build(ctx: ReportContext) -> Card:
+    pns_lane = ctx.option(options.pns_lane)
+    # A `gradient_asc` for the PNS card alone must not reach the diagram: it needs pns_lane.
+    gradient_asc = ctx.option(options.gradient_asc) if pns_lane else None
+    return diagram_card(
+        ctx.seq,
+        ctx.windows(),
+        pns_lane=pns_lane,
+        gradient_asc=gradient_asc,
+        card_id=SPEC.name,
+    )
+
+
+SPEC = CardSpec(
+    "diagram",
+    30,
+    _build,
+    (options.pns_lane, options.gradient_asc),
+    publishes=PUBLISHES,
+    subscribes=SUBSCRIBES,
+)

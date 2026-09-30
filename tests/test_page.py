@@ -1,25 +1,10 @@
 import json
 import re
-import shutil
 from importlib import resources
-from pathlib import Path
 
 import pytest
 
 from pulseq_reports import page
-
-
-def _assets_with_demo_card(tmp_path: Path) -> Path:
-    """A copy of the real assets directory, plus assets/cards/demo.js."""
-    assets_dir = tmp_path / "assets"
-    real_assets = resources.files("pulseq_reports").joinpath("assets")
-    with resources.as_file(real_assets) as real_path:
-        shutil.copytree(real_path, assets_dir)
-    # git does not keep an empty directory, so assets/cards/ is missing until a phase adds
-    # the first library card script.
-    (assets_dir / "cards").mkdir(exist_ok=True)
-    (assets_dir / "cards" / "demo.js").write_text("// DEMO_CARD_MARKER\n", encoding="utf-8")
-    return assets_dir
 
 
 def test_cards_appear_in_order_with_escaped_titles():
@@ -98,31 +83,50 @@ def test_collapsed_card_uses_details():
     assert "<h2>" not in result
 
 
-def test_card_script_included_once_for_two_cards(tmp_path, monkeypatch):
-    assets_dir = _assets_with_demo_card(tmp_path)
-    monkeypatch.setattr(page, "_ASSETS", assets_dir)
+def test_card_scripts_and_css_are_on_the_page_once_in_order_of_first_use():
     cards = [
-        page.Card(id="a", title="A", body_html="<p>a</p>", script="demo"),
-        page.Card(id="b", title="B", body_html="<p>b</p>", script="demo"),
+        page.Card(
+            id="a",
+            title="A",
+            body_html="<p>a</p>",
+            scripts=("// SCRIPT_ONE", "// SCRIPT_TWO"),
+            css=("/* CSS_ONE */",),
+        ),
+        page.Card(
+            id="b",
+            title="B",
+            body_html="<p>b</p>",
+            scripts=("// SCRIPT_THREE", "// SCRIPT_ONE"),
+            css=("/* CSS_TWO */", "/* CSS_ONE */"),
+        ),
     ]
-    result = page.render_page("Title", "Subtitle", cards)
-    assert result.count("DEMO_CARD_MARKER") == 1
+    result = page.render_page(
+        "Title",
+        "Subtitle",
+        cards,
+        extra_scripts=["// EXTRA_SCRIPT"],
+        extra_css=["/* EXTRA_CSS */"],
+    )
+    for marker in ("SCRIPT_ONE", "SCRIPT_TWO", "SCRIPT_THREE", "CSS_ONE", "CSS_TWO"):
+        assert result.count(marker) == 1
+    script_markers = ["SCRIPT_ONE", "SCRIPT_TWO", "SCRIPT_THREE", "EXTRA_SCRIPT"]
+    script_indices = [result.index(m) for m in script_markers]
+    assert script_indices == sorted(script_indices)
+    assert result.index("const GLanes") < script_indices[0]
+    assert script_indices[-1] < result.index("// Runs last on the page.")
+    css_markers = ["CSS_ONE", "CSS_TWO", "EXTRA_CSS"]
+    css_indices = [result.index(m) for m in css_markers]
+    assert css_indices == sorted(css_indices)
 
 
-def test_card_script_without_library_file_uses_extra_scripts(tmp_path, monkeypatch):
-    assets_dir = _assets_with_demo_card(tmp_path)
-    monkeypatch.setattr(page, "_ASSETS", assets_dir)
-    cards = [page.Card(id="a", title="A", body_html="<p>a</p>", script="consumer")]
-    extra = "// CONSUMER_MARKER\nPulseqReport.registerCard('consumer', () => {});"
-    result = page.render_page("Title", "Subtitle", cards, extra_scripts=[extra])
-    assert "CONSUMER_MARKER" in result
-    assert "DEMO_CARD_MARKER" not in result
+def test_card_css_with_close_tag_raises():
+    cards = [page.Card(id="a", title="A", body_html="<p>a</p>", css=("p {} </style> x",))]
+    with pytest.raises(ValueError):
+        page.render_page("Title", "Subtitle", cards)
 
 
-def test_script_order(tmp_path, monkeypatch):
-    assets_dir = _assets_with_demo_card(tmp_path)
-    monkeypatch.setattr(page, "_ASSETS", assets_dir)
-    cards = [page.Card(id="a", title="A", body_html="<p>a</p>", script="demo")]
+def test_script_order():
+    cards = [page.Card(id="a", title="A", body_html="<p>a</p>", scripts=("// CARD_SCRIPT_MARKER",))]
     extra_scripts = [
         "// EXTRA_ONE_MARKER",
         "// EXTRA_TWO_MARKER",
@@ -136,12 +140,54 @@ def test_script_order(tmp_path, monkeypatch):
         result.index("const SeqLanes"),
         result.index("const PnsLanes"),
         result.index("const GLanes"),
-        result.index("DEMO_CARD_MARKER"),
+        result.index("CARD_SCRIPT_MARKER"),
         result.index("EXTRA_ONE_MARKER"),
         result.index("EXTRA_TWO_MARKER"),
         result.index("// Runs last on the page."),
     ]
     assert indices == sorted(indices)
+
+
+def _topic_cards(**topics):
+    """Two cards; `topics` maps a card id to (publishes, subscribes)."""
+    return [
+        page.Card(id=card_id, title=card_id, body_html="", publishes=pub, subscribes=sub)
+        for card_id, (pub, sub) in topics.items()
+    ]
+
+
+def test_two_publishers_of_a_state_topic_raise():
+    cards = _topic_cards(one=(("sequence",), ()), two=(("sequence",), ()))
+    with pytest.raises(ValueError, match=r"(?s)(?=.*sequence)(?=.*one)(?=.*two)"):
+        page.render_page("Title", "Subtitle", cards)
+
+
+def test_two_subscribers_of_a_request_topic_raise():
+    cards = _topic_cards(one=((), ("goto",)), two=((), ("goto",)))
+    with pytest.raises(ValueError, match=r"(?s)(?=.*goto)(?=.*one)(?=.*two)"):
+        page.render_page("Title", "Subtitle", cards)
+
+
+def test_topics_that_pass_the_check():
+    """One publisher of a state topic and one subscriber of a request topic pass; so do
+    many subscribers of a state topic, many publishers of a request topic, and any number
+    of cards on a topic that is not in `TOPIC_KINDS`."""
+    cards = _topic_cards(
+        one=(("sequence", "goto", "plugin-topic"), ("goto",)),
+        two=(("goto", "plugin-topic"), ("sequence", "plugin-topic")),
+        three=(("plugin-topic",), ("sequence", "plugin-topic")),
+    )
+    page.render_page("Title", "Subtitle", cards)
+
+
+def test_checks_are_not_on_the_page():
+    check = page.Check(name="CHECK_NAME_MARKER", passed=False, message="CHECK_MESSAGE_MARKER")
+    with_checks = page.Card(id="a", title="A", body_html="<p>a</p>", checks=(check,))
+    without_checks = page.Card(id="a", title="A", body_html="<p>a</p>")
+    result = page.render_page("Title", "Subtitle", [with_checks])
+    assert "CHECK_NAME_MARKER" not in result
+    assert "CHECK_MESSAGE_MARKER" not in result
+    assert result == page.render_page("Title", "Subtitle", [without_checks])
 
 
 def test_each_script_is_its_own_script_element():
