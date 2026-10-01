@@ -96,34 +96,50 @@ from each card that supports them.
 **Why.** pypulseq keeps RF and gradient amplitudes in Hz and Hz/m. It converts
 them from T and T/m with `seq.system.gamma`, which a caller sets for another
 nucleus (`pp.Opts(gamma=...)`, for example 11.262e6 Hz/T for sodium).
-`pp.Opts` uses `abs(gamma)`. This library converts back with the fixed
-proton value `seq_utils.GAMMA` (42.576e6 Hz/T) in these places:
+`pp.Opts` uses `abs(gamma)`. A `.seq` file does not give a gamma, so a target
+profile of pulseq-checks can give it (`opts.gamma`).
 
-- `diagram_data.diagram_tables`: the gradient values of the diagram (mT/m).
-- `waveforms.py`: the RF magnitude (µT) and the gradient lanes (mT/m) of the
-  diagram.
-- `grad_limits.py`: the peak, slew and RMS values, the |G| peak, and the
-  pypulseq system limits (`seq.system.max_grad` and `max_slew`) of the
-  gradient limits card.
-- `rf_exposure.py`: |B1| (µT), and so the energy and the window values of
-  the RF exposure card.
+pulseq-reports supports only the proton gamma (`seq_utils.GAMMA`,
+42.576e6 Hz/T), also where pulseq-checks supports other gammas (decision P21
+of `docs/plans/pulseq-checks.md`, principle 8). The cards leave out a target
+with another gamma, and `build_cards` refuses a `Sequence` object with
+another gamma. For a sequence of another nucleus, the values of the places
+below would be wrong by the factor `gamma / GAMMA`.
 
-For a proton sequence nothing is wrong. For a sequence of another nucleus,
-these values are wrong by the factor `seq.system.gamma / GAMMA`, and a
-percent of a limit that the caller gives in physical units is wrong too.
-`grad_spectrum.py` already uses `seq.system.gamma`. The PNS lane gets its own
-fix (`gradScale`, decision 14 of `docs/plans/diagram-lanes.md`).
+**The running list.** Each place that changes Hz into T, or Hz/m into T/m.
+A change that adds such a conversion adds it here.
 
-**What.** Use `abs(seq.system.gamma)` for each conversion, as pypulseq does.
-Keep `GAMMA` only where no sequence is known. The diagram data format then
-needs the gamma of each file (or values that are already converted), and
-`gradScale` of the PNS data can become 1.0 or go away.
+| Where | Gamma now | What it gives |
+|---|---|---|
+| `diagram_data.diagram_tables` | `GAMMA` | The gradient values of the diagram (mT/m). |
+| `waveforms._rf_offsets` | `GAMMA` | The RF magnitude of the diagram (µT). |
+| `waveforms._block_events` | `GAMMA` | The gradient lanes of the diagram (mT/m). |
+| `assets/seq_lanes.js` (`SeqLanes`) | `GAMMA` | Changes the gradient values of the diagram back into Hz/m. |
+| `cards.diagram._pns_entry` | `GAMMA / seq.system.gamma` | `gradScale` of the PNS lane (decision 14 of `docs/plans/diagram-lanes.md`). |
+| `rf_exposure._pulse_train` | `GAMMA` | \|B1\| (µT), and so the energy and the window values of the RF exposure card. |
+| `grad_spectrum.gradient_spectrum` | `seq.system.gamma` | The spectra (mT/m). |
+| `rf_profiles._pulse_core` | `seq.system.gamma` | The `ppm` offsets in Hz (with B0), and \|B1\| (µT). |
+| `cards.rf_profile._rf_table` | `seq.system.gamma` | The `ppm` offsets in Hz (with B0). |
+| `cards.rf_profile._rf_profile_data` | `seq.system.gamma` | `gamma_hz_per_t` of the page data. |
+| `assets/rf_profiles.js` (`_pulseCore`) | `gammaHzPerT` of the page data | \|B1\| (µT). |
+| `cards.gradient_limits.gradient_limits_card`, `cli._write_pages` | `GAMMA` | The gradient limits of `seq.system` (`_default_limits`). These go away with `docs/plans/pulseq-checks.md`. Then the percent columns of each target convert with `GAMMA`. |
+
+`grad_limits.py` moves to pulseq-checks, where `gradient_limits` has a
+`gamma` keyword (R9 of the pulseq-checks design). The gradient limits card
+gives it `GAMMA`.
+
+**What.** Use the gamma of the target (or of the `Sequence` object) for each
+conversion in the list. The diagram data format then needs the gamma of each
+target (or values that are already converted), and `gradScale` of the PNS
+data can become 1.0 or go away. Then remove the rule of principle 8.
 
 **How to check.** A test for each card with `pp.Opts(gamma=...)` of another
-nucleus: the physical values (mT/m, µT) of an event made with physical units
-equal those units. The existing tests (`scripts/check`) for proton sequences.
+nucleus, and a target profile with that gamma: the physical values (mT/m, µT)
+of an event made with physical units equal those units. The existing tests
+(`scripts/check`) for proton sequences.
 
-**When.** Any time. Write a plan in `docs/plans/` first.
+**When.** After `docs/plans/pulseq-checks.md` is done. Write a plan in
+`docs/plans/` first.
 
 ## Study the two definitions of the gradient slew rate
 
