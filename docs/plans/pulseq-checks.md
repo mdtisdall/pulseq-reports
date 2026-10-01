@@ -1,493 +1,386 @@
-# Design: separate checks from reports (pulseq-checks)
+# Design: pulseq-reports on pulseq-checks
 
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: design. The design was written on 2026-09-30, from a discussion with
-the user. The user answered the open decisions on the same day (section 11).
-This is not an implementation plan. It gives the concepts, the structure and
-the decisions. An implementation plan comes next.
+Status: design, version 2, written on 2026-09-30. The user made the
+decisions of section 9.2 on the same day. This is not an implementation plan.
+It gives the goals, the principles and the design decisions for the work in
+pulseq-reports. An implementation plan comes next.
 
-The work in `pulseq-checks` continues in that repository, in
-[`docs/plans/pulseq-checks.md`](https://github.com/mdtisdall/pulseq-checks/blob/main/docs/plans/pulseq-checks.md).
-For that work, the document in `pulseq-checks` is the reference. It goes
-further than this document in decisions 4 and 6, and it adds the decisions
-R1 to R7 of a review of the design.
+Version 1 of this document (commit `475a1eb`) gave the design of both
+packages. The part for `pulseq-checks` moved to that repository, in
+[`docs/plans/pulseq-checks.md`](https://github.com/mdtisdall/pulseq-checks/blob/main/docs/plans/pulseq-checks.md),
+and `pulseq-checks` `v0.1.0rc1` implements it. This version gives only the
+work in pulseq-reports. `pulseq-checks` is stable for this work, except for
+the requests in section 6. The section numbers of version 1 are not kept.
+The `pulseq-checks` design refers to version 1 by commit, so its links still
+work.
 
 ## 1. Goal
 
-The library mixes two different uses:
+Remove all check behavior from pulseq-reports. pulseq-reports gets each
+verdict from the services of `pulseq-checks`.
 
-1. **Check** a sequence. A check compares a sequence with a specification, for
-   example the hardware limits of one scanner, and gives pass or fail. CI uses
-   checks. A check must be fast, its result must be binary, and its
-   specification must be clear to a person who reads it.
-2. **Report** on a sequence. A report describes how a sequence behaves. It
-   helps a person see trade-offs and make design decisions.
+After this work:
 
-This design separates the two uses. Checks move to a new pure-Python library,
-`pulseq-checks`. `pulseq-reports` uses `pulseq-checks`, and a report can show
-the results of the checks. The main goal of a report is still to describe the
-sequence, not to run the checks.
+- **A card describes. A card does not decide.** No card calculates a pass or
+  a fail. The only verdicts on a page come from a `pulseq-checks` result.
+- **A report shows the results of the checks.** A summary card near the top
+  of the page shows the result matrix: what passed, what failed, and what was
+  not asserted. The report gets the matrix from `run_checks`, the same
+  function that `pulseq-check` uses, or from a result file of an earlier run.
+- **The cards read target profiles.** A card that needs scanner context (the
+  limits, the SAFE parameters, the acoustic resonances, B0) reads it from the
+  same target profile format as `pulseq-checks`. The card options for scanner
+  context go away.
+- **No hidden defaults.** A report uses defaults as `pulseq-checks` does. A
+  value that no target gives is not replaced by a default. The card says what
+  is missing.
+- **No duplicate code.** pulseq-reports deletes its copies of the modules
+  that moved to `pulseq-checks`, and imports them from `pulseq-checks`.
 
-The key behavior of `pulseq-checks` is this: apply a specification to a `.seq`
-file, when the author of the file did not use that specification. For
-example, check a file that was written for one scanner against the limits of
-a different scanner.
+The main goal of a report is still to describe the sequence. A report with
+no targets is complete. It has no verdicts and no check summary.
 
-## 2. Two uses
+## 2. Principles
 
-| | Check | Report |
-|---|---|---|
-| Question | "Does this sequence meet specification X?" | "How does this sequence behave?" |
-| Inputs | The sequence and a specification. The specification is necessary. | The sequence. Context is optional. |
-| Output | Pass, fail or not evaluated, for each named rule. A machine can read it. | An HTML page that describes the sequence. It needs no verdict. |
-| Cost | Fast. It calculates only what its rules need. | It can be slow and complete. |
-| Defaults | No default limits. A missing input is an error. | Sensible defaults are permitted. |
-| Definition | A written specification: the quantity, its definition, the limit, the tolerance and the pass condition. | The documentation of the card. |
+1. **One source of verdicts.** A verdict (pass, fail, not evaluated, error)
+   comes only from a `pulseq-checks` `Result`. A card that marks a value
+   against a limit (for example a percent above 100) takes the mark from the
+   result of the check, not from its own comparison. Thus a card and the
+   summary cannot disagree. (In version 1, the PNS card failed from 99.995 %
+   because it rounded, and `pns.safe` failed from 100 %.)
+2. **One target profile format.** pulseq-reports reads targets with
+   `pulseq_checks.read_profile` and uses `TargetProfile`. It does not define a
+   second format.
+3. **Defaults as in `pulseq-checks`.** When `pulseq-checks` gives "not
+   evaluated" because a target does not give a value, the card shows no value
+   for that target, and a note with the reason. The card does not use the
+   pypulseq defaults, the example SAFE hardware of pypulseq, or a built-in
+   coil. The limits of a `Sequence` object (`seq.system`) are used only with
+   the explicit opt-in that `pulseq-checks` has (`limits_from_sequence`, for a
+   `Sequence` object only), and the card says where the limits came from.
+4. **Each card selects its own targets.** A card can use all the targets,
+   one target, or no target. Section 4.4 gives the rule for each card. When a
+   card shows several targets, it overlays them or gives a column for each.
+5. **One color for each target.** The page gives each target one color. Each
+   card that shows targets uses that color for that target, and the page has
+   one legend for the targets.
+6. **Only documented names of `pulseq-checks`.** pulseq-reports imports only
+   what `pulseq-checks` documents. It does not import a private name (a name
+   that starts with `_`). Section 6 gives what pulseq-reports needs that
+   `pulseq-checks` does not document yet.
+7. **The file gives the rasters.** A card does not read a value from
+   `seq.system` that the file does not give. `seq.read` keeps the rasters of
+   the file in `seq.grad_raster_time` and the other raster attributes, and
+   leaves `seq.system` at the `Opts` of the caller. Values that a file does
+   not give (limits, B0, dead times) come from a target, or they are missing.
 
-A report can include the results of the checks. A shared report then tells
-its reader which assertions pass. But the report does not define a check, and
-the report is not the tool that CI uses to run the checks.
+## 3. The state of the code
 
-## 3. The state of the code (2026-09-30, `main` at `fd298d5`)
+### 3.1 pulseq-reports (`main` at `475a1eb`, version `0.2.0rc2`)
 
-The two uses are mixed in five places:
+The check behavior that this work removes:
 
-1. **A check is a part of a card.** `Check` is a field of `Card`
-   (`src/pulseq_reports/page.py:39`). The only checks are the timing check,
-   the gradient limits check and the PNS check. Each check is calculated when
-   its card is built. To get a pass or fail result, CI must build the full
-   report, with the diagram, the spectrum and the RF profiles.
-2. **One code path gives the verdict and draws the card.** The PNS check is
-   "the rule of the status line" (`src/pulseq_reports/cards/pns.py:61`). No
-   document gives the rule as a specification.
-3. **Missing inputs get silent defaults.** With no limits, the gradient check
-   uses `seq.system`, which is what the sequence says about itself. The
-   command line writes only a warning (`src/pulseq_reports/cli.py`,
-   `_write_pages`). With no `.asc` file, the PNS check uses the example
-   hardware of pypulseq (`asc.EXAMPLE_HARDWARE`). A pass against limits that
-   are not real is not a compliance result.
-4. **The settings of a check are card options.** `check_norms` is an option
-   of the gradient limits card (`src/pulseq_reports/options.py`). The limits,
-   the `.asc` file and the coil are card options. They do not describe a
-   scanner as one object.
-5. **"Could not calculate" and "failed" are the same result.** When a card
-   raises an exception, `registry.py:306` gives it a failed check with the
-   name `error`. The exit status of `pulseq-report` mixes "a check failed"
-   with "the page was written".
-
-`Card.checks` and the exit status 2 are new in `0.2.0rc2` (#91, #92). No
-final release has them yet.
-
-## 4. What pypulseq already gives
-
-Facts from pypulseq `1.5.0.post1`, the version that the library pins.
-
-| Check | In pypulseq? | What pypulseq has |
-|---|---|---|
-| Timing | Yes | `check_timing` returns `(ok, errors)`. It checks the rasters, the block duration, negative delays, the RF dead time and ringdown, the ADC dead times and the soft delays. |
-| PNS | Yes | `calculate_pns` returns `ok = all(pns_norm < 1)`. The PNS card uses this SAFE model. |
-| Gradient amplitude, each axis | Partly | Only when a sequence is built. `make_trapezoid`, `make_arbitrary_grad` and `make_extended_trapezoid` raise an error above `system.max_grad`. |
-| Gradient slew, each axis | Partly | Only when a sequence is built. The same functions check the slew. `add_block` checks the steps at block junctions. All use `seq.system`. |
-| \|G\| amplitude and slew | Values only | `test_report` writes the maximum of \|G\| and of its slew as text. It gives no verdict. |
-| Acoustic resonances | Data and plot only | `asc_to_hw` reads the resonance frequencies and bandwidths from the `.asc` file. `calculate_gradient_spectrum` draws them. It gives no verdict. |
-| RF peak B1, B1+rms, SAR | No | `calc_SAR` was removed. It raises an error that names PySar4seq. `Opts` has no B1 limits. |
-
-Two more facts make "apply a new specification to a file" possible:
-
-- `seq.read` does not read the hardware values from the file. The RF dead
-  time, the RF ringdown and the ADC dead time come from the `Opts` that the
-  caller gives to `pp.Sequence(system=...)`. The file gives only the raster
-  times, in `[DEFINITIONS]`.
-- `check_timing` compares with `seq.system`. Thus it compares with the
-  specification that the caller gives, not with the values of the author.
-
-Conclusion: for timing and PNS, pypulseq has the rule. A check in
-`pulseq-checks` is a thin wrapper. For the gradient limits of a finished
-file, pypulseq has no check. This gap is the main new function. The
-measurement exists already, in `grad_limits.py`.
-
-## 5. Design
-
-### 5.1 Layers
-
-There are three layers. Each layer uses only the layers below it.
-
-| Layer | Package | Contents |
-|---|---|---|
-| Measurements | `pulseq-checks` | Calculations only: the gradient peaks and slew, PNS, and later the spectrum and RF exposure. Each measurement gives values and where they occur. It gives no verdict. |
-| Checks | `pulseq-checks` | Target profiles, models, check rules, results and the `pulseq-check` command. |
-| Reports | `pulseq-reports` | Cards, the page, the JavaScript and the `pulseq-report` command. A card describes. A card does not decide. |
-
-`pulseq-reports` uses `pulseq-checks`. `pulseq-checks` never uses
-`pulseq-reports`. The package boundary enforces this direction.
-
-### 5.2 The parts of a check
-
-Four parts change independently. Each part is a plugin point.
-
-| Part | What it is | Examples |
-|---|---|---|
-| Target profile | What one scanner and its Pulseq interpreter can do, and what they expect | Rasters, dead times, gradient limits, B0, the coil `.asc` file, the supported file versions and extensions, coordinate conventions |
-| Profile reader | Makes a target profile from vendor files | A Siemens `.asc` reader now. GE and Philips readers later. |
-| Model | Calculates a physical quantity from a sequence and a target | SAFE PNS (pypulseq), a dB/dt model, a neurodynamic body model, a SAR model |
-| Check rule | Compares a quantity with a limit. It has a written specification. | "The PNS is below 100 %." "The slew of each physical axis is at or below the limit." |
-
-A new PNS model is a new model plugin. The PNS check rule does not change.
-The target profile tells which model applies to that scanner.
-
-Each check rule declares the profile fields and the models that it needs.
-
-A target profile is a TOML or JSON file. It gives the vendor, the rasters,
-the dead times, B0 and the gradient limits. It can name a Siemens `.asc`
-file. The `.asc` file gives the SAFE parameters, the acoustic resonances and
-the GPA limits. When the profile file and the `.asc` file both give one
-value, the result is an error, not a silent override (decision 6). A site
-keeps its profiles where it wants, for example next to its sequences.
-
-`HardwareLimits` moves to `pulseq-checks`, and a target profile contains it.
-`pulseq-reports` exports it again, so its callers do not break (decision 8).
-The target profile replaces the card options `limits`, `gradient_asc` and
-`check_norms`. A report can use a target profile as context, for example to
-show a limit as a line on a chart.
-
-### 5.3 Results
-
-Each result has:
-
-- the check ID and the version of its specification,
-- the target,
-- the state: pass, fail or not evaluated,
-- the measured value, the limit and where the value occurs (block and time),
-- the model and its version, when the check uses a model,
-- the reason, when the state is "not evaluated".
-
-"Not evaluated" is a state of its own. It is not a pass and not a fail. A
-check gets it when the target profile does not have a necessary field, or
-when a necessary model is not available. Examples:
-
-- PNS with no `.asc` file: not evaluated. The pypulseq example hardware is
-  not a real scanner, so it does not give a pass.
-- Handedness with no declared convention: not evaluated (section 6.2).
-
-A check run takes one sequence and a list of targets. The result is a matrix
-of checks and targets. The same matrix is the output for CI and the summary
-in a report.
-
-### 5.4 The specification of each check
-
-Each check has a stable ID, for example `gradient.slew.axis`. A document in
-`pulseq-checks` gives one entry for each ID:
-
-- the quantity and its exact definition,
-- the inputs from the target profile,
-- the limit and the tolerance,
-- the pass condition,
-- the cost (fast, or slow for a large file),
-- the pypulseq function that the check uses, if any.
-
-The message of a result gives the ID, so that a reader can find the
-specification. The specification has a version. When a rule changes, its
-version changes, so that old CI results stay clear.
-
-### 5.5 Checks in a report
-
-When the caller gives one or more target profiles, the report runs the checks
-through the same function that `pulseq-check` uses. A caller can also give a
-result set that was calculated before. The same code gives the verdict in CI
-and in a shared report, so the two cannot disagree.
-
-The report shows a summary of the checks near the top of the page:
-
-- the target profiles and the source of each limit,
-- for each check and target: the ID, the state, the value and the limit, the
-  location, and a link to the specification,
-- each "not evaluated" result, with its reason. The reader must see what was
-  not asserted, not only what passed.
-
-A card can point to a result, for example the "Show" button of the gradient
-limits card on the value that failed. The descriptive cards do not decide.
-
-With no target profile, the report is complete. The summary says that no
-checks were run. It does not use default limits.
-
-### 5.6 The commands and the exit status
-
-`pulseq-check`, in `pulseq-checks`:
-
-| Status | Meaning |
+| What | Where |
 |---|---|
-| 0 | Each check passed. Each required check was evaluated. |
-| 2 | At least one check failed. |
-| 1 | An error in the arguments or the profiles, or a required check that was not evaluated. |
+| `Check` and `Card.checks` | `page.py` |
+| The timing check (`check_timing`, pass or fail, error table) | `cards/timing.py` |
+| The gradient limits check and `check_norms` | `cards/gradient_limits.py`, `options.py` |
+| The PNS check (100 % rule of the status line) | `cards/pns.py` |
+| A failed check named `error` for a card that raises | `registry.py` (`_error_card`) |
+| Exit status 2, and the warning about default limits | `cli.py` |
+| `seq.system` limits when no limits are given | `cli.py` and `cards/gradient_limits.py` (`_default_limits`) |
+| The example SAFE hardware of pypulseq when no `.asc` file is given | `pns.py`, `pns_levels.py`, `cards/pns.py`, `cards/diagram.py` |
 
-A check is required when the caller names it, in the configuration file or
-with a flag. A check that runs by default and does not have its inputs gives
-"not evaluated" in the output, and the status does not change (decision 3).
+The scanner context that is now in card options:
 
-A check uses the limits of the sequence (`seq.system`) only when the caller
-permits it explicitly, with a flag or an entry in the profile. The result
-records that the limits came from the sequence (decision 4).
-
-The command writes a result that a machine can read (JSON, and maybe
-JUnit XML for CI dashboards) and a short summary for a person.
-
-`pulseq-report`, in `pulseq-reports`: the status is 0 when each page is
-written, also when a check in the summary failed. To stop CI on a failed
-check is the work of `pulseq-check`. An opt-in flag, for example
-`--fail-on-check`, makes the report command give a non-zero status when a
-check in its summary fails (decision 2).
-
-### 5.7 Plugins
-
-`pulseq-checks` has three entry-point groups: profile readers, models and
-check rules. `pulseq-reports` keeps its entry-point group for cards. A
-project can add a check for its site without a card.
-
-Each package has its own command line (decision 9). `pulseq-checks` has a
-public function that reads a check configuration: the targets and the
-selected checks. `pulseq-reports` keeps its card options (`options.py`,
-`cli.py`) and calls that function. Thus the two commands read the same check
-configuration file.
-
-### 5.8 Rely on pypulseq
-
-A check uses the pypulseq rule when pypulseq has one. The timing check calls
-`check_timing`. The PNS check calls the SAFE model of pypulseq. The gradient
-limits check uses the slew definition of pypulseq
-(`docs/notes/slew-definitions.md`). `pulseq-checks` does not copy a rule that
-pypulseq has.
-
-### 5.9 Cost classes
-
-Each check declares a cost class, `fast` or `slow` (decision 7). The cost
-class is one field of the specification of the check, and its default is
-`slow`. Thus a plugin check that nobody measured does not make the fast set
-slow. A plugin author changes one field to put a check in the fast set.
-
-The caller can select checks, or run only the fast checks. The fast checks of
-`pulseq-checks` have a tested time budget on a file with 10⁶ blocks. The
-implementation plan sets the number after a measurement. The budget test does
-not include plugin checks. A plugin author can use the same timing helper to
-measure a plugin check.
-
-### 5.10 Rasters
-
-`seq.read` keeps the raster times of the file. `check_timing` uses the
-rasters of `seq.system`, which come from the target. A separate check, the
-raster check, compares the rasters that the file declares with the rasters of
-the target. The target profile gives the rule: equal, or an integer multiple.
-The timing check then runs with the rasters of the target (decision 5).
-
-## 6. Kinds of checks that we can see now
-
-The design must accept these kinds without a new structure. Version 1 does
-only some of them (section 8). Many of them come from one need: to use one
-`.seq` file on different scanners, possibly from different vendors.
-
-### 6.1 The kinds
-
-| Kind | Examples | Possible from the `.seq` file only? |
-|---|---|---|
-| Timing and rasters | The rasters of the gradients, RF, ADC and blocks are different for each vendor (for example, 10 µs gradient raster on Siemens, 4 µs on GE). Dead times and ringdown. The ADC dwell step. | Yes, with a target profile. `check_timing` already takes these values from `Opts`. |
-| Gradient hardware | Amplitude and slew. The limit on each physical axis or on the vector. A slew limit that decreases at high amplitude. Gradient RMS, duty cycle and heating over a time window. Acoustic resonance bands. | Yes, with a target profile. |
-| Worst case under rotation | Does the sequence pass at the planned orientation, or at all orientations? This makes the \|G\| note of the gradient limits card into a check. | Yes. |
-| Physiological safety | PNS, with more than one model. Cardiac stimulation (`asc_to_hw` has `cardiac_model`). The dB/dt operating mode (normal or first level, IEC 60601-2-33). Acoustic noise. | Yes, with a model. |
-| RF and field strength | Peak B1 against the RF amplifier and coil of the target. SAR, which increases approximately with B0². A frequency offset in Hz that is correct at only one B0 (for example, fat saturation). pypulseq 1.5 can give such offsets in ppm. | Partly. A Hz offset needs a declared B0. |
-| Interpreter compatibility | The Pulseq file version. The supported extensions (soft delays, rotations, triggers, RF use). Limits on the library size, the number of blocks, the ADC samples and the waveform length. Label and counter ranges. Structural rules of one vendor's interpreter. | Yes, with a target profile. |
-| Coordinate and sign conventions | The handedness of the logical axes relative to the patient. Which physical axis each logical axis goes to. The sign of the RF phase and frequency offset relative to the gradient polarity. The direction of a slice or readout offset. | **No. It needs a declaration** (section 6.2). |
-| Nucleus | A gamma that is not the proton gamma. Does the RF chain of the target support that nucleus? | Yes, with a target profile. |
-
-### 6.2 Coordinate conventions and handedness
-
-This kind is different from the others. A `.seq` file does not record the
-convention that its author used. A gradient polarity and an RF frequency
-offset are consistent in each handedness. The only difference is that the
-slice is at the mirror position. Thus no check can find "wrong handedness"
-from the waveforms only.
-
-Two checks are possible:
-
-1. **Declared against expected.** The sequence declares its conventions: the
-   handedness, the axis mapping, and the signs of the phase and the frequency
-   offset. The target profile gives what its interpreter expects. The check
-   compares the two. With no declaration, the result is "not evaluated". In a
-   report for several sites, this is the correct result to show.
-2. **Internal consistency against the declaration.** For each slice-selective
-   RF pulse, the frequency offset must be γ·G·position, with the declared
-   sign. This check finds a sign error inside one sequence, also when all the
-   scanners agree.
-
-The correct location for the declaration is the `[DEFINITIONS]` section of
-the `.seq` file. That is a convention for the Pulseq community. This library
-must not invent it alone.
-
-TODO (decision 10): the location of the declaration is deferred. Version 1
-has no convention checks. When `pulseq-checks` exists, this item goes into its
-`TODO.md`.
-
-## 7. Two packages
-
-### 7.1 Why a separate package
-
-1. **The dependency goes in one direction.** Reports use checks. Checks never
-   use reports. A package boundary enforces this. In one package, only
-   discipline enforces it, and the current problem started when the two uses
-   were in one package.
-2. **Different promises.** Checks are a contract. The check IDs, the
-   specifications, the profile format and the model versions must stay
-   stable, because CI results and compliance records refer to them. Reports
-   are presentation. Cards, layout and JavaScript must be free to change
-   quickly. Two version numbers let each package keep its own promise.
-3. **Different people.** Scanner physicists and people who work with vendors
-   will write target profiles, profile readers and models. Many of them will
-   not open a report. Sequence developers write cards. Two repositories keep
-   the issues, the documents and the plugin groups separate.
-4. **Upstream.** The Pulseq community can adopt a small pure-Python check
-   library more easily than a report generator. Parts of it can move to
-   pypulseq, for example a gradient limits check of a finished file, or a
-   convention declaration.
-
-The removal of the JavaScript is a small reason only. The JavaScript is
-static files in the wheel. Both packages use only `pypulseq`, `numpy` and
-`scipy`. A user of the checks gets a smaller API and fewer documents, not
-fewer dependencies.
-
-### 7.2 What moves
-
-The measurement modules that the checks need import nothing from the report
-side:
-
-| Module | Imports in the package |
+| Option | Cards |
 |---|---|
-| `grad_limits` | `seq_index`, `seq_utils` |
-| `pns` | `pns_levels`, `seq_index` |
-| `pns_levels` | `asc`, `extensions`, `sampling`, `seq_index` |
-| `sampling` | `seq_index`, `seq_utils` |
-| `asc`, `extensions`, `seq_index`, `seq_utils` | none |
-| `grad_spectrum` | `sampling`, `seq_index` |
-| `rf_exposure` | none |
+| `limits` (`HardwareLimits`) | `gradient-limits` |
+| `gradient_asc` | `pns`, `diagram` (PNS lane) |
+| `coil` (`GradientCoil`, default `PRISMA_AS82`) | `gradient-spectrum` |
+| `check_norms` | `gradient-limits` |
 
-For version 1, these modules move to `pulseq-checks`, with their tests:
-`grad_limits`, `pns`, `pns_levels`, `asc`, `extensions`, `sampling`,
-`seq_index` and `seq_utils`. `grad_spectrum` and `rf_exposure` move when a
-check needs them (the acoustic check and the RF checks).
+Values that cards read from `seq.system` of a file, where `seq.system` has
+only the defaults of pypulseq:
 
-These stay in `pulseq-reports`: the cards, the page, the JavaScript,
-`waveforms` (it imports `markup`), `markup`, `rf_profiles`, `rf_sim`,
-`profile_metrics`, `diagram_data`, the registry of cards and the
-`pulseq-report` command.
+- B0 and gamma in the RF profile card (`cards/rf_profile.py`,
+  `rf_profiles.py`), to change `freq_ppm` and `phase_ppm` into Hz.
+- The RF raster in the RF profile card and in `rf_exposure.py`, and the
+  gradient raster in `grad_spectrum.py`. This is a separate bug (principle
+  7). It is not a part of this work.
 
-`pulseq-reports` depends on `pulseq-checks` by git URL and tag, as its
-consumers depend on it.
+The copies of the moved modules: `grad_limits`, `pns`, `pns_levels`, `asc`,
+`extensions`, `sampling`, `seq_index` and `seq_utils`. They are in both
+packages. The copies in `pulseq-checks` are changed: `pns_levels` and
+`pns_levels_for` take a SAFE hardware struct (`hardware=`), and
+`gradient_limits` refuses the rotation extension. pulseq-reports also uses
+two private names of these modules: `grad_limits._default_limits` and
+`seq_index._index_dtype`.
 
-### 7.3 Costs
+`PRISMA_AS82` (in `grad_spectrum.py`) contains the published acoustic
+resonances of a Siemens coil. It is in the public repository, its history,
+the released tags and the example report.
 
-- Two repositories to operate: CI, releases, tokens and the dev-workflow
-  setup.
-- A change that touches both packages needs two pull requests, in sequence.
-  First `pulseq-checks`, then `pulseq-reports` changes its pin. There will be
-  more of these changes at the start, while the measurement code changes for
-  the checks.
-- The option and configuration code of the command line (section 5.7).
-- From the move of step 2 to step 3 (section 9), both repositories have
-  copies of the moved modules. A change to a moved module happens in
-  `pulseq-checks` first. `pulseq-reports` changes its copy only for a bug fix,
-  and the same fix goes to `pulseq-checks`. Step 3 then removes the copy in
-  `pulseq-reports`, with no differences to merge (`pulseq-checks` decision
-  R7).
+### 3.2 pulseq-checks (`v0.1.0rc1`)
 
-## 8. Version 1
+What pulseq-reports can use:
 
-Version 1 is small:
+- `read_profile(path) -> TargetProfile`. A profile gives `hardware_limits`
+  (a `HardwareLimits`, or `None`), `opts` (with B0 and gamma, when given),
+  `models["pns.safe"]` (the SAFE parameters), `acoustic_resonances`,
+  `sources` (the source of each value) and `name`.
+- `read_check_config(path) -> CheckConfig`: the targets, `select`,
+  `required` and `fast_only`.
+- `run_checks(sequence, targets, *, select, required, fast_only,
+  limits_from_sequence) -> ResultMatrix`. With a path, it reads the file one
+  time for each target, with the `Opts` of that target. With a `Sequence`
+  object, it accepts exactly one target.
+- `ResultMatrix`: `results`, `targets` (with the source of each value),
+  `exit_status()` (0, 2 or 1), `to_json()` and `from_json()`.
+- `Result`: the check ID and spec version, the target, the state, the value,
+  the limit and the unit, the location (block ID and time), the model, the
+  reason and the link to the specification.
+- `HardwareLimits`, exported.
+- The measurement functions that the plugin documentation names:
+  `seq_index.sequence_index`, `grad_limits.gradient_limits` and
+  `pns.pns_levels_for`.
 
-- one target profile format (TOML or JSON), and a Siemens `.asc` profile
-  reader,
-- a list of targets for each check run,
-- the cost classes and the time budget of the fast checks (section 5.9),
-- the raster check (section 5.10),
-- the timing check (a wrapper of `check_timing`),
-- the gradient amplitude check and the gradient slew check of each axis, for
-  a finished file,
-- the worst-case amplitude under rotation: the peak of \|G\| against the
-  amplitude limit. It replaces `check_norms` (decision 11).
-- the PNS check with the SAFE model of pypulseq, only with a real `.asc` file,
-- the result matrix, the JSON output and the `pulseq-check` command,
-- the check summary card in `pulseq-reports`, and its `--fail-on-check` flag.
+Costs at 10⁶ blocks (`pulseq-checks` plan, section 8.3): the read of the file
+takes 3.6 s. The fast checks together take 4.2 s with the read. `pns.safe`
+and `timing.pypulseq` take about 14 s each with the read. All six checks take
+about 24 s.
 
-The worst-case slew under rotation needs a vector slew measurement. The
-library does not have one yet, so that check comes later. The convention
-checks come later (decision 10). The other kinds of section 6 come later.
-The structure of section 5 accepts them without a new design.
+Both packages pin the same pypulseq fork commit (`a74ab06`). They must keep
+the same pin.
 
-## 9. Order of work
+## 4. Design
 
-1. **Before `0.2.0` final.** Remove `Card.checks`, the `check_norms` option
-   and the exit status 2 from `pulseq-reports`. Then no final release has an
-   API that this design removes (decision 1). `HardwareLimits` stays. The
-   gradient limits card uses it to show the percent of each limit, with no
-   verdict. Step 1 waits until step 2 has compared the new checks with the
-   checks of the cards, because step 1 removes those checks (`pulseq-checks`
-   decision R7).
-2. **Make `pulseq-checks`** (`mdtisdall/pulseq-checks`, decision 12). Use the
-   dev-workflow `project-setup` skill. Move
-   the measurement modules of section 7.2 with their tests. Add the target
-   profile, the profile reader, the check rules, the results and
-   `pulseq-check`. Compare the results of the new timing, gradient and PNS
-   checks with the current checks of the cards.
-3. **Change `pulseq-reports` to use `pulseq-checks`.** Remove the copies of the
-   moved modules. Export `HardwareLimits` again from `pulseq_reports`. Add the
-   check summary card and `--fail-on-check`. Update `docs/usage.md`,
-   `TESTS.md` and `CHANGELOG.md`.
-4. **Later.** More kinds of checks (section 6), more profile readers, JUnit
-   output, and proposals to pypulseq.
+### 4.1 The inputs of a report
 
-Step 2 is a move, with no stage inside this repository. Thus the check layer
-is not built two times.
+A report has three new inputs:
 
-## 10. Rules for the implementation plan
+| Input | Command line | Python |
+|---|---|---|
+| Target profiles | `--target PROFILE`, more than one time | `targets=` (a list of `TargetProfile`) |
+| A check configuration | `--check-config FILE` | read it with `read_check_config` |
+| The results of an earlier run | `--check-results FILE.json` | `check_results=` (a `ResultMatrix`) |
 
-- The rules of `CLAUDE.md` apply to each repository: one branch and one pull
-  request for each change, and the checks before each pull request.
-- Do not add a dependency. If RF or SAR checks need one (for example
-  PySar4seq), stop and ask the user.
-- Do not test a rule that pypulseq already tests (rely on pypulseq).
-- A proposal to pypulseq or to MATLAB Pulseq stands alone. It does not name
-  `pulseq-reports` or `pulseq-checks`.
+The flags mirror `pulseq-check`. The report's own configuration file can name
+a check configuration. The targets of a check configuration are also the
+targets of the cards. The targets feed both the cards (section 4.4) and the
+check summary (section 4.3).
 
-## 11. Decisions
+`ReportContext` gives the targets to each card. The card options `limits`,
+`gradient_asc`, `coil` and `check_norms` go away.
+
+### 4.2 The checks in a report
+
+- **When targets are given, the report runs the checks.** It calls
+  `run_checks` with the path of the file, the targets, and the `select`,
+  `required` and `fast_only` of the check configuration. Without a check
+  configuration, all installed checks run and no check is required, as in
+  `pulseq-check --target`.
+- **Results of an earlier run replace the run.** With `--check-results`, the
+  report runs no checks and shows the given matrix. The targets of the matrix
+  must be the targets of the report.
+- **A `Sequence` object.** `run_checks` accepts a `Sequence` object only with
+  exactly one target. A Python caller with a `Sequence` object and several
+  targets gives `check_results`, or gets no check summary. The report does
+  not make a temporary file.
+- **The exit status of `pulseq-report`.** 0 when each page is written and
+  has no error card. 1 when a page has an error card: the page is written,
+  but the report is not complete (decision P14). With `--fail-on-check`, the
+  status is also `ResultMatrix.exit_status()` (0, 2 or 1), the same as
+  `pulseq-check`. When two statuses apply, the status is 1. An error of the
+  run (`ProfileError`, `ConfigError`, `RunError`) is an error of the
+  arguments: status 1, and no page.
+
+### 4.3 The check summary card
+
+A new card, near the top of the page. For each target:
+
+- the name and the source of each value (the profile file or the `.asc`
+  file), and the sections that no check used,
+- for each check: the state, the value and the limit with the unit, the
+  detail, the location, a mark for a required check, and the link to the
+  specification,
+- each "not evaluated" and "error" result, with its reason. The reader must
+  see what was not asserted, not only what passed.
+
+A location in a result can go to the diagram (the `goto` message), as the
+"Show" buttons of the gradient limits card do. The implementation plan must
+confirm that the block ID of a `Location` and the block of a `goto` message
+are the same index.
+
+Without targets and without results, the summary card is not on the page.
+
+### 4.4 The cards
+
+| Card | Targets | Without a target that gives the value | With several targets |
+|---|---|---|---|
+| `timing` | All | The card is not on the page (it has no data). | One part for each target. The card shows only `pulseq-checks` results (section 4.5). |
+| `gradient-limits` | All (for the percent columns) | The peaks, with no percent columns. A note says that no target gives limits. | One percent column for each target that gives `max_grad` and `max_slew`, in the color of the target. The peaks are measured one time. |
+| `pns` | All that give SAFE parameters | No PNS. A note says that no target gives SAFE parameters. | One part for each target that gives SAFE parameters. |
+| `diagram` (PNS lane) | All that give SAFE parameters | No PNS lane. | One PNS lane. The levels of each target are overlaid in the color of the target. One SAFE calculation for each target, shared with the PNS card. |
+| `gradient-spectrum` | All that give acoustic resonances | The spectrum, with no resonance bands. A note says that no target gives resonances. | The bands of each target, in the color of the target. |
+| `rf-profile` | All that give B0 | A pulse with a `ppm` offset shows a note that its offset cannot be changed into Hz. The other pulses do not change. | The profiles of each target overlaid, in the color of the target. They differ only for pulses with a `ppm` offset. Gamma is the proton gamma, and the card says so (decision P16). |
+| `rf-exposure` | None | No change. | No change. |
+| `definitions` | None | No change. | No change. |
+| `blocks` | None | No change. | No change. |
+
+The `coil` option, `GradientCoil`, `AcousticResonance` and `PRISMA_AS82` go
+away. pulseq-reports does not ship the resonances of a real coil, because
+they are vendor information. A target profile gives them.
+
+### 4.5 The timing card
+
+The timing card shows only `pulseq-checks` results. It does not call
+`check_timing`. A `Result` of `timing.pypulseq` in `v0.1.0rc1` gives only the
+count of the errors and the first error. `pulseq-checks` `v0.1.0rc2` adds an
+API for the details of a result, which is in progress in that repository.
+The card shows the full error table from that API. The timing card waits for
+`v0.1.0rc2`.
+
+### 4.6 What goes away
+
+- `Check`, `Card.checks` and the exit status 2 of the command.
+- The options `limits`, `gradient_asc`, `coil` and `check_norms`, and their
+  flags and configuration keys.
+- `GradientCoil`, `AcousticResonance`, `PRISMA_AS82` and
+  `PRISMA_AS82_RESONANCES`.
+- The warning about default limits.
+- The failed check of an error card. An error card stays, with its message,
+  and it gives exit status 1 (decision P14).
+- The copies of the moved modules, and the private names
+  `_default_limits` and `_index_dtype`. The old import paths (for example
+  `pulseq_reports.grad_limits` and `pulseq_reports.pns`, in `docs/usage.md`
+  section 6) go away with them. `CHANGELOG.md` names the new paths in
+  `pulseq-checks` (decision P15).
+
+`HardwareLimits` stays a public name of pulseq-reports. It is exported again
+from `pulseq-checks` (decision 8 of version 1).
+
+## 5. Release
+
+One release does all of this work: `0.2.0rc3`. It depends on `pulseq-checks`
+`v0.1.0rc2` (section 6), by git URL and tag. `0.2.0` final comes after a
+`pulseq-checks` final release. Thus callers get one breaking release, and a
+final release never depends on a release candidate.
+
+`0.2.0rc3` breaks the API of `0.2.0rc2`. No project uses the library yet.
+`CHANGELOG.md` lists each removed name and each removed option, and the
+target that replaces it.
+
+## 6. What pulseq-reports needs from pulseq-checks
+
+`pulseq-checks` is stable for this work. These requests go to that repository
+for `v0.1.0rc2`. The user decides how that repository does them.
+
+1. **The details of a result** (in progress). The full error list of
+   `timing.pypulseq`, for the timing card (section 4.5).
+2. **A documented measurement API.** pulseq-reports uses more of the moved
+   modules than the plugin documentation names:
+
+   | Module | What pulseq-reports uses |
+   |---|---|
+   | `seq_index` | `sequence_index`, `SequenceIndex`, `grad_events`, `rf_events`, `adc_events`, `block_cache_off`, and the dtype of the index (now the private `_index_dtype`) |
+   | `seq_utils` | `GAMMA`, `TIME_TOLERANCE`, `gradient_points`, `gradient_offsets`, `hold_samples` |
+   | `sampling` | `GradientSampler` |
+   | `grad_limits` | `gradient_limits`, `GradientLimits`, `HardwareLimits` |
+   | `pns`, `pns_levels` | `pns_levels_for`, `PnsLevels`, `pns_prediction`, `peak_tr_window` |
+   | `extensions` | `refuse_rotations` |
+
+   The implementation plan confirms this list. pulseq-reports does not adopt
+   `pulseq-checks` until these names are documented (principle 6).
+3. **No defaults for reports either.** The moved modules keep defaults that
+   `pulseq-checks` never uses (`EXAMPLE_HARDWARE`, `seq.system` in
+   `gradient_limits`). pulseq-reports also does not use them (principle 3).
+   No change in `pulseq-checks` is necessary.
+
+## 7. Order of work
+
+A high-level order. The implementation plan gives the phases.
+
+1. **Wait for `pulseq-checks` `v0.1.0rc2`** (section 6).
+2. **Depend on `pulseq-checks`.** Pin the tag. Delete the copies of the moved
+   modules, and import the documented names.
+3. **Targets as card context.** Add the target inputs (section 4.1) and the
+   target colors. Change each card as section 4.4 says. Remove the scanner
+   options.
+4. **Remove the verdicts.** Remove `Check`, `Card.checks`, the exit status 2
+   and the default limits.
+5. **The check summary and the timing card.** Add the summary card,
+   `--check-results` and `--fail-on-check`. Change the timing card to use the
+   results.
+6. **Documents and release.** `docs/usage.md`, `README.md`, `TESTS.md`,
+   `CHANGELOG.md`, and the example report. Then `0.2.0rc3`.
+
+## 8. Rules for the implementation plan
+
+- The rules of `CLAUDE.md` apply: one branch and one pull request for each
+  change, and the checks before each pull request.
+- Do not change `pulseq-checks` from this plan. A need in `pulseq-checks` is
+  a request (section 6).
+- Do not add a dependency other than `pulseq-checks`.
+- Do not test what `pulseq-checks` tests. Test that pulseq-reports passes the
+  correct inputs and shows the results.
+- The example report uses a target profile that says it is an example. It
+  contains no vendor values (decision P9).
+
+## 9. Decisions
+
+### 9.1 Decisions of version 1
+
+Decisions 1 to 12 of version 1 (2026-09-30) stay, with these changes:
+
+- **Decision 1** (remove `Card.checks` before `0.2.0` final): it stays.
+  Decision P1 adds that the same release adopts `pulseq-checks`.
+- **Decision 4** (the limits of the sequence): `pulseq-checks` made it more
+  strict. The opt-in is only a keyword argument, for a `Sequence` object. The
+  report follows `pulseq-checks` (principle 3).
+- **Decision 6** (the profile format): `pulseq-checks` decides it. The
+  profile file can give the SAFE parameters and the acoustic resonances
+  directly.
+
+Decision 2 (`--fail-on-check`), decision 8 (`HardwareLimits` exported again)
+and decision 9 (each package has its own command line) apply to this work.
+Decisions 3, 5, 7, 10, 11 and 12 are for `pulseq-checks`.
+
+### 9.2 Decisions of version 2
 
 The user made these decisions on 2026-09-30. Do not open them again.
 
 | # | Decision | Answer | Where |
 |---|---|---|---|
-| 1 | `Card.checks` and exit status 2, against `0.2.0` | Remove them before `0.2.0` final. | 9 |
-| 2 | The exit status of `pulseq-report` when a check in its summary fails | 0. The opt-in flag `--fail-on-check` gives a non-zero status. | 5.6 |
-| 3 | The exit status of "not evaluated" | Status 1 only for a required check (a check that the caller names). A default check that is not evaluated does not change the status. | 5.6 |
-| 4 | The limits of the sequence (`seq.system`) | Only with an explicit opt-in. The result records the source of the limits. | 5.6 |
-| 5 | The rasters of the file and of the target | A separate raster check. The target profile gives the rule (equal, or an integer multiple). The timing check uses the rasters of the target. | 5.10 |
-| 6 | The target profile format | A TOML or JSON file that can name a Siemens `.asc` file. A value in both files is an error. | 5.2 |
-| 7 | The speed budget | Cost classes (`fast`, `slow`) and a tested budget for the fast checks of the library. The user's condition: other developers must be able to add their own checks easily. The cost class is one field, with the default `slow`. | 5.9 |
-| 8 | `HardwareLimits` | It moves to `pulseq-checks`. `pulseq-reports` exports it again. | 5.2, 9 |
-| 9 | The command-line code | Each package has its own. `pulseq-checks` has a public function that reads a check configuration, and `pulseq-reports` uses it. | 5.7 |
-| 10 | The location of the convention declaration | Deferred. It is a TODO. Version 1 has no convention checks. | 6.2 |
-| 11 | The worst case under rotation | Worst-case amplitude (the peak of \|G\|) in version 1. Worst-case slew later, after a vector slew measurement. | 8 |
-| 12 | The name and the repository | `mdtisdall/pulseq-checks`: public, MIT, with the same dev-workflow as `pulseq-reports`. | 9 |
+| P1 | The release | One release does all of the work: `0.2.0rc3`. `0.2.0` final comes after a `pulseq-checks` final release. | 5 |
+| P2 | The timing card | Keep it. It shows only `pulseq-checks` results. | 4.5 |
+| P3 | The details of the timing results | `pulseq-checks` `v0.1.0rc2` adds an API for them. The card waits for it. | 4.5, 6 |
+| P4 | Scanner context for the cards | The cards read the target profile format of `pulseq-checks`. Each card selects its targets: several, one or none. | 2, 4.4 |
+| P5 | Defaults in the cards | As in `pulseq-checks`: defaults are used, and shown, only where `pulseq-checks` uses them. Where that rule is not clear for a card, ask the user. | 2, 4.4 |
+| P6 | The gradient limits card | A percent column for each target that gives limits. | 4.4 |
+| P7 | The PNS card and the PNS lane | The card shows each target that gives SAFE parameters. The one PNS lane overlays the targets, each in its color. | 4.4 |
+| P8 | The gradient spectrum card | Resonance bands only from targets. The `coil` option, `GradientCoil` and `PRISMA_AS82` go away. | 4.4 |
+| P9 | The Prisma resonances | Do not ship them, also not as an example profile: they are vendor information. | 4.4, 8 |
+| P10 | The RF profile card | The profiles for the B0 of each target, overlaid, each in its color. | 4.4 |
+| P11 | The imports from `pulseq-checks` | Only documented names. `pulseq-checks` documents the measurement API that pulseq-reports needs. | 2, 6 |
+| P12 | The inputs of a report | Flags that mirror `pulseq-check`: `--target`, `--check-config`, `--check-results`. | 4.1 |
+| P13 | Checks in a report | The report runs the checks when targets are given. A check configuration can select the checks. Given results replace the run. | 4.2 |
+| P14 | The exit status for an error card | 1. The page is written, but the report is not complete. | 4.2, 4.6 |
+| P15 | The old import paths of the moved modules | Remove them. `CHANGELOG.md` names the new paths. Only `HardwareLimits` is exported again (decision 8). | 4.6 |
+| P16 | Gamma | The proton gamma, as now. The cards that use gamma say so. Other nuclei are the item in `TODO.md`. | 4.4 |
+| P17 | The colors of the targets | By the order of the targets, in the arguments or in the check configuration. A profile does not give a color. | 2 |
 
-## 12. Terms
+## 10. Terms
 
-- **Check.** A rule that compares a measured quantity with a limit and gives
-  pass, fail or not evaluated.
-- **Check rule.** The code of one check. It has an ID and a specification.
-- **Measurement.** A calculation that gives values and their locations, and
-  no verdict.
-- **Model.** A measurement of a physical quantity that depends on the target,
-  for example a PNS model.
-- **Target** or **target profile.** One scanner and its Pulseq interpreter:
-  their limits, their rasters, their models and their conventions.
-- **Profile reader.** Code that makes a target profile from vendor files.
+- **Target** or **target profile.** One scanner and its Pulseq interpreter,
+  in the format of `pulseq-checks` (`TargetProfile`).
 - **Result matrix.** The results of all checks for all targets of one
-  sequence.
-- **Report.** An HTML page that describes a sequence. It can include a summary
-  of a result matrix.
+  sequence (`ResultMatrix`).
+- **Check summary card.** The card that shows a result matrix.
+- **Scanner context.** The values of a target that a descriptive card uses:
+  the limits, the SAFE parameters, the acoustic resonances and B0.
+- **Verdict.** Pass, fail, not evaluated or error. Only a `pulseq-checks`
+  result gives a verdict.
