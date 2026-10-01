@@ -168,7 +168,8 @@ def _rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
         delay[i] = float(rf.delay)
         shape_dur[i] = float(rf.shape_dur)
         center[i] = float(pp.calc_rf_center(rf)[0])
-        baseband, sample_dt = hold_samples(rf, seq.system.rf_raster_time)
+        # The file's raster ([DEFINITIONS]): `Sequence.read` does not change `seq.system`.
+        baseband, sample_dt = hold_samples(rf, seq.rf_raster_time)
         dt[i] = float(sample_dt)
         shape_at[i] = pool.add(baseband)
         shape_n[i] = baseband.size

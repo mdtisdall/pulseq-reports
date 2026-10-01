@@ -686,7 +686,7 @@ def block_pulse(seq: pp.Sequence, block: int) -> BlockPulse | None  # block: the
 values below.
 
 1. **Guard.** `refuse_rotations(seq)` first.
-2. **The RF as played.** `hold_samples(rf, seq.system.rf_raster_time)`, times
+2. **The RF as played.** `hold_samples(rf, seq.rf_raster_time)`, times
    the total offsets at the centre of each hold interval. Also the use, and
    the total frequency offset `f`.
 3. **The gradient of each hold interval.** For each axis, the points of the

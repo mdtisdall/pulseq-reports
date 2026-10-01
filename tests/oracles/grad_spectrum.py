@@ -90,7 +90,7 @@ def gradient_spectrum(
         empty = np.zeros(0)
         return GradientSpectrum(NO_GRADIENTS, resonances, empty, {}, empty, ())
 
-    dt = seq.system.grad_raster_time
+    dt = seq.grad_raster_time
     nwin = round(WINDOW_S / dt)
     pad = nwin // 2
     nt = math.ceil(sum(seq.block_durations.values()) / dt)
