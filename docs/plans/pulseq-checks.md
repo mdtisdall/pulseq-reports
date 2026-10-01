@@ -3,15 +3,19 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: design, version 2, written on 2026-09-30. The user made the
-decisions of section 9.2 on the same day. This is not an implementation plan.
+Status: design, version 2, written on 2026-09-30, and updated for
+`pulseq-checks` `v0.1.0rc2` on the same day. The user made the decisions of
+section 9.2 on the same day, with P18 to P21 for the update to
+`v0.1.0rc2`. This is not an implementation plan.
 It gives the goals, the principles and the design decisions for the work in
 pulseq-reports. An implementation plan comes next.
 
 Version 1 of this document (commit `475a1eb`) gave the design of both
 packages. The part for `pulseq-checks` moved to that repository, in
 [`docs/plans/pulseq-checks.md`](https://github.com/mdtisdall/pulseq-checks/blob/main/docs/plans/pulseq-checks.md),
-and `pulseq-checks` `v0.1.0rc1` implements it. This version gives only the
+and `pulseq-checks` implements it: `v0.1.0rc1` has the checks, and
+`v0.1.0rc2` adds the findings of each check and fixes of the gradient checks.
+This version gives only the
 work in pulseq-reports. `pulseq-checks` is stable for this work, except for
 the requests in section 6. The section numbers of version 1 are not kept.
 The `pulseq-checks` design refers to version 1 by commit, so its links still
@@ -46,10 +50,11 @@ no targets is complete. It has no verdicts and no check summary.
 ## 2. Principles
 
 1. **One source of verdicts.** A verdict (pass, fail, not evaluated, error)
-   comes only from a `pulseq-checks` `Result`. A card that marks a value
-   against a limit (for example a percent above 100) takes the mark from the
-   result of the check, not from its own comparison. Thus a card and the
-   summary cannot disagree. (In version 1, the PNS card failed from 99.995 %
+   comes only from a `pulseq-checks` `Result`. A card that marks a value or a
+   place against a limit (for example a percent above 100, or a block above
+   the slew limit) takes the mark from the result of the check or from its
+   findings, not from its own comparison. Thus a card and the summary cannot
+   disagree. (In version 1, the PNS card failed from 99.995 %
    because it rounded, and `pns.safe` failed from 100 %.)
 2. **One target profile format.** pulseq-reports reads targets with
    `pulseq_checks.read_profile` and uses `TargetProfile`. It does not define a
@@ -76,10 +81,28 @@ no targets is complete. It has no verdicts and no check summary.
    the file in `seq.grad_raster_time` and the other raster attributes, and
    leaves `seq.system` at the `Opts` of the caller. Values that a file does
    not give (limits, B0, dead times) come from a target, or they are missing.
+   A file older than format 1.4.0, or a damaged file, can leave out a raster.
+   Then pypulseq uses its own default. A card does not: it mirrors R8 of the
+   `pulseq-checks` design, and uses the raster of a target, or shows a note
+   that names the missing raster.
+8. **Only the proton gamma.** pulseq-reports changes Hz into T, and Hz/m into
+   T/m, only with the proton gamma (`GAMMA`, 42.576 MHz/T). It does this also
+   where `pulseq-checks` uses the gamma of a target (R9). pulseq-reports does
+   not support other nuclei (decision P21):
+   - A target that gives a gamma other than `GAMMA` (`opts.gamma`): each card
+     leaves the target out, with a note. The check summary still shows the
+     results of that target, because `pulseq-checks` supports it.
+   - A `Sequence` object with a `seq.system.gamma` other than `GAMMA`:
+     `build_cards` raises `ValueError`. A file that `seq.read` reads has the
+     proton gamma of pypulseq, because a `.seq` file does not give a gamma.
+
+   The item "Use the gyromagnetic ratio of the sequence" of `TODO.md` is the
+   list of the functions to change for other nuclei. A change that adds a
+   conversion with gamma adds its function to that list.
 
 ## 3. The state of the code
 
-### 3.1 pulseq-reports (`main` at `475a1eb`, version `0.2.0rc2`)
+### 3.1 pulseq-reports (`main` at `4fa7e6d`, version `0.2.0rc2`)
 
 The check behavior that this work removes:
 
@@ -108,30 +131,47 @@ only the defaults of pypulseq:
 
 - B0 and gamma in the RF profile card (`cards/rf_profile.py`,
   `rf_profiles.py`), to change `freq_ppm` and `phase_ppm` into Hz.
-- The RF raster in the RF profile card and in `rf_exposure.py`, and the
-  gradient raster in `grad_spectrum.py`. This is a separate bug (principle
-  7). It is not a part of this work.
+- Gamma in the diagram (`cards/diagram.py`) and in `grad_spectrum.py`, to
+  change Hz/m into mT/m. Only the proton gamma is supported (principle 8).
+
+The rasters already follow principle 7:
+
+- #105 makes `grad_spectrum.py`, `rf_exposure.py`, `rf_profiles.py` and the
+  RF profile card use the rasters of the file (`seq.grad_raster_time`,
+  `seq.rf_raster_time`), not the rasters of `seq.system`.
+- #106 makes `gradient_limits` divide the step at a block junction by the
+  gradient raster of the file. It is a port of `pulseq-checks` #28 and #30.
+  It also gives `_default_limits` a `gamma` argument.
 
 The copies of the moved modules: `grad_limits`, `pns`, `pns_levels`, `asc`,
 `extensions`, `sampling`, `seq_index` and `seq_utils`. They are in both
-packages. The copies in `pulseq-checks` are changed: `pns_levels` and
-`pns_levels_for` take a SAFE hardware struct (`hardware=`), and
-`gradient_limits` refuses the rotation extension. pulseq-reports also uses
-two private names of these modules: `grad_limits._default_limits` and
-`seq_index._index_dtype`.
+packages. Compared with `pulseq-checks` `v0.1.0rc2`:
+
+| Module | Difference |
+|---|---|
+| `asc`, `sampling`, `seq_index`, `seq_utils` | None. |
+| `grad_limits` | `gradient_limits` of `pulseq-checks` refuses the rotation extension. pulseq-reports calls `refuse_rotations` from the card. `pulseq-checks` adds `block_gradient_values` and `BlockGradientValues` (the gradient values of each block, for the findings). After #106, there is no other difference. |
+| `pns`, `pns_levels` | `pns_levels` and `pns_levels_for` of `pulseq-checks` take a SAFE hardware struct (`hardware=`). `pulseq-checks` adds `PnsInterval` and `PnsLevels.above_limit` (the intervals at or above 100 %, for the findings). |
+| `extensions` | Text only: the docstring and the error message name the package. |
+
+#106 followed decision R7 of the `pulseq-checks` design: the change came to
+`pulseq-checks` first. pulseq-reports also uses two private names of these
+modules: `grad_limits._default_limits` and `seq_index._index_dtype`.
 
 `PRISMA_AS82` (in `grad_spectrum.py`) contains the published acoustic
 resonances of a Siemens coil. It is in the public repository, its history,
 the released tags and the example report.
 
-### 3.2 pulseq-checks (`v0.1.0rc1`)
+### 3.2 pulseq-checks (`v0.1.0rc2`)
 
 What pulseq-reports can use:
 
 - `read_profile(path) -> TargetProfile`. A profile gives `hardware_limits`
   (a `HardwareLimits`, or `None`), `opts` (with B0 and gamma, when given),
-  `models["pns.safe"]` (the SAFE parameters), `acoustic_resonances`,
-  `sources` (the source of each value) and `name`.
+  `rasters`, `models["pns.safe"]` (the SAFE parameters),
+  `acoustic_resonances`, `sources` (the source of each value) and `name`. A
+  profile that gives `max_grad` and `rise_time` and no `max_slew` gives the
+  slew limit `max_grad / rise_time`.
 - `read_check_config(path) -> CheckConfig`: the targets, `select`,
   `required` and `fast_only`.
 - `run_checks(sequence, targets, *, select, required, fast_only,
@@ -139,19 +179,55 @@ What pulseq-reports can use:
   time for each target, with the `Opts` of that target. With a `Sequence`
   object, it accepts exactly one target.
 - `ResultMatrix`: `results`, `targets` (with the source of each value),
-  `exit_status()` (0, 2 or 1), `to_json()` and `from_json()`.
+  `exit_status()` (0, 2 or 1), `with_max_findings(n)`, `to_json()` and
+  `from_json()`.
 - `Result`: the check ID and spec version, the target, the state, the value,
   the limit and the unit, the location (block ID and time), the model, the
-  reason and the link to the specification.
+  reason, the link to the specification, `findings` and `findings_omitted`.
+- `Finding`: one problem that a check found. It has a `code` (the kind of
+  problem), a `message` for a person, a `location` (block ID and time, or
+  none) and `data` (the values, by name, in SI units). Findings do not change
+  the state of a result or the exit status. Each check of `v0.1.0rc2` gives
+  findings:
+
+  | Check | One finding for each | Codes |
+  |---|---|---|
+  | `timing.pypulseq` | error of `check_timing`, in the play order of the blocks | the error type of pypulseq |
+  | `timing.rasters` | raster with a problem | `RASTER_NOT_DECLARED`, `RASTER_INVALID`, `RASTER_MISMATCH` |
+  | `gradient.amplitude.axis`, `gradient.slew.axis`, `gradient.amplitude.any-orientation` | block (and axis) above the limit, only for a fail | `AMPLITUDE_ABOVE_LIMIT`, `SLEW_ABOVE_LIMIT`, `JUNCTION_SLEW_ABOVE_LIMIT`, `VECTOR_AMPLITUDE_ABOVE_LIMIT` |
+  | `pns.safe` | interval of samples at or above 100 % | `PNS_ABOVE_LIMIT` |
+
 - `HardwareLimits`, exported.
 - The measurement functions that the plugin documentation names:
   `seq_index.sequence_index`, `grad_limits.gradient_limits` and
-  `pns.pns_levels_for`.
+  `pns.pns_levels_for`. The `CHANGELOG.md` of `v0.1.0rc2` names
+  `grad_limits.block_gradient_values`, `pns_levels.PnsInterval` and
+  `PnsLevels.above_limit` as public.
 
-Costs at 10⁶ blocks (`pulseq-checks` plan, section 8.3): the read of the file
-takes 3.6 s. The fast checks together take 4.2 s with the read. `pns.safe`
-and `timing.pypulseq` take about 14 s each with the read. All six checks take
-about 24 s.
+Rules of `v0.1.0rc2` that the cards mirror (principles 3 and 7):
+
+- **Rasters (R8).** The measurements use the rasters of the file. For a
+  raster that the file does not declare, they use the raster of the target.
+  When the target does not give it either, a check that uses that raster is
+  "not evaluated". It never uses a pypulseq default.
+- **Gamma (R9).** The gradient checks convert the values of the file with the
+  gamma of the target (`opts.gamma`, or 42.576 MHz/T), the same gamma as the
+  limits.
+
+Two facts about the result JSON:
+
+- The JSON of `v0.1.0rc2` and the JSON of `v0.1.0rc1` cannot read each
+  other, although both are format 1. In the release candidates, the format
+  and each specification stay at version 1.
+- A sequence with many problems gives many findings. On 10⁶ blocks with an
+  error in each TR, `timing.pypulseq` gives 4 × 10⁵ findings, and the JSON
+  result is about 200 MB. `with_max_findings(1000)` makes it about 0.5 MB, and
+  `findings_omitted` gives the number of the others.
+
+Costs at 10⁶ blocks (`CHANGELOG.md` of `v0.1.0rc2`, with the read of the
+file, which takes about 3.6 s): the fast checks together take 4.28 s, or
+7.63 s on a file that fails the three gradient checks in each TR. All six
+checks take 24.65 s. `timing.pypulseq` with 4 × 10⁵ errors takes 17.9 s.
 
 Both packages pin the same pypulseq fork commit (`a74ab06`). They must keep
 the same pin.
@@ -185,7 +261,14 @@ check summary (section 4.3).
   `pulseq-check --target`.
 - **Results of an earlier run replace the run.** With `--check-results`, the
   report runs no checks and shows the given matrix. The targets of the matrix
-  must be the targets of the report.
+  must be the targets of the report. `ResultMatrix.from_json` of the pinned
+  `pulseq-checks` reads the file. A file that it refuses (for example a
+  result of `v0.1.0rc1`) is an error of the run.
+- **Findings.** The report keeps at most 100 findings of each result
+  (`with_max_findings`), and shows `findings_omitted`. `pulseq-report
+  --max-findings N` changes the number, as in `pulseq-check`. A matrix from
+  `--check-results` keeps its own limit, or gets the smaller one (decision
+  P18). For all the findings, use the JSON result of `pulseq-check`.
 - **A `Sequence` object.** `run_checks` accepts a `Sequence` object only with
   exactly one target. A Python caller with a `Sequence` object and several
   targets gives `check_results`, or gets no check summary. The report does
@@ -208,7 +291,9 @@ A new card, near the top of the page. For each target:
   detail, the location, a mark for a required check, and the link to the
   specification,
 - each "not evaluated" and "error" result, with its reason. The reader must
-  see what was not asserted, not only what passed.
+  see what was not asserted, not only what passed,
+- for each result with findings: the number of findings, with the number
+  that the report omitted. The cards list the findings (section 4.6).
 
 A location in a result can go to the diagram (the `goto` message), as the
 "Show" buttons of the gradient limits card do. The implementation plan must
@@ -226,7 +311,7 @@ Without targets and without results, the summary card is not on the page.
 | `pns` | All that give SAFE parameters | No PNS. A note says that no target gives SAFE parameters. | One part for each target that gives SAFE parameters. |
 | `diagram` (PNS lane) | All that give SAFE parameters | No PNS lane. | One PNS lane. The levels of each target are overlaid in the color of the target. One SAFE calculation for each target, shared with the PNS card. |
 | `gradient-spectrum` | All that give acoustic resonances | The spectrum, with no resonance bands. A note says that no target gives resonances. | The bands of each target, in the color of the target. |
-| `rf-profile` | All that give B0 | A pulse with a `ppm` offset shows a note that its offset cannot be changed into Hz. The other pulses do not change. | The profiles of each target overlaid, in the color of the target. They differ only for pulses with a `ppm` offset. Gamma is the proton gamma, and the card says so (decision P16). |
+| `rf-profile` | All that give B0 | A pulse with a `ppm` offset shows a note that its offset cannot be changed into Hz. The other pulses do not change. | The profiles of each target overlaid, in the color of the target. They differ only for pulses with a `ppm` offset. |
 | `rf-exposure` | None | No change. | No change. |
 | `definitions` | None | No change. | No change. |
 | `blocks` | None | No change. | No change. |
@@ -238,13 +323,29 @@ they are vendor information. A target profile gives them.
 ### 4.5 The timing card
 
 The timing card shows only `pulseq-checks` results. It does not call
-`check_timing`. A `Result` of `timing.pypulseq` in `v0.1.0rc1` gives only the
-count of the errors and the first error. `pulseq-checks` `v0.1.0rc2` adds an
-API for the details of a result, which is in progress in that repository.
-The card shows the full error table from that API. The timing card waits for
-`v0.1.0rc2`.
+`check_timing`. For each target, it shows the result of `timing.pypulseq` and
+a table of its findings: one row for each error, with the code, the message,
+the block and the time. A row can go to the block in the diagram (the `goto`
+message). The card also shows the findings of `timing.rasters`, and the
+number of findings that the report omitted (decision P18). `pulseq-checks`
+`v0.1.0rc2` gives these findings (decision P3).
 
-### 4.6 What goes away
+### 4.6 The findings in the cards
+
+Each mark comes from a finding (principle 1, decision P19):
+
+| Where | What |
+|---|---|
+| Check summary | The number of findings of each result, and the number that the report omitted. |
+| `timing` | A list of the findings of `timing.pypulseq` and `timing.rasters` for each target, with a "Show" button for each row (section 4.5). |
+| `gradient-limits` | A list of the findings of `gradient.amplitude.axis`, `gradient.slew.axis` and `gradient.amplitude.any-orientation` for each target, with a "Show" button for each row. |
+| `diagram` (PNS lane) | The intervals of the `pns.safe` findings of each target, marked in the color of the target. |
+
+The percent columns of the gradient limits card use the proton gamma, as all
+the cards do (principle 8). A target with another gamma is not in the card,
+so the card and the check cannot disagree on it.
+
+### 4.7 What goes away
 
 - `Check`, `Card.checks` and the exit status 2 of the command.
 - The options `limits`, `gradient_asc`, `coil` and `check_norms`, and their
@@ -265,8 +366,12 @@ from `pulseq-checks` (decision 8 of version 1).
 
 ## 5. Release
 
-One release does all of this work: `0.2.0rc3`. It depends on `pulseq-checks`
-`v0.1.0rc2` (section 6), by git URL and tag. `0.2.0` final comes after a
+One release does all of this work: `0.2.0rc3`. It depends on a
+`pulseq-checks` tag, by git URL. The tag must be `v0.1.0rc2` or later:
+`v0.1.0rc1` does not have the findings (section 4.5) or the fix of #106. The
+tag must also document the measurement API that pulseq-reports uses
+(principle 6, section 6). `v0.1.0rc2` does not document all of it, so the
+release waits for a later tag. `0.2.0` final comes after a
 `pulseq-checks` final release. Thus callers get one breaking release, and a
 final release never depends on a release candidate.
 
@@ -276,13 +381,13 @@ target that replaces it.
 
 ## 6. What pulseq-reports needs from pulseq-checks
 
-`pulseq-checks` is stable for this work. These requests go to that repository
-for `v0.1.0rc2`. The user decides how that repository does them.
+`pulseq-checks` is stable for this work. These requests go to that
+repository. The user decides how that repository does them.
 
-1. **The details of a result** (in progress). The full error list of
-   `timing.pypulseq`, for the timing card (section 4.5).
-2. **A documented measurement API.** pulseq-reports uses more of the moved
-   modules than the plugin documentation names:
+1. **The details of a result.** Done in `v0.1.0rc2`: the findings of each
+   check (section 3.2).
+2. **A documented measurement API.** Open. pulseq-reports uses more of the
+   moved modules than the plugin documentation names:
 
    | Module | What pulseq-reports uses |
    |---|---|
@@ -293,8 +398,10 @@ for `v0.1.0rc2`. The user decides how that repository does them.
    | `pns`, `pns_levels` | `pns_levels_for`, `PnsLevels`, `pns_prediction`, `peak_tr_window` |
    | `extensions` | `refuse_rotations` |
 
-   The implementation plan confirms this list. pulseq-reports does not adopt
-   `pulseq-checks` until these names are documented (principle 6).
+   The implementation plan confirms this list. The cards take their marks
+   from the findings (decision P19), so they do not need
+   `block_gradient_values` or `PnsLevels.above_limit`. pulseq-reports does
+   not adopt `pulseq-checks` until these names are documented (principle 6).
 3. **No defaults for reports either.** The moved modules keep defaults that
    `pulseq-checks` never uses (`EXAMPLE_HARDWARE`, `seq.system` in
    `gradient_limits`). pulseq-reports also does not use them (principle 3).
@@ -304,7 +411,8 @@ for `v0.1.0rc2`. The user decides how that repository does them.
 
 A high-level order. The implementation plan gives the phases.
 
-1. **Wait for `pulseq-checks` `v0.1.0rc2`** (section 6).
+1. **Wait for a `pulseq-checks` tag that documents the measurement API**
+   (section 6). `v0.1.0rc2` has the findings, but not the documentation.
 2. **Depend on `pulseq-checks`.** Pin the tag. Delete the copies of the moved
    modules, and import the documented names.
 3. **Targets as card context.** Add the target inputs (section 4.1) and the
@@ -351,7 +459,8 @@ Decisions 3, 5, 7, 10, 11 and 12 are for `pulseq-checks`.
 
 ### 9.2 Decisions of version 2
 
-The user made these decisions on 2026-09-30. Do not open them again.
+The user made these decisions on 2026-09-30. P18 to P21 come from the update
+for `pulseq-checks` `v0.1.0rc2`. Do not open them again.
 
 | # | Decision | Answer | Where |
 |---|---|---|---|
@@ -368,10 +477,14 @@ The user made these decisions on 2026-09-30. Do not open them again.
 | P11 | The imports from `pulseq-checks` | Only documented names. `pulseq-checks` documents the measurement API that pulseq-reports needs. | 2, 6 |
 | P12 | The inputs of a report | Flags that mirror `pulseq-check`: `--target`, `--check-config`, `--check-results`. | 4.1 |
 | P13 | Checks in a report | The report runs the checks when targets are given. A check configuration can select the checks. Given results replace the run. | 4.2 |
-| P14 | The exit status for an error card | 1. The page is written, but the report is not complete. | 4.2, 4.6 |
-| P15 | The old import paths of the moved modules | Remove them. `CHANGELOG.md` names the new paths. Only `HardwareLimits` is exported again (decision 8). | 4.6 |
-| P16 | Gamma | The proton gamma, as now. The cards that use gamma say so. Other nuclei are the item in `TODO.md`. | 4.4 |
+| P14 | The exit status for an error card | 1. The page is written, but the report is not complete. | 4.2, 4.7 |
+| P15 | The old import paths of the moved modules | Remove them. `CHANGELOG.md` names the new paths. Only `HardwareLimits` is exported again (decision 8). | 4.7 |
+| P16 | Gamma | Replaced by P21. | 2 |
 | P17 | The colors of the targets | By the order of the targets, in the arguments or in the check configuration. A profile does not give a color. | 2 |
+| P18 | The number of findings in a report | At most 100 for each result, and the number omitted. `--max-findings N` changes it. A matrix from `--check-results` keeps its own limit, or gets the smaller one. | 4.2 |
+| P19 | Where the findings show | The summary gives the counts. The timing card lists the timing findings, and the gradient limits card lists the gradient findings, each with a "Show" button. The PNS lane marks the `pns.safe` intervals of each target. | 4.6 |
+| P20 | Gamma in the percent columns of the gradient limits card | Replaced by P21. | 2 |
+| P21 | Other nuclei | pulseq-reports supports only the proton gamma, also where `pulseq-checks` supports other gammas. The cards leave out a target with another gamma, with a note. `build_cards` refuses a `Sequence` object with another gamma. `TODO.md` keeps the list of the functions to change for other nuclei. | 2 |
 
 ## 10. Terms
 
@@ -379,6 +492,9 @@ The user made these decisions on 2026-09-30. Do not open them again.
   in the format of `pulseq-checks` (`TargetProfile`).
 - **Result matrix.** The results of all checks for all targets of one
   sequence (`ResultMatrix`).
+- **Finding.** One problem that a check found, with a code, a message, a
+  location and data (`Finding`). A result can have many findings. They do not
+  change its state.
 - **Check summary card.** The card that shows a result matrix.
 - **Scanner context.** The values of a target that a descriptive card uses:
   the limits, the SAFE parameters, the acoustic resonances and B0.
