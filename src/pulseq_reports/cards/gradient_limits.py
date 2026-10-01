@@ -15,6 +15,7 @@ from ..markup import fmt
 from ..page import Card, Check, card_asset
 from ..registry import CardSpec, ReportContext
 from ..seq_index import SequenceIndex, sequence_index
+from ..seq_utils import GAMMA
 from ..waveforms import TimeWindow, _check_windows
 
 _AXES = ("x", "y", "z")
@@ -239,7 +240,7 @@ def gradient_limits_card(
     the sequence or that does not end after its start.
     """
     refuse_rotations(seq)
-    used = limits if limits is not None else _default_limits(seq)
+    used = limits if limits is not None else _default_limits(seq, GAMMA)
     excesses: list[str] = []
     if windows is None:
         body, windowed = _table(seq, None, used)
@@ -260,7 +261,7 @@ def gradient_limits_card(
         '<p class="muted">Peak is the largest gradient amplitude at any point of the '
         "waveform. Max slew is the largest rate of change between neighbouring points "
         "of one gradient event, or the step at a block junction divided by the gradient "
-        "raster time, as pypulseq's <code>add_block</code> checks it. RMS is the "
+        "raster time of the file, as pypulseq's <code>add_block</code> checks it. RMS is the "
         "root-mean-square amplitude over the range "
         "shown. For |G|, the peak is the largest magnitude of the three-axis gradient "
         "vector, evaluated at every point where any axis changes slope, and the RMS is "

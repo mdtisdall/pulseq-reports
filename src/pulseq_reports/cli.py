@@ -22,6 +22,7 @@ from . import __version__, options, registry
 from .grad_limits import _default_limits
 from .page import write_page
 from .registry import CardSpec, Option, build_cards
+from .seq_utils import GAMMA
 
 
 class _CliError(Exception):
@@ -252,7 +253,7 @@ def _write_pages(
             status = 1
             continue
         if any(options.limits is d for d in declared) and "limits" not in values:
-            used = _default_limits(seq)
+            used = _default_limits(seq, GAMMA)
             print(
                 f"pulseq-report: warning: {file}: no gradient limits were given (--max-grad "
                 f"and --max-slew, or limits in the config file): the gradient check used the "
