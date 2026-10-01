@@ -2652,6 +2652,20 @@ trapezoid's own block ID.
 - The trapezoid's `fall_time` equals its `rise_time`, which is
   `pp.make_trapezoid`'s default when only `rise_time` is given.
 
+#### `test_gamma_converts_the_values_and_the_default_limits_with_that_gamma`
+
+**Checks:** `gradient_limits(seq, gamma=40e6)` gives the amplitudes (mT/m), the slew
+rates (T/m/s), the RMS amplitudes (of the window and of the whole file), the vector
+peak and the default limits of `seq.system`, all converted with 40 MHz/T: each value is
+the value of the default call times 42.576e6 / 40e6, and the limits are the values of
+`seq.system` in Hz/m and Hz/m/s divided by 40 MHz/T.
+
+**How:** The test calls `gradient_limits` on `spin_echo_sequence()` with a window of the
+first half of the sequence, with and without `gamma`, and compares the two results field
+by field with `pytest.approx`.
+
+**Assumptions:** The default call is correct (the other tests of this file).
+
 #### `test_same_trapezoid_on_x_and_y_gives_vector_peak_root_2_times_axis_peak`
 
 **Checks:** The same trapezoid, played on x and on y at the same time, gives a
@@ -2837,6 +2851,23 @@ divided by `grad_raster_time`. It checks that the x axis slew matches, is
 credited to the second block, and that `slew_time_s` is the junction (0.2 ms).
 
 **Assumptions:** None.
+
+#### `test_junction_step_uses_the_gradient_raster_of_the_file_not_of_seq_system`
+
+**Checks:** The step at a block junction is divided by the gradient raster of the
+sequence, `seq.grad_raster_time` (the `GradientRasterTime` that the file declares),
+not by `seq.system.grad_raster_time`. A sequence read from a file gives the same value
+as the sequence object that wrote it.
+
+**How:** `raster_4us_sequence` builds two y extended trapezoids with a 4 µs gradient
+raster: the slopes are 40 and 39.4 T/m/s and the junction step is 0.24 mT/m, so the
+junction is 60 T/m/s with 4 µs (24 T/m/s with 10 µs). The test writes the sequence to
+a file in `tmp_path` and reads it with `pp.Sequence()`, whose `system` has 10 µs. For
+the sequence that was read and for the sequence object, it checks that the y slew is
+60 T/m/s, credited to the second block, at the junction (0.8 ms).
+
+**Assumptions:** The file stores the amplitudes with fewer digits than the sequence
+object, so the comparison has a relative tolerance of 1e-4.
 
 #### `test_gradient_ending_non_zero_before_a_block_with_no_gradient_is_a_junction_step`
 
