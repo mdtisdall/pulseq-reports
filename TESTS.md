@@ -36,8 +36,8 @@ Contents:
    limits, the RF simulation, the profile metrics and the RF profiles); the
    waveform data, the diagram tables and the lane modules in JavaScript (the
    sequence lanes, the PNS lane and the |G| lane), with their golden tests
-   against Python; the report cards; the card registry, the command line and
-   the package exports
+   against Python; the report cards; the card registry, the command line,
+   the package exports and the rasters of the file
 
 ---
 
@@ -8757,3 +8757,55 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 **How:** Parametrized over the 20 (package, name, module) triples.
 
 **Assumptions:** None.
+
+### 2.39 Rasters of the file (`test_file_rasters.py`)
+
+`test_file_rasters.py` tests that the analyses use the rasters a `.seq` file
+declares in `[DEFINITIONS]`. pypulseq's `Sequence.read` sets
+`seq.grad_raster_time` and `seq.rf_raster_time` from the file, but it keeps
+`seq.system` at the `Opts` given to `pp.Sequence`: the pypulseq defaults
+(10 µs gradient, 1 µs RF) when `pulseq-report` reads a file. The tests write
+one file with a 4 µs gradient raster and a 2 µs RF raster (a block pulse, a
+trapezoid and a delay, three times) and read it back with `pp.Sequence()`.
+
+**Assumptions for the whole file:**
+
+- A block pulse has two shape points, so `seq_utils.hold_samples` samples it
+  at the raster it is given. A pulse with uniform samples that fill its shape
+  does not use the raster, and the tests do not use one.
+- The shared modules (`grad_limits` and the others that pulseq-checks also
+  has) are not tested here.
+
+#### `test_rf_samples_use_the_file_rf_raster`
+
+**Checks:** The RF profile card's RF table (`cards/rf_profile._rf_table`) and
+`rf_profiles.block_pulse` sample the 500 µs block pulse at the file's 2 µs RF
+raster: a sample duration of 2 µs and 250 samples.
+
+**How:** The test first checks that `seq.system.rf_raster_time` of the read
+sequence is not 2 µs, so that the case under test is present. It then checks
+the `dt` and `shape_n` columns of the first RF table row, and the `dt_s` and
+the sample count of `block_pulse(seq, 0)`. The durations are compared within
+1e-12 s.
+
+**Assumptions:** None.
+
+#### `test_rf_exposure_and_spectrum_do_not_depend_on_the_reader_opts`
+
+**Checks:** `rf_exposure.rf_exposure` and `grad_spectrum.gradient_spectrum`
+of the file read with `pp.Sequence()` are exactly equal to those of the same
+file read with `pp.Sequence(<the file's Opts>)`.
+
+**How:** The test checks that the two reads have different
+`seq.system` rasters, then compares the two `RfExposure` results with `==`,
+and the two spectra's band peaks with `==` and their frequency, RSS and
+per-axis arrays with `assert_array_equal`.
+
+**Assumptions:**
+
+- Before the fix, the differences were small (RF energy at float rounding,
+  the spectrum at about 1e-5 relative), so only an exact comparison finds
+  them. An exact comparison holds because both reads give the same
+  `seq.grad_raster_time`, `seq.rf_raster_time` and events, and the analyses
+  read no other value from `seq.system` that the two `Opts` give
+  differently, except `gamma` and `B0`, which are the same in both.

@@ -111,7 +111,7 @@ def rf_exposure(seq: pp.Sequence, window_s: float = WINDOW_S, periodic: bool = T
     """Peak B1, ∫B1² dt and B1+rms of `seq`. With `periodic=True` (parity with vb-pulseq),
     `seq` is treated as one period that repeats. With `periodic=False`, `seq` plays once;
     see `_windowed_energy` for how that changes the highest-window search."""
-    raster = seq.system.rf_raster_time
+    raster = seq.rf_raster_time
     times, energies, duration, peak_b1, peak_block, num_pulses = _rf_samples(seq, raster)
 
     if num_pulses == 0 or duration <= 0:

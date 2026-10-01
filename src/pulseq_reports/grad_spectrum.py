@@ -109,7 +109,8 @@ def gradient_spectrum(
         return GradientSpectrum(NO_GRADIENTS, resonances, empty, {}, empty, ())
     sampler = GradientSampler(seq, index)
 
-    dt = seq.system.grad_raster_time
+    # The file's raster ([DEFINITIONS]): `Sequence.read` does not change `seq.system`.
+    dt = seq.grad_raster_time
     nwin = round(FFT_WINDOW_S / dt)
     pad = nwin // 2
     # Python's `sum` is compensated (Python 3.12), so this total can differ from

@@ -236,7 +236,7 @@ def block_pulse(
 
     1. `extensions.refuse_rotations(seq)` first. `ValueError` when
        `rf_uses_labeled(seq)` is False.
-    2. The RF as played: `seq_utils.hold_samples(rf, seq.system.rf_raster_time)` times
+    2. The RF as played: `seq_utils.hold_samples(rf, seq.rf_raster_time)` times
        `exp(1j * (phase + 2*pi*f*t))`, with t = (k + 0.5) * dt from the start of the
        shape, f = freq_offset + freq_ppm * 1e-6 * |gamma| * B0 and the same form for the
        phase (`seq.system.gamma`, `seq.system.B0`).
@@ -915,7 +915,8 @@ def _pulse_core(seq: pp.Sequence, blk) -> _PulseCore:
     rf = blk.rf
     gamma = abs(float(seq.system.gamma))
     ppm_hz = 1e-6 * gamma * float(seq.system.B0)
-    baseband, dt = hold_samples(rf, seq.system.rf_raster_time)
+    # The file's raster ([DEFINITIONS]): `Sequence.read` does not change `seq.system`.
+    baseband, dt = hold_samples(rf, seq.rf_raster_time)
     dt = float(dt)
     n = baseband.size
     f = float(rf.freq_offset) + float(getattr(rf, "freq_ppm", 0.0)) * ppm_hz

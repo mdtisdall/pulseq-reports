@@ -69,7 +69,8 @@ def _pulse_train(seq: pp.Sequence) -> tuple[_PulseTrain, float]:
     """The pulse train of `seq`, and the duration of `seq` (s): the sum of the block
     durations in play order, as the block starts are summed."""
     index = sequence_index(seq)
-    raster = seq.system.rf_raster_time
+    # The file's raster ([DEFINITIONS]): `Sequence.read` does not change `seq.system`.
+    raster = seq.rf_raster_time
     ev_n, ev_dt, ev_delay, ev_total, ev_peak, cums = [], [], [], [], [], []
     for _, rf in rf_events(seq, index):
         signal, dt = hold_samples(rf, raster)
