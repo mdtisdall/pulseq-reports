@@ -1,0 +1,62 @@
+# An example target for the tests, not a real scanner. Its limits are above the limits of
+# the synthetic sequences of tests/synthetic.py (28 mT/m, 150 T/m/s).
+format = 1
+name = "Example scanner A (not a real scanner)"
+
+[opts]
+max_grad = 40
+grad_unit = "mT/m"
+max_slew = 200
+slew_unit = "T/m/s"
+rf_dead_time = 100e-6
+rf_ringdown_time = 20e-6
+adc_dead_time = 10e-6
+B0 = 3.0
+
+[rasters]
+GradientRasterTime = 10e-6
+RadiofrequencyRasterTime = 1e-6
+AdcRasterTime = 100e-9
+BlockDurationRaster = 10e-6
+
+# The SAFE parameters of the example hardware of pypulseq (safe_example_hw), not of a
+# real scanner.
+[models.pns.safe]
+name = "pypulseq example hardware (not a real scanner)"
+
+[models.pns.safe.x]
+tau1 = 0.2
+tau2 = 0.03
+tau3 = 3.0
+a1 = 0.4
+a2 = 0.1
+a3 = 0.5
+stim_limit = 30.0
+stim_thresh = 24.0
+g_scale = 0.35
+
+[models.pns.safe.y]
+tau1 = 1.5
+tau2 = 2.5
+tau3 = 0.15
+a1 = 0.55
+a2 = 0.15
+a3 = 0.3
+stim_limit = 15.0
+stim_thresh = 12.0
+g_scale = 0.31
+
+[models.pns.safe.z]
+tau1 = 2.0
+tau2 = 0.12
+tau3 = 1.0
+a1 = 0.42
+a2 = 0.4
+a3 = 0.18
+stim_limit = 25.0
+stim_thresh = 20.0
+g_scale = 0.25
+
+# The resonances are invented, for the tests, and are not those of a real gradient system.
+[acoustic]
+resonances = [[700, 120], [1300, 200]]

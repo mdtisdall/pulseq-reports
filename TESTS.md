@@ -36,7 +36,7 @@ Contents:
    waveform data, the diagram tables and the lane modules in JavaScript (the
    sequence lanes, the PNS lane and the |G| lane), with their golden tests
    against Python; the report cards; the card registry, the command line,
-   the package exports and the rasters of the file
+   the package exports, the rasters of the file and the report targets
 
 ---
 
@@ -181,7 +181,8 @@ the pattern matches no file, the step fails.
 `test_markup.py` tests the public helpers of `markup.py`, which project
 cards use too (`docs/usage.md`, section 4): the zoom button group placed
 above each line chart, the HTML table with escaped cell values, the number
-format of the library's tables, and the JSON of a list of lanes.
+format of the library's tables, the JSON of a list of lanes, and the hidden
+"Show" button of a block.
 
 #### `test_zoom_controls_markup`
 
@@ -235,6 +236,71 @@ the given list; and that the second result is the same dict object.
 
 **Assumptions:** The key order is the JSON key order on the page
 (`docs/usage.md`, "Lane JSON format").
+
+#### `test_show_button_has_the_play_index_of_the_block_hidden_and_an_escaped_label`
+
+**Checks:** `show_button_html` gives a `<button>` whose `data-block` is the play index of
+the block (its position in `index.block_id`, from 0), not the block id; the button has the
+attribute `hidden`; and the label is HTML-escaped.
+
+**How:** The test makes the `sequence_index` of the synthetic spin echo sequence and checks
+that its block ids are 1 to 6, so that no block id equals its play index. For each block, it
+calls `show_button_html` with the block id and the label `Show <b>`. It checks that the result
+starts with `<button`, has `data-block` with the play index, has `hidden`, ends with the
+escaped label and the closing tag, and has no raw `<b>`.
+
+**Assumptions:** pypulseq numbers the blocks from 1; the test checks this.
+
+#### `test_show_button_raises_for_a_block_that_the_sequence_does_not_have`
+
+**Checks:** `show_button_html` raises `ValueError` for a block id that is not in the
+sequence.
+
+**How:** The same index as above. The test calls `show_button_html` with the id 0 and with
+the id after the last block, and checks that each call raises `ValueError` with the id in the
+message.
+
+**Assumptions:** None.
+
+#### `test_target_legend_is_empty_for_no_targets`
+
+**Checks:** `target_legend_html` gives `""` for no targets.
+
+**How:** One call with an empty list and one with an empty tuple.
+
+**Assumptions:** None.
+
+#### `test_target_legend_lists_the_targets_in_order_with_their_colors`
+
+**Checks:** The legend is a `<ul>` with one `<li>` for each target, in the order of the
+targets; the name of each target and its color `var(--target-k)` are in its item, and no
+other color is in the legend.
+
+**How:** Three profiles from the `make_profile` fixture, through `report_targets`. The test
+checks the `<li>` count, that the names and the `var(--target-k)` texts for k from 1 to 3 are
+in increasing positions, and that each item has its own name and color.
+
+**Assumptions:** None.
+
+#### `test_target_legend_escapes_the_name`
+
+**Checks:** The name of a target is HTML-escaped in the legend.
+
+**How:** A profile renamed with `dataclasses.replace` to a name with `<b>`, `&`, `"` and `'`.
+The escaped name is in the legend, and `<b>` is not.
+
+**Assumptions:** None.
+
+#### `test_target_legend_gives_an_unsupported_target_its_reason`
+
+**Checks:** An unsupported target is in the legend, and its reason, HTML-escaped, is in its
+item; the reason is not in the item of a supported target.
+
+**How:** One supported and one unsupported profile (sodium gamma), with the reason of the
+second replaced by a text with `<`, `&`, `>` and `"`. The test splits the legend at `<li>`.
+It does not check the words around the reason.
+
+**Assumptions:** The legend shows `reason` of the target as it is (escaped).
 
 ### 2.3 The report page (`test_page.py`)
 
@@ -7050,6 +7116,115 @@ builder, with the same default as the option (decision 17 of the plan); and the 
 - The `windows` of the diagram card is a positional parameter, so it is not in the keywords.
 
 
+#### `test_a_report_without_targets_has_no_targets_and_no_check_results`
+
+**Checks:** For a report without `targets` and `check_results`, the context that a card's
+`build` gets has `targets == ()` and `check_results` None.
+
+**How:** A spec whose `build` records its `ReportContext` is added with `add_specs`, and
+`build_cards` builds it for the spin echo sequence.
+
+**Assumptions:** None.
+
+#### `test_targets_do_not_change_the_cards_that_are_built`
+
+**Checks:** `build_cards` with targets makes the same cards (equal `Card` objects, not only
+the same ids) as `build_cards` without targets.
+
+**How:** `build_cards` for the spin echo sequence with all the cards, twice without targets
+and once with two target profiles. The test checks that the second build without targets
+equals the first (so that `Card` equality works for the built cards), and that the build with
+targets equals them too.
+
+**Assumptions:** No card uses the targets in this phase (plan 4.3, item 8). When a card does,
+this test changes.
+
+#### `test_the_context_has_the_report_targets_in_order_with_their_colors`
+
+**Checks:** The context of a card has `targets` as a tuple of `ReportTarget`, in the order of
+the profiles that the caller gave, with the colors `target-1` and `target-2` and the
+`supported` value of each; `check_results` is None when the caller gives none.
+
+**How:** The recording spec; two profiles read from TOML files, the second with the sodium
+gamma.
+
+**Assumptions:** None.
+
+#### `test_the_context_has_the_result_matrix_that_the_caller_gave`
+
+**Checks:** `ctx.check_results` is the same object as the `ResultMatrix` that the caller
+gave.
+
+**How:** The recording spec; a matrix made directly from the classes of pulseq-checks, with
+the names of two profiles, in the same order.
+
+**Assumptions:** None.
+
+#### `test_a_sequence_with_another_gamma_raises`
+
+**Checks:** `build_cards` raises `ValueError` when `seq.system.gamma` is not the proton gamma.
+
+**How:** `pp.Sequence(pp.Opts(gamma=11.262e6))` (the sodium gamma), without blocks.
+
+**Assumptions:** The check of the gamma happens before any card is built, so the empty
+sequence does not matter.
+
+#### `test_more_than_the_most_targets_raise`
+
+**Checks:** `build_cards` raises `ValueError` for more than `MAX_TARGETS` targets.
+
+**How:** `MAX_TARGETS + 1` profiles with different names.
+
+**Assumptions:** None.
+
+#### `test_two_targets_with_one_name_raise`
+
+**Checks:** `build_cards` raises `ValueError`, with the name in the message, for two targets
+with one name.
+
+**How:** Two profiles read from TOML files with the name `a`.
+
+**Assumptions:** None.
+
+#### `test_a_target_that_is_not_a_target_profile_raises`
+
+**Checks:** `build_cards` raises `TypeError` for a target that is not a `TargetProfile`.
+
+**How:** `targets=["a.toml"]`.
+
+**Assumptions:** None.
+
+#### `test_check_results_with_other_target_names_raise`
+
+**Checks:** `build_cards` raises `ValueError` when the target names of `check_results` are not
+the names of `targets` in the same order: a different name, a different order, a missing
+target, an extra target, a matrix with targets and no targets given, and targets given with a
+matrix that has none.
+
+**How:** One parametrized case for each; the matrix is made directly from the classes of
+pulseq-checks, with no results.
+
+**Assumptions:** None.
+
+#### `test_check_results_that_are_not_a_result_matrix_raise`
+
+**Checks:** `build_cards` raises `TypeError` for a `check_results` that is not a
+`pulseq_checks.ResultMatrix`.
+
+**How:** `check_results` is a dict, with one valid target.
+
+**Assumptions:** None.
+
+#### `test_no_card_is_built_when_the_inputs_raise`
+
+**Checks:** When the targets and `check_results` do not agree, `build_cards` raises before it
+builds any card.
+
+**How:** The recording spec, a profile `a` and a matrix with the target `b`. After the
+`ValueError`, the list of contexts that the build recorded is empty.
+
+**Assumptions:** None.
+
 ### 2.37 Command line (`test_cli.py`)
 
 These tests call `cli.main(argv)` in the test process, with a `.seq` file that `seq.write` wrote from a synthetic sequence. `FAST` is the cards `gradient-limits,blocks,gradient-spectrum`.
@@ -7222,6 +7397,196 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 **Assumptions:** The PNS card's page does not depend on the .asc file's directory beyond its resolved path.
 
+#### Helpers for the target tests
+
+The tests of the targets use the profiles `tests/profiles/example_a.toml` (limits above the
+peaks of the synthetic spin echo) and `example_b.toml` (limits below them). The fixture `spy`
+replaces `cli.build_cards` and `cli.run_checks` with functions that record their arguments and
+call the real ones. `fake_checks` records the same, but `run_checks` gives a matrix with no
+results and the names of the targets (or raises `RunError` for the file names in
+`fake_checks.raises`). `no_checks` makes `cli.run_checks` fail the test when it is called.
+The error tests check status 1, that no page is written, and that stderr has the prefix
+`pulseq-report:`; they do not check the text of a message, except that a message names a file.
+
+#### `test_targets_reach_build_cards_with_their_matrix_and_the_checks_run_once`
+
+**Checks:** `--target A --target B` gives `build_cards` the two profiles in order and a
+`ResultMatrix` with the two target names; `run_checks` runs once, for the file, with the two
+profiles, `select=None`, `required=None` and `fast_only=False`; the status is 0 and the page is
+written.
+
+**How:** The `spy` fixture, with the real `run_checks` (all checks), the card `timing`.
+
+**Assumptions:** The cards do not use the targets yet, so the page does not show them; the
+test reads the arguments of `build_cards`.
+
+#### `test_two_files_run_the_checks_once_for_each_file`
+
+**Checks:** With two files, `run_checks` is called one time for each file, in order, and each
+`build_cards` call gets a matrix with one target.
+
+**How:** `fake_checks`, the synthetic spin echo and gradient echo files, one `--target`.
+
+**Assumptions:** None.
+
+#### `test_the_analyses_of_the_run_follow_the_selected_cards`
+
+**Checks:** `run_checks` gets `analyses=("pns.safe.levels",)` when the `pns` card is selected
+and when the `diagram` card is selected with `--pns-lane`, and `()` with only `timing` and with
+`diagram` without `--pns-lane`.
+
+**How:** Four parametrized runs with `fake_checks` and `--target A`.
+
+**Assumptions:** The status of each run is 0 with the fake matrix.
+
+#### `test_a_check_config_gives_the_targets_in_its_order_and_the_checks`
+
+**Checks:** `--check-config` gives the targets of the configuration, in its order (B, then a
+profile in a sub-directory, relative to the file), and its `select`, `required` and
+`fast_only` to `run_checks`; `build_cards` gets the same targets.
+
+**How:** `fake_checks`, a config in `tmp_path` and copies of the profiles. The expected values
+are those of `read_check_config` of the same file, and `select` and `fast_only` are also
+compared with the literal values.
+
+**Assumptions:** None.
+
+#### `test_check_results_give_build_cards_the_matrix_and_run_no_check`
+
+**Checks:** `--check-results FILE.json` gives `build_cards` a matrix equal to the matrix in
+the file (same JSON text, same number of results, same target names), calls `run_checks` not
+at all, and the page is written.
+
+**How:** A real matrix from `run_checks` for the synthetic file and the two profiles, with
+the check `gradient.amplitude.axis`, written with `to_json`. `no_checks` and `spy`.
+
+**Assumptions:** The matrix has results (the test checks it).
+
+#### `test_a_target_and_a_check_config_together_exit_1`
+
+**Checks:** `--target` with `--check-config` exits 1 and writes no page.
+
+**How:** `_fails` with a valid config and a valid profile.
+
+**Assumptions:** None.
+
+#### `test_check_results_without_targets_exit_1`
+
+**Checks:** `--check-results` with no target exits 1 and writes no page.
+
+**How:** `_fails`, with a valid result file.
+
+**Assumptions:** None.
+
+#### `test_check_results_with_two_files_exit_1`
+
+**Checks:** `--check-results` with two `.seq` files exits 1 and writes no page.
+
+**How:** Two files, a valid result file and a target; the output directory is not made.
+
+**Assumptions:** None.
+
+#### `test_a_missing_result_file_exits_1_and_names_it`
+
+**Checks:** A result file that does not exist exits 1, writes no page, and the message has
+the file name.
+
+**How:** `_fails` with a path that does not exist.
+
+**Assumptions:** None.
+
+#### `test_a_result_file_that_is_not_a_matrix_exits_1`
+
+**Checks:** A result file that `ResultMatrix.from_json` refuses exits 1, writes no page, and
+the message has the file name.
+
+**How:** The file holds `{"a": 1}`.
+
+**Assumptions:** None.
+
+#### `test_a_missing_profile_exits_1`
+
+**Checks:** A profile that does not exist exits 1, writes no page, and the message has the
+file name.
+
+**How:** `_fails` with a path that does not exist.
+
+**Assumptions:** None.
+
+#### `test_a_missing_check_config_exits_1`
+
+**Checks:** A check configuration that does not exist exits 1 and writes no page.
+
+**How:** `_fails` with a path that does not exist.
+
+**Assumptions:** None.
+
+#### `test_the_same_profile_twice_exits_1`
+
+**Checks:** Two targets with one name (the same profile twice) exit 1 and write no page.
+
+**How:** `_fails` with `--target A --target A`.
+
+**Assumptions:** None.
+
+#### `test_seven_targets_exit_1`
+
+**Checks:** Seven targets exit 1 and write no page.
+
+**How:** Seven copies of profile A with the names `target 0` to `target 6`, written to
+`tmp_path`.
+
+**Assumptions:** None.
+
+#### `test_check_results_for_other_targets_exit_1`
+
+**Checks:** A result file whose targets are not the targets that were given exits 1 and
+writes no page.
+
+**How:** A matrix with the target A only, and `--target A --target B`.
+
+**Assumptions:** None.
+
+#### `test_the_targets_key_of_a_config_file_gives_the_targets_of_the_flags`
+
+**Checks:** The key `targets` of a `--config` file (relative paths) gives `run_checks` the
+same targets (names and `opts`) as the flags `--target`.
+
+**How:** `fake_checks`; two runs, one with the config file and one with the flags.
+
+**Assumptions:** None.
+
+#### `test_a_config_key_of_the_wrong_type_exits_1`
+
+**Checks:** `targets = "x"`, `check_config = 3` and `check_results = ["x"]` in the config file
+each exit 1 and write no page.
+
+**How:** Three parametrized configs in `tmp_path`.
+
+**Assumptions:** None.
+
+#### `test_a_target_flag_replaces_the_targets_key`
+
+**Checks:** `--target` replaces the key `targets` of the config file: only the flag's target
+is run.
+
+**How:** `fake_checks`, a config with A and B and `--target B`.
+
+**Assumptions:** None.
+
+#### `test_a_run_error_for_one_file_gives_no_page_for_it_and_the_other_page_is_written`
+
+**Checks:** When `run_checks` raises `RunError` for the first of two files, the status is 1,
+that file has no page, the other file's page is written, and the message names the file.
+
+**How:** `fake_checks` with `raises` set to the first file's name.
+
+**Assumptions:** None.
+
+For "without targets the page is the same as before", the existing test
+`test_the_page_of_the_command_line_equals_the_page_of_build_cards` (no target flag; the page
+equals the page of `build_cards` without targets) covers it.
+
 ### 2.38 Package exports (`test_exports.py`)
 
 #### `test_an_exported_name_is_the_object_of_its_module`
@@ -7291,3 +7656,84 @@ per-axis arrays with `assert_array_equal`.
   `seq.grad_raster_time`, `seq.rf_raster_time` and events, and the analyses
   read no other value from `seq.system` that the two `Opts` give
   differently, except `gamma` and `B0`, which are the same in both.
+
+### 2.40 Report targets (`test_targets.py`)
+
+`test_targets.py` tests `targets.py`: `report_targets` makes the `ReportTarget` of each target
+profile that the caller gives. The profiles are read with `pulseq_checks.read_profile` from
+small TOML files that the `make_profile` fixture of `tests/conftest.py` writes to `tmp_path`.
+
+#### `test_colors_are_target_1_to_target_k_in_order`
+
+**Checks:** The targets keep the order and the profile objects of the input, and their colors
+are `target-1` to `target-k` in that order.
+
+**How:** Three profiles named `c`, `a` and `b`; the test compares the `profile` and `color` of
+each result.
+
+**Assumptions:** None.
+
+#### `test_no_profiles_give_no_targets`
+
+**Checks:** `report_targets([])` is the empty tuple.
+
+**How:** One call.
+
+**Assumptions:** None.
+
+#### `test_the_most_targets_are_accepted_and_one_more_raises`
+
+**Checks:** `MAX_TARGETS` profiles are accepted, with the colors `target-1` to `target-6`,
+and one more raises `ValueError`.
+
+**How:** `MAX_TARGETS + 1` profiles with different names; the first `MAX_TARGETS` and then all.
+
+**Assumptions:** `MAX_TARGETS` is 6; the test builds the expected colors for 1 to 6.
+
+#### `test_two_profiles_with_one_name_raise`
+
+**Checks:** Two profiles with one name raise `ValueError` with the name in the message, also
+when other profiles are between them.
+
+**How:** Profiles `scanner`, `third` and a copy of another profile renamed to `scanner` with
+`dataclasses.replace`.
+
+**Assumptions:** None.
+
+#### `test_an_item_that_is_not_a_target_profile_raises`
+
+**Checks:** An item that is not a `TargetProfile` raises `TypeError`.
+
+**How:** One profile and one string.
+
+**Assumptions:** None.
+
+#### `test_a_gamma_that_is_not_the_proton_gamma_is_not_supported`
+
+**Checks:** A profile whose `opts` gives the gamma of sodium is not supported, and its
+`reason` is not None.
+
+**How:** A profile with `gamma = 11.262e6` in `[opts]`. The test does not check the text of
+the reason.
+
+**Assumptions:** None.
+
+#### `test_the_proton_gamma_and_no_gamma_are_supported`
+
+**Checks:** A profile with the proton gamma (`GAMMA`), a profile with `opts` that give no
+gamma, and a profile with no `opts` are supported, and their `reason` is None.
+
+**How:** Three profiles; the test also checks that the third has no gamma.
+
+**Assumptions:** `read_profile` gives `opts` None, or without `gamma`, for a profile that
+gives none.
+
+#### `test_an_unsupported_target_does_not_change_the_colors_of_the_others`
+
+**Checks:** A target that is not supported keeps its place and its color, and the colors of
+the other targets do not change.
+
+**How:** Three profiles, the second with the sodium gamma; the test compares the colors and
+the `supported` values.
+
+**Assumptions:** None.

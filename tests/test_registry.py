@@ -2,6 +2,7 @@ import dataclasses
 import inspect
 import logging
 
+import pypulseq as pp
 import pytest
 from plugin_card import CSS, SCRIPT, SPEC, make_spec
 from synthetic import spin_echo_sequence
@@ -18,6 +19,7 @@ from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.cards.timing import timing_card
 from pulseq_reports.page import Card
 from pulseq_reports.registry import CardSpec, ReportContext, build_cards, discover
+from pulseq_reports.targets import MAX_TARGETS, ReportTarget
 from pulseq_reports.waveforms import full_window
 
 LIBRARY_CARDS = [
@@ -299,3 +301,143 @@ def test_the_options_of_each_spec_are_the_keywords_of_its_builder():
         for option_name, option in declared.items():
             assert parameters[option_name].default == option.default, (name, option_name)
         assert parameters["card_id"].default == name
+
+
+@pytest.fixture
+def seen(add_specs):
+    """The `ReportContext` objects that the build of a recording card has seen."""
+    contexts = []
+
+    def build(ctx):
+        contexts.append(ctx)
+        return Card(id="recorder", title="Recorder", body_html="")
+
+    add_specs(("recorder:SPEC", CardSpec("recorder", 1, build)))
+    return contexts
+
+
+def _build_recorder(seen, seq=None, **keywords):
+    build_cards(seq or spin_echo_sequence(), cards=["recorder"], **keywords)
+    (ctx,) = seen
+    return ctx
+
+
+def test_a_report_without_targets_has_no_targets_and_no_check_results(seen):
+    ctx = _build_recorder(seen)
+
+    assert ctx.targets == ()
+    assert ctx.check_results is None
+
+
+def test_targets_do_not_change_the_cards_that_are_built(plugin, make_profile):
+    seq = spin_echo_sequence()
+
+    without = build_cards(seq)
+    with_targets = build_cards(seq, targets=[make_profile("a"), make_profile("b")])
+
+    assert build_cards(seq) == without
+    assert with_targets == without
+
+
+def test_the_context_has_the_report_targets_in_order_with_their_colors(seen, make_profile):
+    profiles = [make_profile("b"), make_profile("a", "gamma = 11.262e6")]
+
+    ctx = _build_recorder(seen, targets=profiles)
+
+    assert isinstance(ctx.targets, tuple)
+    assert all(isinstance(target, ReportTarget) for target in ctx.targets)
+    assert [target.profile for target in ctx.targets] == profiles
+    assert [target.color for target in ctx.targets] == ["target-1", "target-2"]
+    assert [target.supported for target in ctx.targets] == [True, False]
+    assert ctx.check_results is None
+
+
+def test_the_context_has_the_result_matrix_that_the_caller_gave(seen, make_profile, make_matrix):
+    matrix = make_matrix(["b", "a"])
+
+    ctx = _build_recorder(
+        seen, targets=[make_profile("b"), make_profile("a")], check_results=matrix
+    )
+
+    assert ctx.check_results is matrix
+
+
+def test_a_sequence_with_another_gamma_raises(plugin):
+    sodium = pp.Sequence(pp.Opts(gamma=11.262e6))
+
+    with pytest.raises(ValueError, match="gamma"):
+        build_cards(sodium, cards=["plugin-demo"])
+
+
+def test_more_than_the_most_targets_raise(plugin, make_profile):
+    profiles = [make_profile(f"t{k}") for k in range(MAX_TARGETS + 1)]
+
+    with pytest.raises(ValueError, match=str(MAX_TARGETS)):
+        build_cards(spin_echo_sequence(), cards=["plugin-demo"], targets=profiles)
+
+
+def test_two_targets_with_one_name_raise(plugin, make_profile):
+    profiles = [make_profile("a"), make_profile("a")]
+
+    with pytest.raises(ValueError, match="'a'"):
+        build_cards(spin_echo_sequence(), cards=["plugin-demo"], targets=profiles)
+
+
+def test_a_target_that_is_not_a_target_profile_raises(plugin):
+    with pytest.raises(TypeError, match="TargetProfile"):
+        build_cards(spin_echo_sequence(), cards=["plugin-demo"], targets=["a.toml"])
+
+
+@pytest.mark.parametrize(
+    ("target_names", "matrix_names"),
+    [
+        (["a", "b"], ["a", "c"]),
+        (["a", "b"], ["b", "a"]),
+        (["a", "b"], ["a"]),
+        (["a"], ["a", "b"]),
+        ([], ["a"]),
+        (["a"], []),
+    ],
+    ids=[
+        "different-name",
+        "different-order",
+        "missing-target",
+        "extra-target",
+        "no-targets",
+        "no-matrix-targets",
+    ],
+)
+def test_check_results_with_other_target_names_raise(
+    plugin, make_profile, make_matrix, target_names, matrix_names
+):
+    profiles = [make_profile(name) for name in target_names]
+
+    with pytest.raises(ValueError, match="check_results"):
+        build_cards(
+            spin_echo_sequence(),
+            cards=["plugin-demo"],
+            targets=profiles,
+            check_results=make_matrix(matrix_names),
+        )
+
+
+def test_check_results_that_are_not_a_result_matrix_raise(plugin, make_profile):
+    with pytest.raises(TypeError, match="ResultMatrix"):
+        build_cards(
+            spin_echo_sequence(),
+            cards=["plugin-demo"],
+            targets=[make_profile("a")],
+            check_results={"a": []},
+        )
+
+
+def test_no_card_is_built_when_the_inputs_raise(seen, make_profile, make_matrix):
+    with pytest.raises(ValueError):
+        build_cards(
+            spin_echo_sequence(),
+            cards=["recorder"],
+            targets=[make_profile("a")],
+            check_results=make_matrix(["b"]),
+        )
+
+    assert seen == []

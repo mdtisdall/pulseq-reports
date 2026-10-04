@@ -1,4 +1,5 @@
 import pytest
+from pulseq_checks import ResultMatrix, TargetInfo, TargetProfile, read_profile
 from pypulseq.utils.safe_pns_prediction import safe_example_hw
 
 
@@ -89,3 +90,29 @@ def no_safe_model(monkeypatch):
         "pulseq_reports.cards.diagram.pns_levels_for",
     ):
         monkeypatch.setattr(target, raise_error)
+
+
+@pytest.fixture
+def make_profile(tmp_path):
+    """`make_profile(name, opts)` reads a target profile from a TOML file in `tmp_path`.
+    `opts` is the text of the `[opts]` section's lines (empty for no `opts`)."""
+
+    def make(name: str, opts: str = "") -> TargetProfile:
+        section = f"[opts]\n{opts}\n" if opts else ""
+        path = tmp_path / f"{name}.toml"
+        path.write_text(f'format = 1\nname = "{name}"\n{section}')
+        return read_profile(path)
+
+    return make
+
+
+@pytest.fixture
+def make_matrix():
+    """`make_matrix(names)` is a `ResultMatrix` with one target for each name and no
+    results, as `run_checks` gives for a run that selects no check."""
+
+    def make(names) -> ResultMatrix:
+        targets = tuple(TargetInfo(name=name, sources={}, unused_sections=()) for name in names)
+        return ResultMatrix(sequence="x.seq", package_version="0", targets=targets, results=())
+
+    return make

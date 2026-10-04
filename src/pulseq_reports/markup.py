@@ -7,6 +7,12 @@ are for the library's own cards only.
 
 import dataclasses
 import html
+from collections.abc import Sequence
+
+import numpy as np
+from pulseq_analysis.seq_index import SequenceIndex
+
+from .targets import ReportTarget
 
 
 def _points(t_s, values, digits: int = 4) -> list[list[float]]:
@@ -73,3 +79,42 @@ def zoom_controls(svg_id: str) -> str:
         '<button type="button" data-zoom="0.1" aria-label="Zoom out 10 times">×0.1</button>'
         '<button type="button" data-zoom="reset">Reset</button></div>'
     )
+
+
+def show_button_html(index: SequenceIndex, block_id: int, label: str) -> str:
+    """A hidden "Show" button that shows the block `block_id` (a key of `seq.block_events`,
+    as a pulseq-checks `Location` gives it) in the sequence diagram. The button has the play
+    index of the block (its position in play order, from 0, in `index`) in `data-block`, and
+    the text `label` (escaped).
+
+    The card script `show-buttons` (`assets/cards/show-buttons.js`) wires each such button
+    of its card: a click publishes the `goto` message `{source, block}`, and the button is
+    shown only while a card (the diagram) acts on `goto`. A card with these buttons has
+    `script="show-buttons"`, the script in `scripts`, and `"goto"` in `publishes`.
+
+    Raises `ValueError` when `index` has no block `block_id`."""
+    plays = np.flatnonzero(index.block_id == block_id)
+    if plays.size == 0:
+        raise ValueError(f"the sequence has no block {block_id!r}")
+    return (
+        f'<button type="button" data-block="{int(plays[0])}" hidden>{html.escape(label)}</button>'
+    )
+
+
+def target_legend_html(targets: Sequence[ReportTarget]) -> str:
+    """The legend of the report's targets: a list with the name of each target (escaped),
+    in order, after a swatch of its color (`var(--target-k)`). A target that the cards do not
+    support is in the list too, with its reason (escaped) after the name. Returns `""` for no
+    targets."""
+    if not targets:
+        return ""
+    items = []
+    for target in targets:
+        name = html.escape(target.profile.name)
+        if not target.supported:
+            name += f" (not shown in the cards: {html.escape(target.reason or '')})"
+        items.append(
+            f'<li><span class="swatch" style="background: var(--{target.color})" '
+            f'aria-hidden="true"></span>{name}</li>'
+        )
+    return f'<ul class="target-legend" aria-label="Targets">{"".join(items)}</ul>'

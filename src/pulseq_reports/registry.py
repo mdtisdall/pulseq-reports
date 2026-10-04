@@ -19,8 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pypulseq as pp
+from pulseq_analysis.seq_utils import GAMMA
+from pulseq_checks import ResultMatrix, TargetProfile
 
 from .page import Card
+from .targets import ReportTarget, report_targets
 from .waveforms import TimeWindow, first_adc_window, full_window
 
 ENTRY_POINT_GROUP = "pulseq_reports.cards"
@@ -175,10 +178,14 @@ class CardSpec:
 
 class ReportContext:
     """What a card's `build` and `when` know about the report: the sequence, the values
-    of the options, the standard windows, and the topics of the selected cards.
+    of the options, the standard windows, the topics of the selected cards, the targets
+    and the result matrix.
 
     `build_cards` makes one context for a report. `option` and the topics read the
-    selected cards' specs, so a card never asks for another card by name.
+    selected cards' specs, so a card never asks for another card by name. `targets` is a
+    tuple of `targets.ReportTarget`, in the order of the targets (empty for a report
+    without targets). `check_results` is the `pulseq_checks.ResultMatrix` of the run, or
+    None when the caller gave none; `build_cards` never runs checks.
     """
 
     def __init__(
@@ -186,8 +193,13 @@ class ReportContext:
         seq: pp.Sequence,
         specs: Sequence[CardSpec],
         values: Mapping[str, object] | None = None,
+        *,
+        targets: Sequence[ReportTarget] = (),
+        check_results: ResultMatrix | None = None,
     ) -> None:
         self.seq = seq
+        self.targets = tuple(targets)
+        self.check_results = check_results
         self._specs = tuple(specs)
         self._values = dict(values or {})
         self._windows: tuple[TimeWindow, ...] | None = None
@@ -319,28 +331,64 @@ def _names(name: str, value: Iterable[str] | None, known: set[str]) -> list[str]
     return names
 
 
+def _check_inputs(
+    seq: pp.Sequence, profiles: Sequence[TargetProfile], check_results: ResultMatrix | None
+) -> tuple[ReportTarget, ...]:
+    """The `ReportTarget` of each of `profiles`, after the checks of `build_cards`."""
+    if seq.system.gamma != GAMMA:
+        raise ValueError(
+            f"the sequence has the gamma {seq.system.gamma:g} Hz/T, and pulseq-reports "
+            f"supports only the proton gamma ({GAMMA:g} Hz/T)"
+        )
+    targets = report_targets(profiles)
+    if check_results is not None:
+        if not isinstance(check_results, ResultMatrix):
+            raise TypeError(
+                f"check_results must be a ResultMatrix, not {type(check_results).__name__}"
+            )
+        given = [target.profile.name for target in targets]
+        matrix = [target.name for target in check_results.targets]
+        if matrix != given:
+            raise ValueError(
+                f"the targets of check_results are {matrix}, and the targets of the report are "
+                f"{given}: they must be the same names, in the same order"
+            )
+    return targets
+
+
 def build_cards(
     seq: pp.Sequence,
     *,
     cards: Iterable[str] | None = None,
     skip: Iterable[str] = (),
+    targets: Sequence[TargetProfile] = (),
+    check_results: ResultMatrix | None = None,
     **options: object,
 ) -> list[Card]:
     """The cards of the report of `seq`, in the order of their specs (`discover`).
 
     `cards` are the names of the cards to build (all of them when None), and `skip` the
-    names to leave out. `options` are the values of the options, by option name; an option
+    names to leave out. `targets` are the target profiles of the report (`TargetProfile`
+    of pulseq-checks, at most `targets.MAX_TARGETS`, with distinct names), and
+    `check_results` is the `ResultMatrix` of a run of pulseq-checks for those targets, or
+    None. `build_cards` never runs checks: the caller runs `pulseq_checks.run_checks` and
+    gives the matrix. `options` are the values of the options, by option name; an option
     that the caller does not give has its default. A card whose `when` is false is not
     built.
 
-    Raises `ValueError` for a name in `cards` or `skip` that no spec has, and for the
-    errors of `discover`. Raises `TypeError` for an option that no selected card declares.
+    Raises `ValueError` when `seq.system.gamma` is not the proton gamma (`GAMMA`), for
+    more than `targets.MAX_TARGETS` targets or two targets with one name, when the target
+    names of `check_results` are not the names of `targets` in the same order, for a name
+    in `cards` or `skip` that no spec has, and for the errors of `discover`. Raises
+    `TypeError` for a target that is not a `TargetProfile`, for `check_results` that is
+    not a `ResultMatrix`, and for an option that no selected card declares.
     When the `when` or the `build` of a card raises an exception (for example
     `NotImplementedError`, for a sequence that the card refuses), the card is an error card:
     its `id` is the spec's name, its title is "<name>: error", its body has the message, and
     its `error` is the message. The exception, with its traceback, goes to the logger
     `pulseq_reports`, and the other cards are built.
     """
+    report = _check_inputs(seq, targets, check_results)
     all_specs = discover()
     known = {spec.name for spec in all_specs}
     wanted = set(_names("cards", cards, known)) if cards is not None else known
@@ -353,7 +401,7 @@ def build_cards(
             f"no selected card declares the options {unexpected}; the selected cards declare "
             f"{sorted(declared)}"
         )
-    ctx = ReportContext(seq, selected, options)
+    ctx = ReportContext(seq, selected, options, targets=report, check_results=check_results)
     built = []
     for spec in selected:
         ctx._current = spec
