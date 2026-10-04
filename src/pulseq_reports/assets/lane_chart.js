@@ -20,8 +20,8 @@ const PulseqReport = (() => {
     return node;
   };
   const text = (attrs, content, parent) => { el("text", attrs, parent).textContent = content; };
-  const {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, zoomView, panView, dragView,
-    laneGroupMap, visibleLanes} = ChartMath;
+  const {niceTicks, tooltipRows, visiblePoints, zoomView, panView, dragView,
+    laneGroupMap, visibleLanes, normalizeBand, markSpans} = ChartMath;
   // A line segment draws at most 4 * BUCKETS + 2 of its points in the view (see visiblePoints).
   const BUCKETS = 2 * PLOT_W;
   // A drag shorter than this, in CSS px, is a click and does not zoom.
@@ -31,7 +31,10 @@ const PulseqReport = (() => {
   // arrow-key/Escape navigation, and x-axis zoom and pan. `svg`, `chart` and `tip` are
   // existing DOM elements; `svg` needs a unique id (used to make its clip path id unique
   // on a page with several charts, and to find its `[data-zoom-for]` button group, if
-  // any). `bands` is a list of [lo, hi] x ranges, shaded with `bandStyle`.
+  // any). `bands` is a list of x ranges drawn over the full plot height: an entry is [lo, hi],
+  // shaded with `bandStyle`, or {lo, hi, color}, shaded with the color (a CSS custom property
+  // name of report.css, without the `--`, like `lane.color`) at an opacity of 0.14; the two
+  // forms can be mixed.
   // `xDomain` is the initial view, `extent` the widest view (default `xDomain`) and
   // `minSpan` the narrowest view width. `onViewChange(view, isInitial)` is called when a
   // zoom, pan or reset changes the view; `isInitial` is true for a reset to `xDomain`.
@@ -44,6 +47,17 @@ const PulseqReport = (() => {
   // height (so it must have as many lanes as a `lanesFor` result); with `groups`, each render
   // sets the height. `setLanes` then has no effect. Without `lanesFor`, `lanes` is drawn as
   // given to `laneChart` or to `setLanes`.
+  // A lane may have `series`, a list of {label, color, segments} (`segments` as in a line
+  // lane). When `lane.series` is an array, even an empty one, the lane draws the segments of
+  // each series in its color, in order (a later series on top), and not `lane.segments`; the
+  // `title`, `unit`, `domain`, `ticks`, `tick_labels`, `fill`, `minmax` and `empty` of the
+  // lane apply to every series. The tooltip then has one row for each series, with its
+  // color and label, instead of one row for the lane (`ChartMath.tooltipRows`). A gate lane
+  // has no series. A lane (of any kind) may have `marks`, a list of {lo, hi, color} in chart
+  // units: each is a rectangle over the full height of that lane only, in the color (a CSS
+  // custom property name without the `--`) at an opacity of 0.25, after the grid lines of the
+  // lane and before its traces. A mark is at least 1 viewBox unit wide, and marks of one color
+  // that overlap are drawn as one rectangle (`ChartMath.markSpans`).
   // `groups`, when given, is a list of lane groups: {id, label, laneIds: [...], visible}.
   // Each lane (of `lanes`, and of a `lanesFor` result) has an `id`; a lane whose id is in no
   // group's `laneIds` is always drawn. `visibleGroupIds`, the third argument `lanesFor` gets,
@@ -162,10 +176,12 @@ const PulseqReport = (() => {
       text({x: LEFT + PLOT_W / 2, y: H - 4, class: "lbl", "text-anchor": "middle"}, xLabel, svg);
 
       const bg = el("g", {"clip-path": `url(#${clipId})`}, svg);
-      for (const [lo, hi] of bands) {
+      for (const band of bands) {
+        const {lo, hi, color} = normalizeBand(band);
         const x0 = x(lo), x1 = x(hi);
         el("rect", {x: Math.min(x0, x1), y: TOP, width: Math.abs(x1 - x0),
-          height: PLOT_BOTTOM - TOP, style: bandStyle}, bg);
+          height: PLOT_BOTTOM - TOP,
+          style: color === null ? bandStyle : `fill:var(--${color});fill-opacity:0.14`}, bg);
       }
 
       drawnLanes.forEach((lane, i) => {
@@ -181,6 +197,12 @@ const PulseqReport = (() => {
             lane.tick_labels[k], svg);
         });
         const g = el("g", {"clip-path": `url(#${clipId})`}, svg);
+        if (lane.marks) {
+          for (const {x0, x1, color} of markSpans(lane.marks, view[0], view[1], PLOT_W, 1)) {
+            el("rect", {x: LEFT + x0, y: top, width: x1 - x0, height: LANE_H,
+              style: `fill:var(--${color});fill-opacity:0.25`}, g);
+          }
+        }
         const stroke = `stroke:var(--${lane.color})`;
         if (lane.kind === "gate") {
           for (const [a, b] of lane.windows) {
@@ -190,11 +212,16 @@ const PulseqReport = (() => {
               style: stroke}, g);
           }
         } else {
-          for (const segment of lane.segments) {
-            const seg = visiblePoints(segment, view[0], view[1], BUCKETS);
-            if (seg.length < 2) continue;
-            const d = "M" + seg.map(([t, v]) => `${x(t).toFixed(2)},${y(v).toFixed(2)}`).join("L");
-            el("path", {d, class: "trace", style: stroke}, g);
+          // A lane with `series` draws those, each in its color, and not `lane.segments`.
+          for (const line of Array.isArray(lane.series) ? lane.series : [lane]) {
+            const lineStroke = `stroke:var(--${line.color})`;
+            for (const segment of line.segments) {
+              const seg = visiblePoints(segment, view[0], view[1], BUCKETS);
+              if (seg.length < 2) continue;
+              const d = "M" +
+                seg.map(([t, v]) => `${x(t).toFixed(2)},${y(v).toFixed(2)}`).join("L");
+              el("path", {d, class: "trace", style: lineStroke}, g);
+            }
           }
         }
         if (lane.empty) {
@@ -243,21 +270,6 @@ const PulseqReport = (() => {
       }
     }
 
-    // Formats a lane's value for the tooltip: `fmt(v)`, then the lane's unit if it has one,
-    // except for a string or null value (for example a gate lane's "on").
-    const valueText = (lane, v) => lane.unit && typeof v !== "string" && v !== null
-      ? `${fmt(v)} ${lane.unit}` : fmt(v);
-
-    // Formats the minimum and the maximum of a minmax lane's bin at t for the tooltip, for
-    // example "−12.3 – 4.56 mT/m". Falls back to the lane's fill value, formatted
-    // as valueText does, when t is in a gap between bins (see ChartMath.minMaxAt).
-    const minMaxText = (lane, t) => {
-      const mm = minMaxAt(lane, t);
-      if (mm === null) return valueText(lane, lane.fill);
-      const range = `${fmt(mm.min)} – ${fmt(mm.max)}`;
-      return lane.unit ? `${range} ${lane.unit}` : range;
-    };
-
     function setCursor(t) {
       const next = t === null ? null : Math.min(view[1], Math.max(view[0], t));
       const changed = next !== cursor;
@@ -279,18 +291,19 @@ const PulseqReport = (() => {
       head.textContent = cursorText(cursor);
       tip.appendChild(head);
       for (const lane of drawnLanes) {
-        const row = document.createElement("div");
-        row.className = "row";
-        const name = document.createElement("span");
-        const key = document.createElement("span");
-        key.className = "key";
-        key.style.background = `var(--${lane.color})`;
-        name.append(key, lane.title);
-        const value = document.createElement("span");
-        value.textContent = lane.kind !== "gate" && lane.minmax
-          ? minMaxText(lane, cursor) : valueText(lane, valueAt(lane, cursor));
-        row.append(name, value);
-        tip.appendChild(row);
+        for (const entry of tooltipRows(lane, cursor)) {
+          const row = document.createElement("div");
+          row.className = "row";
+          const name = document.createElement("span");
+          const key = document.createElement("span");
+          key.className = "key";
+          key.style.background = `var(--${entry.color})`;
+          name.append(key, entry.label);
+          const value = document.createElement("span");
+          value.textContent = entry.text;
+          row.append(name, value);
+          tip.appendChild(row);
+        }
       }
       tip.hidden = false;
       const r = svg.getBoundingClientRect(), wrap = chart.getBoundingClientRect();

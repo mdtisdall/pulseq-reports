@@ -814,4 +814,9 @@ phase 1), and the proposal for the others.
 
 ## 8. Results
 
-Empty until the work starts.
+### 8.1 Changes to the order
+
+- 2026-10-04: The user approved the start of phase 4 at the same time as
+  phase 1, not after phase 2 (section 3.3, wave 3). Phase 4 edits only
+  `lane_chart.js` and `chart_math.js`, which phases 1 and 2 do not edit
+  (section 3.4). Its baseline is `main` at `9276cfd`.
