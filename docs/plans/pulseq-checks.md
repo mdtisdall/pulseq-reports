@@ -3,8 +3,8 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: design, version 3, written on 2026-10-04. The user made the decisions
-of section 9.3 on the same day. This is not an implementation plan. It gives
+Status: design, version 4, written on 2026-10-04. The user made the decisions
+of sections 9.3 and 9.4 on the same day. This is not an implementation plan. It gives
 the goals, the principles and the design decisions for the work in
 pulseq-reports. An implementation plan comes next.
 
@@ -15,14 +15,23 @@ History:
   [`docs/plans/pulseq-checks.md`](https://github.com/mdtisdall/pulseq-checks/blob/main/docs/plans/pulseq-checks.md).
 - Version 2 (commit `a322517`) gave only the work in pulseq-reports, for
   `pulseq-checks` `v0.1.0rc2`.
-- Version 3 (this version) is for two packages. The measurement modules moved
+- Version 3 (commit `9276cfd`) is for two packages. The measurement modules moved
   from `pulseq-checks` to a new package, `pulseq-analysis`
   ([`docs/plans/pulseq-analysis.md`](https://github.com/mdtisdall/pulseq-checks/blob/main/docs/plans/pulseq-analysis.md)
   of pulseq-checks). Section 8 of that plan gives the work in pulseq-reports,
   and this version follows it.
+- Version 4 (this version) is for `pulseq-checks` `v0.1.0rc4` and
+  `pulseq-analysis` `v0.1.0rc4`. Each series has a coordinate unit, the
+  gradient spectrum moved to `pulseq-analysis`, and the check
+  `acoustic.resonance-energy` compares the spectrum with the resonances of a
+  target. Section 3.4 gives the changes. Principle 10 and the decisions P29
+  to P32 are new. Phases 1 to 4 of the implementation plan were done with
+  version 3. Version 5 (a separate pull request) replaces P21 with the gamma
+  of each target.
 
 The `pulseq-checks` and `pulseq-analysis` documents refer to versions 1 and 2
-by commit, so their links still work. Both packages are stable for this work.
+by commit, so their links still work. Both packages are stable for this work,
+at the tags of section 5.
 
 ## 1. Goal
 
@@ -42,6 +51,11 @@ After this work:
 - **The PNS comes from the result matrix.** The PNS card and the PNS lane of
   the diagram show the result of the analysis `pns.safe.levels` of each
   target. The report does not run the SAFE model a second time.
+- **The gradient spectrum comes from the result matrix.** The gradient
+  spectrum card shows the result of the analysis `gradient.spectrum`, the
+  resonance bands of each target, and the result of the check
+  `acoustic.resonance-energy` of each target. The report does not calculate
+  the spectrum a second time.
 - **The cards read target profiles.** A card that needs scanner context (the
   limits, the SAFE parameters, the acoustic resonances, B0) reads it from the
   target profile format of `pulseq-checks`. The card options for scanner
@@ -112,8 +126,22 @@ no targets is complete. It has no verdicts and no check summary.
    from the analysis result `pns.safe.levels` in the result matrix. Without a
    result matrix, or without that analysis result, the PNS card and the PNS
    lane show a note, not a PNS (decision P23).
+10. **One source of the gradient spectrum.** In a report, the gradient
+    spectrum comes only from the analysis result `gradient.spectrum` in the
+    result matrix. The card does not call `pulseq_analysis.grad_spectrum`.
+    Without a result matrix, or without that analysis result, the card shows a
+    note and no chart (decision P31). A report has no default target: a
+    caller that wants a spectrum gives a target, and the spectrum goes through
+    `pulseq-checks` and `pulseq-analysis`. The share of the gradient energy in
+    the resonance bands is a comparison with target data. It comes only from
+    the check `acoustic.resonance-energy` (principle 1, and decision L11 of the
+    `pulseq-analysis` plan `docs/plans/series-coordinate.md`).
 
 ## 3. The state of the code
+
+Sections 3.1 to 3.3 give the state at version 3, before phase 1 of the
+implementation plan. Section 3.4 gives the changes of the `v0.1.0rc4`
+releases. Where they do not agree, section 3.4 is correct.
 
 ### 3.1 pulseq-reports (`main` at `a322517`, version `0.2.0rc2`)
 
@@ -269,6 +297,79 @@ result costs no measurable time, because `pns.safe` runs SAFE already.
 direct git reference (`allow-direct-references`). All three repositories pin
 the same pypulseq fork commit (T12 of the `pulseq-analysis` design).
 
+### 3.4 The changes of `v0.1.0rc4` (checked on 2026-10-04)
+
+`pulseq-analysis` `v0.1.0rc4` (tag commit `0afc759`) and `pulseq-checks`
+`v0.1.0rc4` (tag commit `e38bf5c`). `pulseq-checks` `v0.1.0rc4` pins
+`pulseq-analysis` `v0.1.0rc4`. All three repositories still pin the pypulseq
+fork commit `a74ab06`.
+
+**The series (`pulseq-analysis` `v0.1.0rc3`).** Each `Series` has a
+coordinate with its own unit. The names changed:
+
+| `v0.1.0rc2` | `v0.1.0rc3` |
+|---|---|
+| none | `coord_unit` (necessary, for example `"s"` or `"Hz"`) |
+| `t0_s`, `step_s`, `end_s` | `coord_start`, `coord_step`, `coord_end` |
+| `POINTS` array `time_s` | `coord` |
+| `RUNS` arrays `start_s`, `end_s` | `start`, `end` |
+
+The field `unit` (the unit of the values), the array `peak_time_s` and the
+`meta` keys `dt_s` and `peak_time_s` keep their names. The series of
+`pns.safe.levels` have `coord_unit` `"s"`. A result JSON with a series of
+`v0.1.0rc3` and one of `v0.1.0rc4` cannot read each other. `encode_array` and
+`decode_array` did not change. At version 3, pulseq-reports read no `Series`
+field, so the change touches only the plan for the PNS card and lane.
+
+**The gradient spectrum (`pulseq-analysis` `v0.1.0rc4`).** The module
+`grad_spectrum` of pulseq-reports moved to
+`pulseq_analysis.grad_spectrum`, with the method of pypulseq
+`calculate_gradient_spectrum` and its defaults (`max_frequency_hz=2000.0`,
+`window_s=0.05`, `frequency_oversampling=3.0`, 301 frequencies).
+
+- The values are in Hz/m/√Hz, with no gamma. To get mT/m/√Hz, multiply by
+  `1e3 / gamma`. The conversion is exact to float rounding.
+- `GradientSpectrum` has no resonances and no band peaks. Its arrays are
+  read-only.
+- The analysis `gradient.spectrum` (version 1, cost "slow", `params=()`)
+  gives one `SAMPLES` series, `gradient_spectrum`: unit `"Hz/m/sqrt(Hz)"`,
+  `coord_unit` `"Hz"`, `coord_start` 0.0, `coord_step` the frequency step,
+  the arrays `value` (the RSS of the axes), `x`, `y` and `z` (float64), and
+  `meta` with the three arguments. A sequence with no gradient event gives no
+  series.
+- `pulseq-checks` gives the analysis no binding: it is available for each
+  target. Each target reads the file with its own `Opts`, so each target has
+  its own calculation. In one target, the check and the analysis share one
+  calculation.
+- 12.1 s at 10⁶ blocks (Apple M1 Max).
+
+**The check `acoustic.resonance-energy` (`pulseq-checks` `v0.1.0rc4`).**
+Input `acoustic.resonances`, cost "slow", analysis `gradient.spectrum` with
+the defaults only. The value is the percent of the energy of the spectrum
+(`rss ** 2`) that is in the bands of the target, all bands together. The
+band of a pair `(f, bw)` is `[f - bw/2, f + bw/2]`. The limit is the constant
+30 %, unit `"%"`, and the location is none. A fail has one finding,
+`ACOUSTIC_BAND_ENERGY`. Each result has `limit=30.0`:
+
+| Condition | State |
+|---|---|
+| The target gives no `acoustic.resonances` | not evaluated |
+| A band reaches above 2000 Hz | not evaluated |
+| No gradient event, or an empty list of resonances | pass, 0 % |
+| At or below 30 % | pass |
+| Above 30 % | fail |
+| The rotation extension | error |
+
+The profile reader refuses a resonance pair that is not finite and above 0.
+
+**Costs at 10⁶ blocks** (`pulseq-checks` `v0.1.0rc4`, with the read of the
+file): the fast checks together take 4.27 s, the check
+`acoustic.resonance-energy` 16.38 s, and all seven checks 36.88 s.
+
+**`ResultMatrix`** has no method that gives one check result. A card selects
+the `Result` of a check and a target from `results` by `check_id` and
+`target`.
+
 ## 4. Design
 
 ### 4.1 The inputs of a report
@@ -299,8 +400,9 @@ each card. The card options `limits`, `gradient_asc`, `coil` and
   `select`, `required` and `fast_only` of the check configuration. Without a
   check configuration, all installed checks run and no check is required, as
   in `pulseq-check --target`. When the PNS card or the PNS lane is on the
-  page, it also asks for the analysis `pns.safe.levels`. It gives the matrix
-  to `build_cards`.
+  page, it also asks for the analysis `pns.safe.levels`. When the gradient
+  spectrum card is on the page, it also asks for the analysis
+  `gradient.spectrum`. It gives the matrix to `build_cards`.
 - **A Python caller runs the checks itself.** It calls `run_checks` and gives
   the matrix to `build_cards` (`check_results=`). With targets and no matrix,
   the check summary says that no checks were run, and the PNS card and lane
@@ -309,8 +411,9 @@ each card. The card options `limits`, `gradient_asc`, `coil` and
   command runs no checks and shows the given matrix. The targets of the matrix
   must be the targets of the report. `ResultMatrix.from_json` of the pinned
   `pulseq-checks` reads the file. A file that it refuses (for example a
-  result of `v0.1.0rc2`) is an error of the run. A matrix without the
-  analysis `pns.safe.levels` gives no PNS (principle 9).
+  result of `v0.1.0rc3`) is an error of the run. A matrix without the
+  analysis `pns.safe.levels` gives no PNS (principle 9). A matrix without the
+  analysis `gradient.spectrum` gives no spectrum (principle 10).
 - **Findings.** The report keeps at most 100 findings of each result
   (`with_max_findings`), and shows `findings_omitted`. `pulseq-report
   --max-findings N` changes the number, as in `pulseq-check`. A matrix from
@@ -360,7 +463,7 @@ Without targets and without results, the summary card is not on the page.
 | `gradient-limits` | All (for the percent columns) | The peaks, with no percent columns. A note says that no target gives limits. | One percent column for each target that gives `max_grad` and `max_slew`, in the color of the target. The peaks are measured one time, with `pulseq_analysis.grad_limits`. |
 | `pns` | All that give SAFE parameters | No PNS. A note says that no target gives SAFE parameters, or that the matrix has no PNS (principle 9). | One part for each target, from its analysis result `pns.safe.levels`: the peak, its time, the axis peaks and the hardware name. |
 | `diagram` (PNS lane) | All that give SAFE parameters | No PNS lane. | One PNS lane. The envelope `pns_total` of each target is overlaid in the color of the target. The runs of `pns_above_1` are marked in the color of the target (decision P22). The exact PNS of a zoomed view uses the SAFE parameters of the target profile. |
-| `gradient-spectrum` | All that give acoustic resonances | The spectrum, with no resonance bands. A note says that no target gives resonances. | The bands of each target, in the color of the target. |
+| `gradient-spectrum` | All (for the spectrum), all that give acoustic resonances (for the bands) | The spectrum, with no resonance bands. A note says that no target gives resonances. Without a matrix, or without the analysis `gradient.spectrum`: a note and no chart (principle 10). | One spectrum: the analysis result of the first supported target with the state "done" (decision P32). The bands of each supported target, in the color of the target. One line for each supported target with the result of `acoustic.resonance-energy` (decision P30). |
 | `rf-profile` | All that give B0 | A pulse with a `ppm` offset shows a note that its offset cannot be changed into Hz. The other pulses do not change. | The profiles of each target overlaid, in the color of the target. They differ only for pulses with a `ppm` offset. |
 | `rf-exposure` | None | No change. | No change. |
 | `definitions` | None | No change. | No change. |
@@ -390,6 +493,7 @@ Each mark comes from a check result, a finding or an analysis result
 | `timing` | A list of the findings of `timing.pypulseq` and `timing.rasters` for each target, with a "Show" button for each row (section 4.5). |
 | `gradient-limits` | A list of the findings of `gradient.amplitude.axis`, `gradient.slew.axis` and `gradient.amplitude.any-orientation` for each target, with a "Show" button for each row. |
 | `diagram` (PNS lane) | The runs of the series `pns_above_1` of each target, marked in the color of the target. They are complete: the findings limit does not apply to them. They use the threshold of `pns.safe` (1.0), so they agree with the check (decision P22). |
+| `gradient-spectrum` | For each supported target, the state, the value and the limit of `acoustic.resonance-energy`, or its reason. The card does not calculate a share of the energy or a peak in a band (decision P30). |
 
 The percent columns of the gradient limits card use the proton gamma, as all
 the cards do (principle 8). A target with another gamma is not in the card,
@@ -402,6 +506,9 @@ so the card and the check cannot disagree on it.
   flags and configuration keys.
 - `GradientCoil`, `AcousticResonance`, `PRISMA_AS82` and
   `PRISMA_AS82_RESONANCES`.
+- The module `grad_spectrum` of pulseq-reports, with `BandPeak`, the band
+  peaks and the `bands` of the page data of the spectrum card. It moved to
+  `pulseq-analysis` (section 3.4).
 - The warning about default limits.
 - The failed check of an error card. An error card stays, with its message,
   and it gives exit status 1 (decision P14).
@@ -419,8 +526,8 @@ from `pulseq-checks` (decision 8 of version 1).
 ## 5. Release
 
 One release does all of this work: `0.2.0rc3`. It depends on
-`pulseq-checks` `v0.1.0rc3` and on `pulseq-analysis` `v0.1.0rc2`, by direct
-git references, as `pulseq-checks` does. The `pulseq-analysis` tag must be the
+`pulseq-checks` `v0.1.0rc4` and on `pulseq-analysis` `v0.1.0rc4` (version 3:
+`v0.1.0rc3` and `v0.1.0rc2`, decision P29), by direct git references, as `pulseq-checks` does. The `pulseq-analysis` tag must be the
 tag that the pinned `pulseq-checks` pins, or the resolver cannot satisfy
 both. `uv.lock` records the commit of each tag. A tag of these repositories
 was moved once, so a relock that changes a commit of a pinned tag is a reason
@@ -442,10 +549,13 @@ check (`pulseq-checks` `v0.1.0rc2`), and a documented measurement API
 
 Later, not in this work:
 
-- **The other measurement modules of pulseq-reports** (`grad_spectrum`,
-  `rf_exposure`, `rf_sim`, `profile_metrics` and `waveforms`) move to
-  `pulseq-analysis` when a second package needs them (section 8 of the
-  `pulseq-analysis` design).
+- **The other measurement modules of pulseq-reports** (`rf_exposure`,
+  `rf_sim`, `profile_metrics` and `waveforms`) move to `pulseq-analysis` when
+  a second package needs them (section 8 of the `pulseq-analysis` design).
+  `grad_spectrum` moved in `pulseq-analysis` `v0.1.0rc4`.
+- **One calculation for all targets.** `pulseq-checks` calculates
+  `gradient.spectrum` one time for each target, also when the result is the
+  same for all targets. A change in `pulseq-checks` can share it.
 - **Series of the gradient analyses.** When `gradient.blocks` gives `POINTS`
   series (section 8 of the `pulseq-analysis` design), the gradient limits card
   can read them from the matrix.
@@ -552,6 +662,17 @@ The user made these decisions on 2026-10-04. Do not open them again.
 | P26 | How the Python API gets the results | `build_cards` takes `check_results=` and never runs checks. The command runs `run_checks` and gives the matrix to `build_cards`. A Python caller does the same. | 4.1, 4.2 |
 | P27 | The targets of the example report | Two target profiles that say that they are examples, with different limits and B0, the SAFE parameters of the example hardware of pypulseq (labeled "not a real scanner"), and resonance bands that are invented and labeled so. | 7, 8 |
 | P28 | The number of targets | At most 6, with a palette of 6 color tokens for light and dark mode. More targets is an error of the arguments (status 1). | 2, 4.1 |
+
+### 9.4 Decisions of version 4
+
+The user made these decisions on 2026-10-04. Do not open them again.
+
+| # | Decision | Answer | Where |
+|---|---|---|---|
+| P29 | The pins | `pulseq-checks` `v0.1.0rc4` and `pulseq-analysis` `v0.1.0rc4`. The work continues from the phases that are done. It does not do them again. | 3.4, 5 |
+| P30 | The gradient spectrum card for each target | The bands of the target in its color, and one line with the result of `acoustic.resonance-energy` (state, value and limit, or the reason). The card does not calculate band peaks or the share of the energy in the bands, because the check gives that comparison. This does not change P6: the gradient limits card keeps its percent columns. | 4.4, 4.6 |
+| P31 | The source of the spectrum | Only the analysis result `gradient.spectrum` in the result matrix. Without it, the card shows a note and no chart. A report has no default target: a default target, if one is added later, also goes through `pulseq-checks` and `pulseq-analysis`. | 2, 4.2, 4.4 |
+| P32 | The spectrum with several targets | One spectrum: the analysis result of the first supported target with the state "done". The bands of each supported target. If the spectrum of another target is different, a note names that target. | 4.4 |
 
 ## 10. Terms
 
