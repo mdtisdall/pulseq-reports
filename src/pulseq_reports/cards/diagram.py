@@ -2,7 +2,7 @@
 for each time window that the caller gives, and an optional PNS lane.
 
 The card sends the compressed block and event tables of the sequence
-(`diagram_data.diagram_tables`, `encode_tables`), not expanded points. The
+(`diagram_data.diagram_tables`, `encode_array`), not expanded points. The
 browser (`assets/cards/diagram.js`, `assets/seq_lanes.js`) decodes them and draws the
 exact waveform when a view has few enough points, or the minimum and the maximum of
 each lane in each of the plot's time bins otherwise, so the card works for a file of up
@@ -25,16 +25,17 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pypulseq as pp
+from pulseq_analysis.extensions import refuse_rotations
+from pulseq_analysis.pns import pns_levels_for
+from pulseq_analysis.pns_levels import PnsLevels
+from pulseq_analysis.seq_utils import GAMMA
+from pulseq_analysis.series import encode_array
 
 from .. import options
-from ..diagram_data import diagram_tables, encode_tables, lane_meta
-from ..extensions import refuse_rotations
+from ..diagram_data import diagram_tables, lane_meta
 from ..markup import zoom_controls
 from ..page import Card, card_asset
-from ..pns import pns_levels_for
-from ..pns_levels import PnsLevels
 from ..registry import CardSpec, ReportContext
-from ..seq_utils import GAMMA
 from ..waveforms import TimeWindow, _check_windows, duration_s
 
 PUBLISHES = ("sequence", "cursor", "anchor", "view")
@@ -50,7 +51,7 @@ def _pns_entry(seq: pp.Sequence, levels: PnsLevels) -> dict:
     from `levels` (`pns.pns_levels_for(seq, gradient_asc=...)`): the hardware, the SAFE
     parameters, the gradient raster and the gyromagnetic-ratio scale (`seq_utils.GAMMA /
     seq.system.gamma`, decision 14 of that plan), the summary, and the stored level,
-    encoded as `diagram_data.encode_tables` encodes a table."""
+    encoded with `encode_array`."""
     return {
         "hardware": levels.hardware,
         "example": levels.asc_file is None,
@@ -64,7 +65,7 @@ def _pns_entry(seq: pp.Sequence, levels: PnsLevels) -> dict:
             "peak_time_s": levels.peak_time_s,
             "axis_peaks": levels.axis_peaks,
         },
-        "levels": encode_tables({"min": levels.level_min, "max": levels.level_max}),
+        "levels": {"min": encode_array(levels.level_min), "max": encode_array(levels.level_max)},
     }
 
 
@@ -85,7 +86,7 @@ def _diagram_data(
     `{"format": 2, "file": {...}, "windows": [...]}`.
 
     `file` has `duration_s`, `num_blocks`, `lanes` (`lane_meta`) and `tables`
-    (`encode_tables(diagram_tables(seq))`). `diagram_tables(seq)` is built once and
+    (`encode_array` of each table of `diagram_tables(seq)`). `diagram_tables(seq)` is built once and
     passed to `lane_meta` so it is not built twice. When `pns_lane` is true and the
     sequence has a gradient event and `gradient_asc` is given, `file` also gets a `"pns"`
     key (`_pns_entry`); a sequence without gradients, or a call without `gradient_asc`,
@@ -97,7 +98,7 @@ def _diagram_data(
         "duration_s": duration_s(seq),
         "num_blocks": len(seq.block_events),
         "lanes": lane_meta(seq, tables=tables),
-        "tables": encode_tables(tables),
+        "tables": {name: encode_array(array) for name, array in tables.items()},
     }
     if pns_lane and gradient_asc is not None:
         levels = pns_levels_for(seq, gradient_asc=gradient_asc)

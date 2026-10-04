@@ -20,9 +20,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pypulseq as pp
-
-from pulseq_reports.seq_index import rf_events, sequence_index
-from pulseq_reports.seq_utils import GAMMA, hold_samples
+from pulseq_analysis.seq_index import rf_events, sequence_index
+from pulseq_analysis.seq_utils import GAMMA, hold_samples
 
 B1RMS_WINDOW_S = 10.0  # averaging window (s) for the highest B1+rms
 

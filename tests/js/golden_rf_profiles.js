@@ -15,7 +15,7 @@
 //
 // Usage: node golden_rf_profiles.js IN.json OUT.json
 //
-// IN.json: {"format": 1, "tables": <diagram_data.encode_tables(...) output>,
+// IN.json: {"format": 1, "tables": <pulseq_analysis.series.encode_array of each table>,
 //           "lanes": <diagram_data.lane_meta(...) output>,
 //           "file": <cards.rf_profile.rf_profile_data(...) output, "rf" still encoded>,
 //           "queries": [{"kind": "period", "block": b, "maxBlocks"?: m},
@@ -47,7 +47,7 @@ const ASSETS = path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets
 const SeqLanes = require(path.join(ASSETS, "seq_lanes.js"));
 const RfProfiles = require(path.join(ASSETS, "rf_profiles.js"));
 
-// The typed array constructor for each dtype that `diagram_data.encode_tables` can
+// The typed array constructor for each dtype that `pulseq_analysis.series.encode_array` can
 // produce for the diagram tables and the RF table (uint8/uint16/uint32 index and code
 // columns, float64 offsets, delays and samples). Identical to `golden_seq_lanes.js`'s
 // `TYPED_ARRAY_CTORS`.
@@ -58,10 +58,10 @@ const TYPED_ARRAY_CTORS = {
   float64: Float64Array,
 };
 
-// One table's `{"dtype", "length", "data"}` (`encode_tables`'s wire form) decoded into a
-// typed array: base64 to bytes, gzip to the little-endian bytes of the array, and those
-// bytes copied into a fresh `ArrayBuffer` so the typed array view is aligned. Identical
-// to `golden_seq_lanes.js`'s `decodeTable`.
+// One table's `{"dtype", "length", "data"}` (`pulseq_analysis.series.encode_array`'s
+// wire form) decoded into a typed array: base64 to bytes, gzip to the little-endian
+// bytes of the array, and those bytes copied into a fresh `ArrayBuffer` so the typed
+// array view is aligned. Identical to `golden_seq_lanes.js`'s `decodeTable`.
 function decodeTable(name, meta) {
   const Ctor = TYPED_ARRAY_CTORS[meta.dtype];
   if (!Ctor) {

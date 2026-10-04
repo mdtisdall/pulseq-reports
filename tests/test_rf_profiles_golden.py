@@ -107,11 +107,12 @@ import numpy as np
 import pypulseq as pp
 import pytest
 import test_rf_profiles as cases  # the phase 2 test sequences and their builders
+from pulseq_analysis.seq_index import sequence_index
+from pulseq_analysis.series import encode_array
 
 from pulseq_reports import diagram_data
 from pulseq_reports import rf_profiles as rp
 from pulseq_reports.cards.rf_profile import _rf_profile_data
-from pulseq_reports.seq_index import sequence_index
 
 _GOLDEN_SCRIPT = Path(__file__).parent / "js" / "golden_rf_profiles.js"
 
@@ -843,7 +844,7 @@ def test_rf_profiles_js_matches_python_reference(name, tmp_path):
     tables = diagram_data.diagram_tables(seq)
     payload = {
         "format": 1,
-        "tables": diagram_data.encode_tables(tables),
+        "tables": {name: encode_array(a) for name, a in tables.items()},
         "lanes": diagram_data.lane_meta(seq, tables=tables),
         "file": _rf_profile_data(seq),
         "queries": queries,

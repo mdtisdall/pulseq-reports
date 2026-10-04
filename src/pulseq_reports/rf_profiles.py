@@ -23,12 +23,12 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.extensions import refuse_rotations
+from pulseq_analysis.seq_index import SequenceIndex, block_cache_off, sequence_index
+from pulseq_analysis.seq_utils import TIME_TOLERANCE, gradient_points, hold_samples
 
 from pulseq_reports import profile_metrics
-from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.rf_sim import crushed_echo, magnetization, precess, spin_domain
-from pulseq_reports.seq_index import SequenceIndex, block_cache_off, sequence_index
-from pulseq_reports.seq_utils import TIME_TOLERANCE, gradient_points, hold_samples
 
 USES = ("excitation", "refocusing", "inversion", "saturation", "preparation", "other")
 AXIS_KINDS = ("x", "y", "z", "select", "df")

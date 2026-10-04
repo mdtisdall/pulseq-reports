@@ -10,13 +10,12 @@ from the decoded tables with the time formulas of section 4.3, entirely independ
 tautology.
 """
 
-import base64
 import math
-import time
 
 import numpy as np
 import pypulseq as pp
 import pytest
+from pulseq_analysis.series import decode_array, encode_array
 from synthetic import (
     SYSTEM,
     arbitrary_gradient_sequence,
@@ -158,9 +157,10 @@ def test_rebuilt_polylines_exactly_match_events_in_range(builder):
     bit) the same per-lane points as `waveforms._events_in_range`'s unrounded output, for
     every kind of synthetic sequence, including one with no RF, gradient or ADC event."""
     seq = builder()
-    tables = diagram_data.decode_tables(
-        diagram_data.encode_tables(diagram_data.diagram_tables(seq))
-    )
+    tables = {
+        name: decode_array(encode_array(array))
+        for name, array in diagram_data.diagram_tables(seq).items()
+    }
     rebuilt = _rebuild_lane_polylines(tables)
     reference = _reference_lane_polylines(seq)
     for lane_id in LANE_IDS:
@@ -173,41 +173,11 @@ def test_rebuilt_polylines_exactly_match_events_in_range(builder):
 def test_encode_then_decode_gives_the_same_arrays_and_dtypes():
     seq = gre_sequence(num_trs=5)
     tables = diagram_data.diagram_tables(seq)
-    decoded = diagram_data.decode_tables(diagram_data.encode_tables(tables))
+    decoded = {name: decode_array(encode_array(array)) for name, array in tables.items()}
     assert decoded.keys() == tables.keys()
     for name, arr in tables.items():
         assert decoded[name].dtype == arr.dtype, name
         assert np.array_equal(decoded[name], arr), name
-
-
-def test_encode_then_decode_accepts_float32():
-    """`encode_tables`/`decode_tables` accept `float32`, not only the dtypes
-    `diagram_tables` itself produces (`docs/plans/diagram-lanes.md`, section 4.4: the
-    PNS lane's stored level, `pns_levels.PnsLevels.level_min`/`level_max`, is
-    `float32`). The round trip keeps the dtype and, for values a `float32` can hold
-    exactly, the values too."""
-    values = np.array([0.0, 1.5, -2.25, np.float32(3.4028235e38)], dtype=np.float32)
-    tables = {"level_min": values}
-    decoded = diagram_data.decode_tables(diagram_data.encode_tables(tables))
-    assert decoded["level_min"].dtype == np.float32
-    assert np.array_equal(decoded["level_min"], values)
-
-
-def test_encode_tables_gives_the_same_bytes_at_different_times(monkeypatch):
-    """Two `encode_tables` calls at different clock times give byte-identical output, so
-    a report built again from the same sequence is the same file. The gzip header of
-    each table has no time stamp (bytes 4-7 are 0) and the OS byte (byte 9) is 255 on
-    every platform, not zlib's own value (3 on Linux, 19 on macOS)."""
-    tables = diagram_data.diagram_tables(gre_sequence(num_trs=5))
-    monkeypatch.setattr(time, "time", lambda: 1_000_000_000.0)
-    first = diagram_data.encode_tables(tables)
-    monkeypatch.setattr(time, "time", lambda: 2_000_000_000.0)
-    second = diagram_data.encode_tables(tables)
-    assert first == second
-    for name, meta in first.items():
-        header = base64.b64decode(meta["data"])[:10]
-        assert header[4:8] == bytes(4), name
-        assert header[9] == 255, name
 
 
 @pytest.mark.parametrize(

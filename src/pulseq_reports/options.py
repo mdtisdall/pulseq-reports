@@ -11,7 +11,8 @@ import math
 from collections.abc import Mapping
 from pathlib import Path
 
-from .grad_limits import HardwareLimits
+from pulseq_checks import HardwareLimits
+
 from .registry import Flag, Option, OptionCli
 from .rf_exposure import B1RMS_WINDOW_S
 

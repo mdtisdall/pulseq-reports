@@ -74,17 +74,17 @@ def write_gradient_asc(tmp_path):
 @pytest.fixture
 def no_safe_model(monkeypatch):
     """Make each way into the SAFE PNS model raise `AssertionError`, so a test shows that
-    a card does not run it: `pns_levels.pns_levels`, `pns.pns_levels_for`,
-    `pns.pns_prediction`, and the names that the PNS card and the diagram card import."""
+    a card does not run it: `pulseq_analysis.pns_levels.pns_levels`,
+    `pulseq_analysis.pns.pns_levels_for`, `pulseq_analysis.pns.pns_prediction`, and the
+    names that the PNS card and the diagram card import."""
 
     def raise_error(*args, **kwargs):
         raise AssertionError("the SAFE model ran")
 
     for target in (
-        "pulseq_reports.pns_levels.pns_levels",
-        "pulseq_reports.pns.pns_levels",
-        "pulseq_reports.pns.pns_levels_for",
-        "pulseq_reports.pns.pns_prediction",
+        "pulseq_analysis.pns_levels.pns_levels",
+        "pulseq_analysis.pns.pns_levels_for",
+        "pulseq_analysis.pns.pns_prediction",
         "pulseq_reports.cards.pns.pns_prediction",
         "pulseq_reports.cards.diagram.pns_levels_for",
     ):

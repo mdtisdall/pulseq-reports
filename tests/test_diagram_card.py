@@ -1,14 +1,15 @@
 import numpy as np
 import pypulseq as pp
 import pytest
+from pulseq_analysis.pns import pns_levels_for
+from pulseq_analysis.seq_utils import GAMMA
+from pulseq_analysis.series import decode_array
 from synthetic import empty_sequence, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import page
 from pulseq_reports.cards.diagram import diagram_card
-from pulseq_reports.diagram_data import decode_tables, diagram_tables, lane_meta
+from pulseq_reports.diagram_data import diagram_tables, lane_meta
 from pulseq_reports.markup import zoom_controls
-from pulseq_reports.pns import pns_levels_for
-from pulseq_reports.seq_utils import GAMMA
 from pulseq_reports.waveforms import TimeWindow, duration_s, first_adc_window, full_window
 
 
@@ -56,7 +57,7 @@ def test_tables_decode_to_diagram_tables():
     card = diagram_card(seq, [full_window(seq)])
     file_entry = card.data["file"]
 
-    decoded = decode_tables(file_entry["tables"])
+    decoded = {name: decode_array(d) for name, d in file_entry["tables"].items()}
     expected = diagram_tables(seq)
     assert set(decoded) == set(expected)
     for key in expected:
@@ -232,13 +233,13 @@ def test_pns_without_gradients_adds_no_pns_key(write_gradient_asc):
 def test_pns_levels_decode_back_to_pns_levels_for_exactly(write_gradient_asc):
     """The `"levels"` key of the `"pns"` entry, decoded, equals the `level_min`/
     `level_max` of `pns.pns_levels_for(seq, gradient_asc=...)` exactly (the same values, encoded and
-    decoded with `diagram_data.encode_tables`/`decode_tables`)."""
+    decoded with `pulseq_analysis.series.encode_array`/`decode_array`)."""
     seq = spin_echo_sequence()
     path = write_gradient_asc()
     card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
     file_entry = card.data["file"]
 
-    decoded = decode_tables(file_entry["pns"]["levels"])
+    decoded = {name: decode_array(d) for name, d in file_entry["pns"]["levels"].items()}
     levels = pns_levels_for(seq, gradient_asc=path)
     assert decoded["min"].dtype == np.float32
     assert decoded["max"].dtype == np.float32

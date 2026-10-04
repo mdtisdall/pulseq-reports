@@ -2,11 +2,12 @@ import json
 
 import pypulseq as pp
 import pytest
+from pulseq_analysis import pns
+from pulseq_analysis.seq_index import sequence_index
 from synthetic import SYSTEM, empty_sequence, spin_echo_sequence
 
-from pulseq_reports import page, pns
+from pulseq_reports import page
 from pulseq_reports.cards.pns import _pns_data, pns_card
-from pulseq_reports.seq_index import sequence_index
 
 _DATA_KEYS = {
     "reason",

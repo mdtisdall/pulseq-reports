@@ -3,10 +3,10 @@ import math
 import pypulseq as pp
 import pytest
 from oracles.blocks import iter_blocks
+from pulseq_analysis.seq_utils import GAMMA
 from synthetic import DWELL, NUM_SAMPLES, SYSTEM, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import waveforms
-from pulseq_reports.seq_utils import GAMMA
 
 
 @pytest.fixture(scope="module")

@@ -21,17 +21,15 @@ independently in this file, in one call instead of `pns_levels`'s chunks:
 `seq.system.gamma` (T/m, as `calc_pns` divides), through pypulseq's
 `_safe_gwf_to_pns_chunk` (a single chunk, `state=None`), scaled by 0.01 and combined
 as `sqrt(x^2 + y^2 + z^2)`. The pinned fork's chunk function gives bit-identical
-results for any chunk size (`test_pns_levels.py`'s
-`test_result_does_not_depend_on_chunk_samples`; lean on pypulseq, decision 6: not
-tested again here), so this file also asserts `pns_levels(seq).peak ==
-totals.max()` exactly, as a check that this file's one-call reference really is the
-same computation as `pns_levels`'s chunked one, not a second, independent PNS
-implementation.
+results for any chunk size (lean on pypulseq, decision 6: not tested here), so this
+file also asserts `pns_levels(seq).peak == totals.max()` exactly, as a check that this
+file's one-call reference really is the same computation as `pns_levels`'s chunked one,
+not a second, independent PNS implementation.
 
 The sequences (task 4.5, item 1): the three synthetic sequences of `tests/synthetic.py`
 that have a gradient event (`pns_levels` has no bins to compare for the empty sequence);
 a "border" sequence, whose gradient is not zero at the block junction
-(`synthetic.border_sequence`, shared with `test_pns_levels.py`); a repeating sequence of
+(`synthetic.border_sequence`); a repeating sequence of
 more than `3 * PnsLanes.GROUP_BLOCKS` (192) blocks, so the golden test crosses more than
 3 of the JavaScript block map's checkpoint groups; and a sequence built with
 `pp.Opts(gamma=11.262e6)` (sodium), with a gradient on every axis so a wrong `gradScale`
@@ -51,6 +49,10 @@ from pathlib import Path
 import numpy as np
 import pypulseq as pp
 import pytest
+from pulseq_analysis.pns_levels import pns_levels
+from pulseq_analysis.sampling import GradientSampler
+from pulseq_analysis.seq_index import sequence_index
+from pulseq_analysis.series import encode_array
 from pypulseq.utils.safe_pns_prediction import _safe_gwf_to_pns_chunk, safe_example_hw
 from synthetic import (
     arbitrary_gradient_sequence,
@@ -61,9 +63,6 @@ from synthetic import (
 
 from pulseq_reports import diagram_data
 from pulseq_reports.cards.diagram import _pns_entry
-from pulseq_reports.pns_levels import pns_levels
-from pulseq_reports.sampling import GradientSampler
-from pulseq_reports.seq_index import sequence_index
 
 _GOLDEN_SCRIPT = Path(__file__).parent / "js" / "golden_pns_lanes.js"
 
@@ -166,7 +165,7 @@ def _run_golden(seq: pp.Sequence, tmp_path: Path):
     levels = pns_levels(seq)
     pns_payload = _pns_entry(seq, levels)
     payload = {
-        "tables": diagram_data.encode_tables(tables),
+        "tables": {name: encode_array(a) for name, a in tables.items()},
         "pns": pns_payload,
         "numSamples": levels.num_samples,
     }
@@ -197,8 +196,7 @@ def test_pns_lanes_exact_view_and_levels_match_the_python_pipeline(builder, tmp_
 
     assert levels.peak == ref_totals.max(), (
         "pns_levels's chunked peak does not exactly equal the one-call reference's "
-        "max: the fork's chunk function should be exact for any chunk size "
-        "(test_pns_levels.py's test_result_does_not_depend_on_chunk_samples)"
+        "max: the fork's chunk function should be exact for any chunk size"
     )
     assert output["onRaster"] is True, "sequence is not on the gradient raster"
     assert output["numSamples"] == levels.num_samples == ref_totals.shape[0]

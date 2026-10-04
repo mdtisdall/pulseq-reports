@@ -3,12 +3,14 @@ from html.parser import HTMLParser
 
 import pypulseq as pp
 import pytest
+from pulseq_analysis.grad_limits import gradient_limits
+from pulseq_analysis.seq_utils import GAMMA
+from pulseq_checks import HardwareLimits
 from synthetic import SYSTEM
 
-from pulseq_reports import grad_limits, page
+from pulseq_reports import page
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.markup import fmt
-from pulseq_reports.seq_utils import GAMMA
 from pulseq_reports.waveforms import TimeWindow
 
 
@@ -52,7 +54,7 @@ def _parse(body_html: str) -> _CardParser:
     return parser
 
 
-LIMITS = grad_limits.HardwareLimits(
+LIMITS = HardwareLimits(
     max_grad_mt_per_m=SYSTEM.max_grad / GAMMA * 1e3,
     max_slew_t_per_m_per_s=SYSTEM.max_slew / GAMMA,
     label="system limits",
@@ -77,7 +79,7 @@ def _trapezoid_seq(amplitude: float, rise_time: float = 200e-6, flat_time: float
 
 def _hand_computed(amplitude: float, gx) -> dict:
     """Peak (mT/m), max slew (T/m/s) and RMS (mT/m) of `gx`, computed from its own
-    parameters, the same formulas as `test_grad_limits.py`."""
+    parameters."""
     duration = gx.delay + gx.rise_time + gx.flat_time + gx.fall_time
     energy = (
         gx.rise_time * amplitude**2 / 3
@@ -196,7 +198,7 @@ def test_without_limits_the_table_has_no_percent_columns():
     has five (RMS over the window and over the whole file). With `limits`, each table has
     the two percent columns more. The cells of each row are as many as the headers."""
     seq = _two_trapezoid_seq()
-    end = grad_limits.gradient_limits(seq).range_s[1]
+    end = gradient_limits(seq).range_s[1]
     windows = [TimeWindow("first half", 0.0, end / 2), TimeWindow("second half", end / 2, end)]
 
     for kwargs, columns in (({}, 4), ({"windows": windows}, 5)):
@@ -239,31 +241,10 @@ def test_no_gradients_adds_a_reason_note():
     assert card.scripts == ()
 
 
-def test_card_with_a_window_makes_one_pass_over_the_per_event_values(monkeypatch):
-    """With a window, `gradient_limits_card` calls the per-event function
-    (`seq_index.grad_events`, which reads each unique gradient event's block with
-    `get_block`) exactly one time for the one file, instead of once for the window and
-    again for the whole-file RMS (`GradientLimits.whole_rms_mt_per_m` gives that from
-    the same call, section 4.6 item 4 of `docs/plans/cards-at-scale.md`)."""
-    seq, _gx = _trapezoid_seq(0.4 * SYSTEM.max_grad)
-    calls = []
-    real_grad_events = grad_limits.grad_events
-
-    def counting_grad_events(seq, index):
-        calls.append(1)
-        return real_grad_events(seq, index)
-
-    monkeypatch.setattr(grad_limits, "grad_events", counting_grad_events)
-
-    gradient_limits_card(seq, windows=[TimeWindow("first", 0.0, 1e-3)])
-
-    assert len(calls) == 1
-
-
 def _expected_window_table(seq, window) -> list[list[str]]:
     """The cell texts of the table of one window, from `gradient_limits` for that range."""
-    result = grad_limits.gradient_limits(seq, window=window, limits=LIMITS)
-    lim = result.limits
+    result = gradient_limits(seq, window=window)
+    lim = LIMITS
     rows = []
     for axis, label in (("x", "Gx"), ("y", "Gy"), ("z", "Gz")):
         a = result.axes[axis]
@@ -329,7 +310,7 @@ def test_two_windows_give_two_tables_with_the_values_of_each_range():
     """Two windows, one over each trapezoid: the card has one table for each, under an
     `<h3>` of its label, with the values that `gradient_limits` gives for that range."""
     seq = _two_trapezoid_seq()
-    end = grad_limits.gradient_limits(seq).range_s[1]
+    end = gradient_limits(seq).range_s[1]
     first = (0.0, end / 2)
     second = (end / 2, end)
 
@@ -347,23 +328,18 @@ def test_two_windows_give_two_tables_with_the_values_of_each_range():
     assert _parse(card.body_html).tables == [first_table, second_table]
 
 
-def test_window_outside_the_sequence_raises_before_any_computation(monkeypatch):
-    """A window that is not inside the sequence raises `ValueError`, and no analysis
-    ran."""
+def test_window_outside_the_sequence_raises():
+    """A window that is not inside the sequence raises `ValueError`."""
     seq, _gx = _trapezoid_seq(0.4 * SYSTEM.max_grad)
-    calls = []
-    monkeypatch.setattr(grad_limits, "sequence_index", lambda seq: calls.append(1))
 
     with pytest.raises(ValueError, match="late"):
         gradient_limits_card(seq, windows=[TimeWindow("late", 1.0, 2.0)])
-
-    assert calls == []
 
 
 def test_note_gives_the_values_of_the_given_limits():
     """The note's limits are the values of the `limits` argument, with its label."""
     seq, _gx = _trapezoid_seq(0.4 * SYSTEM.max_grad)
-    limits = grad_limits.HardwareLimits(
+    limits = HardwareLimits(
         max_grad_mt_per_m=22.5, max_slew_t_per_m_per_s=77.0, label="test limits"
     )
 

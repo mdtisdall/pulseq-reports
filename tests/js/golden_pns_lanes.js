@@ -15,10 +15,10 @@
 //
 // Usage: node golden_pns_lanes.js IN.json OUT.json
 //
-// IN.json: {"tables": <diagram_data.encode_tables(...) output>,
+// IN.json: {"tables": <pulseq_analysis.series.encode_array of each table>,
 //           "pns": {"hardware", "example", "asc_file", "hw", "dtS",
 //                    "gradScale", "binSamples", "summary",
-//                    "levels": <diagram_data.encode_tables({"min": ..., "max": ...})>},
+//                    "levels": {"min": <pulseq_analysis.series.encode_array output>, "max": ...}},
 //           "numSamples": <int>}
 //
 // OUT.json: {"numSamples": <int>, "onRaster": <bool>,
@@ -41,7 +41,7 @@ const PnsLanes = require(
   path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "pns_lanes.js")
 );
 
-// The typed array constructor for each dtype that `diagram_data.encode_tables`
+// The typed array constructor for each dtype that `pulseq_analysis.series.encode_array`
 // can produce for the tables this script reads: the diagram tables themselves
 // (uint8/uint16/uint32 index columns, float64 offsets and values) and the
 // `pns.levels` min/max arrays (float32, plan section 4.4). Any other dtype
@@ -54,7 +54,7 @@ const TYPED_ARRAY_CTORS = {
   float64: Float64Array,
 };
 
-// One table's `{"dtype", "length", "data"}` (`encode_tables`'s wire form)
+// One table's `{"dtype", "length", "data"}` (`pulseq_analysis.series.encode_array`'s wire form)
 // decoded into a typed array: base64 to bytes, gzip to the little-endian
 // bytes of the array, and those bytes copied into a fresh `ArrayBuffer` so
 // the typed array view is aligned (the `Buffer` that `zlib.gunzipSync`
