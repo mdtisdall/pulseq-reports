@@ -225,7 +225,7 @@ def _count_pns_levels_calls(monkeypatch) -> list:
 
 
 def test_pns_levels_for_shares_one_computation_with_the_pns_card_and_the_diagram(
-    monkeypatch,
+    monkeypatch, write_gradient_asc
 ):
     """The PNS summary card (`cards.pns.pns_card`) and the diagram's PNS lane
     (`cards.diagram.diagram_card(..., pns_lane=True)`) both read `pns.pns_levels_for`, so
@@ -233,13 +233,14 @@ def test_pns_levels_for_shares_one_computation_with_the_pns_card_and_the_diagram
     section 4.6). Adding a block changes the sequence, so the next call recomputes."""
     calls = _count_pns_levels_calls(monkeypatch)
     seq = spin_echo_sequence()
+    path = write_gradient_asc()
 
-    pns_card(seq)
-    diagram_card(seq, [full_window(seq)], pns_lane=True)
+    pns_card(seq, gradient_asc=path)
+    diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
     assert len(calls) == 1
 
     seq.add_block(pp.make_delay(1e-3))
-    pns_card(seq)
+    pns_card(seq, gradient_asc=path)
     assert len(calls) == 2
 
 

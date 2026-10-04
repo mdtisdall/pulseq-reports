@@ -7,17 +7,19 @@ memory. Run it in the devShell from the repository root:
     nix develop --command uv run python scripts/cards_scale.py \
         --card pns|rf|limits|spectrum|diagram|rf-profile|all --blocks N \
         --case repeating|worst \
-        [--tr-s T] [--pns-lanes] --out DIR
+        [--tr-s T] [--pns-lanes] [--gradient-asc PATH] --out DIR
 
-`--card`: which card to measure. `pns` is `cards.pns.pns_card`, `rf` is
+`--card`: which card to measure. `pns` is `cards.pns.pns_card` (with `--gradient-asc`), `rf` is
 `cards.rf_exposure.rf_exposure_card`, `limits` is `cards.gradient_limits.gradient_limits_card`
-(no window, the default), `spectrum` is `cards.spectrum.spectrum_card`, `diagram` is
+(no window, and no limits, the default), `spectrum` is `cards.spectrum.spectrum_card`, `diagram` is
 `cards.diagram.diagram_card` with the "First ADC" and "Full sequence" windows
 (`waveforms.first_adc_window`, `waveforms.full_window`), as `diagram_scale.py` uses,
 `rf-profile` is `cards.rf_profile.rf_profile_card` (`docs/plans/rf-profiles.md`; the
 builders label their RF pulses, as the card needs). Each card is called with its own
-defaults and one file. `--card all` runs each of the six cards in its own fresh process
-(a subprocess of this script with the same arguments and one `--card`), one after
+defaults and one file, except that the PNS card and the PNS lane of the diagram need
+`--gradient-asc`. `--card all` runs each of the six cards in its own fresh process
+(a subprocess of this script with the same arguments and one `--card`; `--gradient-asc`
+goes to the `pns` subprocess, and to the diagram subprocess with `--pns-lanes`), one after
 another, so that the peak RSS of one card does not hide another; it collects their JSON
 into one combined file too.
 
@@ -67,13 +69,18 @@ For each card run, it records (as JSON, and prints a one-line summary):
 - `card_bytes`: the size of the card in the page: its body HTML plus its data as JSON
   (UTF-8 bytes; the data holds the base64 of the compressed tables and levels).
 - `pns_lanes`: whether `--pns-lanes` was given.
+- `gradient_asc`: the `--gradient-asc` path that the card was given, or `null`.
 - `python_version`, `numpy_version`, `pypulseq_version`.
 
-`--pns-lanes`: the diagram card is called with `pns_lane=True` (pypulseq's example hardware),
-so it adds the PNS lane (`docs/plans/diagram-lanes.md`). Its time and `card_bytes` minus
-those of a run without `--pns-lanes` are what the PNS lane adds (section 2.4 of that
+`--pns-lanes`: the diagram card is called with `pns_lane=True` and the `--gradient-asc`
+file, so it adds the PNS lane (`docs/plans/diagram-lanes.md`). Its time and `card_bytes`
+minus those of a run without `--pns-lanes` are what the PNS lane adds (section 2.4 of that
 plan). No other card reads it, so `--pns-lanes` with a `--card` other than `diagram` or
 `all` is an error, and `--card all --pns-lanes` gives it only to the diagram subprocess.
+
+`--gradient-asc PATH`: the gradient .asc file of the scanner, for the PNS prediction. There
+is no example hardware, so it is necessary with `--card pns`, with `--card diagram
+--pns-lanes` and with `--card all`; with any other card, it is an error.
 
 It writes one JSON file for each card run to `--out`, named
 `cards-scale-<card>-<case>-<blocks>.json` (pretty-printed; `blocks` is the requested
@@ -171,8 +178,8 @@ def resolve_tr_margin(diagram_scale: types.ModuleType, case: str, tr_s: float) -
     return _round_to_raster(_round_to_raster(tr_s) - used)
 
 
-def _run_pns(seq: pp.Sequence) -> Card:
-    return pns_card(seq)
+def _run_pns(seq: pp.Sequence, gradient_asc: Path) -> Card:
+    return pns_card(seq, gradient_asc=gradient_asc)
 
 
 def _run_rf(seq: pp.Sequence) -> Card:
@@ -187,9 +194,9 @@ def _run_spectrum(seq: pp.Sequence) -> Card:
     return spectrum_card(seq)
 
 
-def _run_diagram(seq: pp.Sequence, pns_lanes: bool) -> Card:
+def _run_diagram(seq: pp.Sequence, pns_lanes: bool, gradient_asc: Path | None) -> Card:
     windows = [first_adc_window(seq), full_window(seq)]
-    return diagram_card(seq, windows, pns_lane=pns_lanes)
+    return diagram_card(seq, windows, pns_lane=pns_lanes, gradient_asc=gradient_asc)
 
 
 def _run_rf_profile(seq: pp.Sequence) -> Card:
@@ -214,7 +221,13 @@ CARD_NAMES = tuple(CARD_RUNNERS)
 
 
 def run(
-    card: str, blocks: int, case: str, tr_s: float | None, out_dir: Path, pns_lanes: bool = False
+    card: str,
+    blocks: int,
+    case: str,
+    tr_s: float | None,
+    out_dir: Path,
+    pns_lanes: bool = False,
+    gradient_asc: Path | None = None,
 ) -> dict:
     diagram_scale = _load_diagram_scale()
     n_trs = blocks // diagram_scale.TR_BLOCKS
@@ -238,7 +251,12 @@ def run(
     peak_rss_before_card_bytes = diagram_scale._peak_rss_bytes()
 
     card_start = time.perf_counter()
-    built = _run_diagram(seq, pns_lanes) if card == "diagram" else CARD_RUNNERS[card](seq)
+    if card == "diagram":
+        built = _run_diagram(seq, pns_lanes, gradient_asc)
+    elif card == "pns":
+        built = _run_pns(seq, gradient_asc)
+    else:
+        built = CARD_RUNNERS[card](seq)
     card_s = time.perf_counter() - card_start
     peak_rss_after_card_bytes = diagram_scale._peak_rss_bytes()
 
@@ -263,6 +281,7 @@ def run(
         "added_rss_bytes": added_rss_bytes,
         "card_bytes": _card_bytes(built),
         "pns_lanes": pns_lanes,
+        "gradient_asc": None if gradient_asc is None else str(gradient_asc),
         "python_version": platform.python_version(),
         "numpy_version": np.__version__,
         "pypulseq_version": pp.__version__,
@@ -289,13 +308,19 @@ def _json_name(card: str, case: str, blocks: int, pns_lanes: bool) -> str:
 
 
 def _run_all(
-    blocks: int, case: str, tr_s: float | None, out_dir: Path, pns_lanes: bool = False
+    blocks: int,
+    case: str,
+    tr_s: float | None,
+    out_dir: Path,
+    pns_lanes: bool,
+    gradient_asc: Path,
 ) -> dict:
     """Runs each of `CARD_NAMES` as a fresh subprocess of this script, with the same
     `--blocks`, `--case`, `--tr-s` and `--out`, and one `--card`, so that the peak RSS
     of one card does not hide another. `pns_lanes` gives `--pns-lanes` to the diagram
-    subprocess only. Reads back each subprocess's own JSON file and combines them into
-    one file, keyed by card name."""
+    subprocess only. `gradient_asc` gives `--gradient-asc` to the `pns` subprocess, and
+    to the diagram subprocess when `pns_lanes` is true. Reads back each subprocess's own
+    JSON file and combines them into one file, keyed by card name."""
     combined: dict[str, dict] = {}
     for card in CARD_NAMES:
         cmd = [
@@ -315,6 +340,8 @@ def _run_all(
         card_pns_lanes = pns_lanes and card == "diagram"
         if card_pns_lanes:
             cmd.append("--pns-lanes")
+        if card == "pns" or card_pns_lanes:
+            cmd += ["--gradient-asc", str(gradient_asc)]
         print(f"---- {card}: running in a fresh process ----", file=sys.stderr)
         subprocess.run(cmd, check=True)
         json_path = out_dir / _json_name(card, case, blocks, card_pns_lanes)
@@ -340,19 +367,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="the diagram card with pns_lane=True (the PNS lane)",
     )
+    parser.add_argument(
+        "--gradient-asc",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="the gradient .asc file of the scanner (--card pns, --card diagram --pns-lanes, "
+        "--card all)",
+    )
     parser.add_argument("--out", type=Path, required=True, help="output directory")
     args = parser.parse_args(argv)
     if args.pns_lanes and args.card not in ("diagram", "all"):
         parser.error("--pns-lanes needs --card diagram or --card all")
+    needs_asc = args.card in ("pns", "all") or (args.card == "diagram" and args.pns_lanes)
+    if needs_asc and args.gradient_asc is None:
+        parser.error("--gradient-asc is necessary with --card pns, --card all and --pns-lanes")
+    if not needs_asc and args.gradient_asc is not None:
+        parser.error("--gradient-asc needs --card pns, --card all or --card diagram --pns-lanes")
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.card == "all":
-        _run_all(args.blocks, args.case, args.tr_s, args.out, args.pns_lanes)
+        _run_all(args.blocks, args.case, args.tr_s, args.out, args.pns_lanes, args.gradient_asc)
         return 0
-    result = run(args.card, args.blocks, args.case, args.tr_s, args.out, args.pns_lanes)
+    result = run(
+        args.card, args.blocks, args.case, args.tr_s, args.out, args.pns_lanes, args.gradient_asc
+    )
     print(json.dumps(result, indent=2))
     return 0
 

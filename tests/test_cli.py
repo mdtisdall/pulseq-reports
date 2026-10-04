@@ -58,10 +58,7 @@ def test_max_grad_and_max_slew_reach_the_gradient_limits_card(seq_file, tmp_path
     out = tmp_path / "out.html"
 
     assert cli.main([str(seq_file), "-o", str(out), "--cards", "gradient-limits"]) == 0
-    warning = capsys.readouterr().err
-    default = _read(seq_file).system
-    grad_mt, slew = default.max_grad / 42.576e6 * 1e3, default.max_slew / 42.576e6
-    assert f"{grad_mt:g}" in warning and f"{slew:g}" in warning
+    assert capsys.readouterr().err == ""
     assert out.read_text(encoding="utf-8") == _page(seq_file, ["gradient-limits"])
 
     args = ["--cards", "gradient-limits", "--max-grad", "33.25", "--max-slew", "211.5"]
@@ -69,6 +66,7 @@ def test_max_grad_and_max_slew_reach_the_gradient_limits_card(seq_file, tmp_path
     assert capsys.readouterr().err == ""
     limits = HardwareLimits(33.25, 211.5, options.COMMAND_LINE_LABEL)
     assert out.read_text(encoding="utf-8") == _page(seq_file, ["gradient-limits"], limits=limits)
+    assert out.read_text(encoding="utf-8") != _page(seq_file, ["gradient-limits"])
 
 
 @pytest.mark.parametrize("flag", ["--max-grad", "--max-slew"])
@@ -132,7 +130,7 @@ def test_an_unknown_card_name_exits_1(seq_file, tmp_path, capsys, flag):
     assert not out.exists()
 
 
-def test_a_file_with_a_failed_check_exits_2_and_names_the_check(seq_file, tmp_path, capsys):
+def test_a_page_with_an_error_card_exits_1_and_the_page_is_written(seq_file, tmp_path, capsys):
     out = tmp_path / "out.html"
 
     status = cli.main(
@@ -140,22 +138,20 @@ def test_a_file_with_a_failed_check_exits_2_and_names_the_check(seq_file, tmp_pa
             str(seq_file),
             "-o",
             str(out),
+            "--card-module",
+            "plugin_card:BROKEN",
             "--cards",
-            "gradient-limits",
-            "--max-grad",
-            "5",
-            "--max-slew",
-            "5",
+            "timing,plugin-broken",
         ]
     )
 
-    assert status == 2
-    err = capsys.readouterr().err
-    assert str(seq_file) in err and "gradient-limits" in err
-    assert out.is_file()
+    assert status == 1
+    text = out.read_text(encoding="utf-8")
+    assert 'id="timing"' in text and 'id="plugin-broken"' in text
+    assert "NotImplementedError" in text
 
 
-def test_a_file_with_no_failed_check_exits_0(seq_file, tmp_path):
+def test_a_file_with_no_error_card_exits_0(seq_file, tmp_path):
     assert cli.main([str(seq_file), "-o", str(tmp_path / "out.html"), "--cards", FAST]) == 0
 
 
@@ -171,15 +167,6 @@ def test_an_unreadable_file_exits_1_and_the_good_file_has_its_page(seq_file, tmp
     err = capsys.readouterr().err
     assert str(bad) in err and str(missing) in err
     assert [p.name for p in out.iterdir()] == ["se.html"]
-
-
-def test_the_status_1_wins_over_the_status_2(seq_file, tmp_path):
-    missing = tmp_path / "missing.seq"
-    args = ["--cards", "gradient-limits", "--max-grad", "5", "--max-slew", "5"]
-
-    status = cli.main([str(missing), str(seq_file), "-o", str(tmp_path / "pages"), *args])
-
-    assert status == 1
 
 
 def test_card_module_adds_the_card_and_its_option(seq_file, tmp_path):
@@ -254,8 +241,7 @@ def test_each_option_of_the_discovered_specs_has_its_flag_in_the_parser(capsys, 
 
 
 CONFIG_FLAGS = [
-    "--max-grad", "30", "--max-slew", "200", "--coil", "prisma-as82", "--max-rows", "5",
-    "--check-norms",
+    "--max-grad", "30", "--max-slew", "200", "--max-rows", "5",
 ]  # fmt: skip
 CONFIG_VALUES = {
     "limits": {
@@ -263,16 +249,12 @@ CONFIG_VALUES = {
         "max_slew_t_per_m_per_s": 200,
         "label": options.COMMAND_LINE_LABEL,
     },
-    "coil": "prisma-as82",
     "max_rows": 5,
-    "check_norms": True,
     "cards": ["gradient-limits", "blocks", "gradient-spectrum"],
 }
 CONFIG_TOML = """
 cards = ["gradient-limits", "blocks", "gradient-spectrum"]
-coil = "prisma-as82"
 max_rows = 5
-check_norms = true
 
 [limits]
 max_grad_mt_per_m = 30
@@ -308,7 +290,7 @@ def test_a_flag_overrides_the_config_file(seq_file, tmp_path):
         cli.main([str(seq_file), "-o", str(out), "--config", str(config), "--max-rows", "3"]) == 0
     )
     assert cli.main([str(seq_file), "-o", str(tmp_path / "f.html"), "--cards", FAST,
-                     *CONFIG_FLAGS[:-3], "--max-rows", "3", "--check-norms"]) == 0  # fmt: skip
+                     *CONFIG_FLAGS[:-2], "--max-rows", "3"]) == 0  # fmt: skip
 
     assert out.read_text(encoding="utf-8") == (tmp_path / "f.html").read_text(encoding="utf-8")
 

@@ -3,7 +3,7 @@
 import pypulseq as pp
 
 from pulseq_reports.markup import html_table
-from pulseq_reports.page import Card, Check
+from pulseq_reports.page import Card
 from pulseq_reports.registry import CardSpec, ReportContext
 
 
@@ -38,43 +38,26 @@ def _error_row(e: dict) -> list:
 
 
 def _timing_html(errors: list[dict]) -> str:
-    """The timing check body: a status paragraph, and an error table when there are
-    errors."""
-    if not errors:
-        return (
-            '<p class="status good"><span aria-hidden="true">✓</span> '
-            "Timing check passed: pypulseq reported no errors.</p>"
-        )
+    """The timing check body: a sentence with the number of errors, and an error table
+    when there are errors."""
     head = (
-        '<p class="status bad"><span aria-hidden="true">✕</span> '
-        f"Timing check failed: {len(errors)} error{'s' if len(errors) != 1 else ''}.</p>"
+        f"<p>pypulseq's timing check gave {len(errors)} error{'s' if len(errors) != 1 else ''}.</p>"
     )
+    if not errors:
+        return head
     return head + html_table(_HEADERS, [_error_row(e) for e in errors])
 
 
 def timing_card(seq: pp.Sequence, *, card_id: str = "timing") -> Card:
     """The timing check card: pypulseq's `check_timing` result for the sequence.
 
-    `body_html` is exactly the vb-pulseq timing check HTML: a status paragraph, and an
-    error table when there are errors (parity).
-
-    The card has one check, `timing`, which fails when pypulseq's timing check gives errors.
+    `body_html` is a sentence with the number of errors that `check_timing` gave ("1 error",
+    "0 errors", "2 errors"), and an error table when there are errors. The card gives no
+    verdict.
     """
     errors = _timing_errors(seq)
     body = _timing_html(errors)
-    check = Check(
-        name="timing",
-        passed=not errors,
-        message=(
-            "pypulseq's timing check gave no errors."
-            if not errors
-            else f"pypulseq's timing check gave {len(errors)} "
-            f"error{'s' if len(errors) != 1 else ''}."
-        ),
-    )
-    return Card(
-        id=card_id, title="Timing check", body_html=body, data=None, script=None, checks=(check,)
-    )
+    return Card(id=card_id, title="Timing check", body_html=body, data=None, script=None)
 
 
 def _build(ctx: ReportContext) -> Card:

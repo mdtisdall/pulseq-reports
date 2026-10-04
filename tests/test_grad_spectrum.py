@@ -15,6 +15,8 @@ from synthetic import (
 
 from pulseq_reports import grad_spectrum
 
+RESONANCES = ((590.0, 100.0), (1140.0, 220.0))  # (frequency_hz, bandwidth_hz)
+
 # A Hann window's amplitude spectral density of a 1 mT/m sine on a frequency bin:
 # A/2 * sum(w) / sqrt(fs * sum(w^2)), with 5000 samples at 100 kHz.
 SINE_1MT_PEAK = 0.5 * 0.5 / math.sqrt(1e5 * 0.375 / 5000)
@@ -41,13 +43,8 @@ def _assert_same_spectrum(a, b):
     ]
 
 
-def test_prisma_as82_resonances():
-    bands = [(r.low_hz, r.high_hz) for r in grad_spectrum.PRISMA_AS82_RESONANCES]
-    assert bands == [(540, 640), (1030, 1250)]
-
-
 def test_spin_echo_spectrum():
-    s = grad_spectrum.gradient_spectrum(spin_echo_sequence())
+    s = grad_spectrum.gradient_spectrum(spin_echo_sequence(), resonances=RESONANCES)
     assert s.reason is None
     assert s.frequency_hz[0] == 0
     assert s.frequency_hz[-1] == pytest.approx(grad_spectrum.MAX_FREQUENCY_HZ)
@@ -57,14 +54,15 @@ def test_spin_echo_spectrum():
     for spectrum in s.axes.values():
         assert spectrum.shape == s.frequency_hz.shape
         assert np.all(s.rss >= spectrum - 1e-12)
-    assert [b.resonance for b in s.band_peaks] == list(grad_spectrum.PRISMA_AS82_RESONANCES)
+    assert [b.resonance for b in s.band_peaks] == list(RESONANCES)
     for b in s.band_peaks:
-        assert b.resonance.low_hz <= b.frequency_hz <= b.resonance.high_hz
+        frequency_hz, bandwidth_hz = b.resonance
+        assert frequency_hz - bandwidth_hz / 2 <= b.frequency_hz <= frequency_hz + bandwidth_hz / 2
         assert 0 <= b.relative <= 1
 
 
 def test_sine_in_the_first_band():
-    s = grad_spectrum.gradient_spectrum(_sine_sequence(600))
+    s = grad_spectrum.gradient_spectrum(_sine_sequence(600), resonances=RESONANCES)
     assert s.frequency_hz[np.argmax(s.rss)] == pytest.approx(600)
     assert s.rss.max() == pytest.approx(SINE_1MT_PEAK, rel=0.01)
     first, second = s.band_peaks
@@ -75,7 +73,7 @@ def test_sine_in_the_first_band():
 
 
 def test_sine_outside_the_bands():
-    s = grad_spectrum.gradient_spectrum(_sine_sequence(300))
+    s = grad_spectrum.gradient_spectrum(_sine_sequence(300), resonances=RESONANCES)
     assert all(b.relative < 0.05 for b in s.band_peaks)  # about 2% from the start and end
 
 
@@ -89,6 +87,13 @@ def test_gradients_at_the_end_are_not_attenuated():
     # 60 ms of sine after 440 ms of nothing: the last sample is at the sequence end.
     s = grad_spectrum.gradient_spectrum(_sine_sequence(600, duration_s=0.06, delay_s=0.44))
     assert s.rss.max() == pytest.approx(SINE_1MT_PEAK, rel=0.02)
+
+
+def test_without_resonances_there_are_no_band_peaks():
+    s = grad_spectrum.gradient_spectrum(spin_echo_sequence())
+    assert s.reason is None
+    assert s.resonances == ()
+    assert s.band_peaks == ()
 
 
 def test_no_gradients():
@@ -108,9 +113,9 @@ def test_chunks_give_the_same_spectrum_as_one_chunk(monkeypatch):
     # windows make 7 chunks, and the last chunk is shorter than the others.
     seq = gre_sequence(num_trs=30)
     monkeypatch.setattr(grad_spectrum, "CHUNK_WINDOWS", 1_000_000)
-    whole = grad_spectrum.gradient_spectrum(seq)
+    whole = grad_spectrum.gradient_spectrum(seq, resonances=RESONANCES)
     monkeypatch.setattr(grad_spectrum, "CHUNK_WINDOWS", 4)
-    chunked = grad_spectrum.gradient_spectrum(seq)
+    chunked = grad_spectrum.gradient_spectrum(seq, resonances=RESONANCES)
     _assert_same_spectrum(chunked, whole)
 
 
@@ -138,13 +143,7 @@ def _assert_matches_oracle(got: grad_spectrum.GradientSpectrum, ref, tol: float 
     np.testing.assert_allclose(got.rss, ref.rss, rtol=tol, atol=tol * rss_peak)
     assert len(got.band_peaks) == len(ref.band_peaks)
     for g, r in zip(got.band_peaks, ref.band_peaks):
-        # `g.resonance` and `r.resonance` are `AcousticResonance` instances of two
-        # different classes (this module's and the oracle's own copy), so compare their
-        # fields, not the dataclass instances themselves.
-        assert (g.resonance.frequency_hz, g.resonance.bandwidth_hz) == (
-            r.resonance.frequency_hz,
-            r.resonance.bandwidth_hz,
-        )
+        assert g.resonance == r.resonance
         assert g.peak == pytest.approx(r.peak, rel=tol, abs=tol * rss_peak)
         assert g.frequency_hz == pytest.approx(r.frequency_hz, rel=tol, abs=tol)
         assert g.relative == pytest.approx(r.relative, rel=tol, abs=tol)
@@ -162,7 +161,10 @@ def _assert_matches_oracle(got: grad_spectrum.GradientSpectrum, ref, tol: float 
     ids=["spin_echo", "gre", "arbitrary_gradient", "empty", "sine"],
 )
 def test_matches_oracle_on_synthetic_sequences(seq):
-    _assert_matches_oracle(grad_spectrum.gradient_spectrum(seq), oracle.gradient_spectrum(seq))
+    _assert_matches_oracle(
+        grad_spectrum.gradient_spectrum(seq, resonances=RESONANCES),
+        oracle.gradient_spectrum(seq, RESONANCES),
+    )
 
 
 @pytest.mark.parametrize("case", ["repeating", "worst"])
@@ -182,5 +184,7 @@ def test_matches_oracle_on_long_sequences(case):
     seq = build(n_trs)
     tol = 1e-12 * max(1.0, seq.duration()[0])
     _assert_matches_oracle(
-        grad_spectrum.gradient_spectrum(seq), oracle.gradient_spectrum(seq), tol=tol
+        grad_spectrum.gradient_spectrum(seq, resonances=RESONANCES),
+        oracle.gradient_spectrum(seq, RESONANCES),
+        tol=tol,
     )

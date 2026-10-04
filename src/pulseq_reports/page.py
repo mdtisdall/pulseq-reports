@@ -36,15 +36,6 @@ TOPIC_KINDS: dict[str, str] = {
 
 
 @dataclass(frozen=True)
-class Check:
-    """One pass or fail result of a card: `name` is short, `message` says the values."""
-
-    name: str
-    passed: bool
-    message: str
-
-
-@dataclass(frozen=True)
 class Card:
     """One section of the report page.
 
@@ -56,9 +47,9 @@ class Card:
     the title and the body are in a closed `<details>` element.
 
     `scripts` and `css` are the texts that the card needs on the page; `render_page`
-    includes each distinct text one time. `checks` are the card's results; `render_page`
-    does not show them. `publishes` and `subscribes` are the topics of the card's messages
-    (see `TOPIC_KINDS`).
+    includes each distinct text one time. `publishes` and `subscribes` are the topics of the
+    card's messages (see `TOPIC_KINDS`). `error` is the message of a card that did not
+    build (the registry's error card sets it), or None; `render_page` does not show it.
     """
 
     id: str
@@ -69,9 +60,9 @@ class Card:
     collapsed: bool = False
     scripts: tuple[str, ...] = ()
     css: tuple[str, ...] = ()
-    checks: tuple[Check, ...] = ()
     publishes: tuple[str, ...] = ()
     subscribes: tuple[str, ...] = ()
+    error: str | None = None
 
 
 def card_asset(name: str) -> str:
@@ -163,8 +154,7 @@ def render_page(
 
     The page's one `<style>` element has report.css, each distinct text of the cards'
     `css` (in the order of first use) and then `extra_css` in the given order, so a rule
-    of `extra_css` wins over a library rule of the same specificity. The page does not
-    show `Card.checks`.
+    of `extra_css` wins over a library rule of the same specificity.
 
     Raises ValueError when two cards have the same id, when a card id or a script name
     does not match `[a-z][a-z0-9-]*`, when a script contains `</script`, when a CSS text

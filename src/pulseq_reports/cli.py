@@ -2,9 +2,9 @@
 
 The flags come from the cards that are installed (`registry.discover`): one flag, or one
 flag pair, for each distinct option. A config file (`--config`) gives the same options.
-The exit status is 0 when each page is written and each check passed, 2 when each page is
-written and a check failed, and 1 for an error in the arguments, in the config file or in a
-card spec, and for a file that cannot be read or written.
+The exit status is 0 when each page is written and no card is an error card, and 1 for an
+error in the arguments, in the config file or in a card spec, for a file that cannot be
+read or written, and for a page with an error card (the page is written).
 """
 
 import argparse
@@ -18,11 +18,9 @@ from pathlib import Path
 
 import pypulseq as pp
 
-from . import __version__, options, registry
-from .grad_limits import _default_limits
+from . import __version__, registry
 from .page import write_page
 from .registry import CardSpec, Option, build_cards
-from .seq_utils import GAMMA
 
 
 class _CliError(Exception):
@@ -232,7 +230,7 @@ def _run(argv: Sequence[str]) -> int:
                 raise _CliError(f"{where}: {error}") from error
 
         outputs = _output_paths(args.files, args.output)
-        return _write_pages(args.files, outputs, cards, skip, values, declared)
+        return _write_pages(args.files, outputs, cards, skip, values)
 
 
 def _write_pages(
@@ -241,7 +239,6 @@ def _write_pages(
     cards: Sequence[str] | None,
     skip: Sequence[str],
     values: dict[str, object],
-    declared: Sequence[Option],
 ) -> int:
     status = 0
     for file, output in zip(files, outputs):
@@ -252,15 +249,6 @@ def _write_pages(
             _report(f"{file}: could not be read: {type(error).__name__}: {error}")
             status = 1
             continue
-        if any(options.limits is d for d in declared) and "limits" not in values:
-            used = _default_limits(seq, GAMMA)
-            print(
-                f"pulseq-report: warning: {file}: no gradient limits were given (--max-grad "
-                f"and --max-slew, or limits in the config file): the gradient check used the "
-                f"limits of the sequence's system, {used.max_grad_mt_per_m:g} mT/m and "
-                f"{used.max_slew_t_per_m_per_s:g} T/m/s",
-                file=sys.stderr,
-            )
         try:
             built = build_cards(seq, cards=cards, skip=skip, **values)
             write_page(output, file.name, f"pulseq-reports {__version__}", built)
@@ -269,17 +257,15 @@ def _write_pages(
             status = 1
             continue
         for card in built:
-            for check in card.checks:
-                if not check.passed:
-                    _report(f"{file}: {card.id}: {check.name}: {check.message}")
-                    if status == 0:
-                        status = 2
+            if card.error is not None:
+                _report(f"{file}: {card.id}: {card.error}")
+                status = 1
     return status
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command line with `argv` (default: `sys.argv[1:]`). Returns the exit status:
-    0, 2 (a check failed) or 1 (an error)."""
+    0 (each page is written and no card is an error card) or 1 (an error)."""
     try:
         return _run(sys.argv[1:] if argv is None else argv)
     except _CliError as error:

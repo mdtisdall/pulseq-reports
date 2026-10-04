@@ -1,17 +1,13 @@
-"""Gradient spectrum card: the axis and RSS spectra against a gradient coil's acoustic
-resonances."""
+"""Gradient spectrum card: the axis and RSS spectra of a sequence."""
 
 import html
 
 import pypulseq as pp
 
-from pulseq_reports import options
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.grad_spectrum import (
     FFT_WINDOW_S,
     MAX_FREQUENCY_HZ,
-    PRISMA_AS82,
-    GradientCoil,
     GradientSpectrum,
     gradient_spectrum,
 )
@@ -20,7 +16,6 @@ from pulseq_reports.markup import (
     Lane,
     _sig,
     fmt,
-    html_table,
     lanes_json,
     zoom_controls,
 )
@@ -39,7 +34,8 @@ def _spectrum_data(s: GradientSpectrum) -> dict:
         "max_frequency_hz": MAX_FREQUENCY_HZ,
         "db_floor": _SPECTRUM_DB_FLOOR,
         "resonances": [
-            {"frequency_hz": r.frequency_hz, "bandwidth_hz": r.bandwidth_hz} for r in s.resonances
+            {"frequency_hz": frequency_hz, "bandwidth_hz": bandwidth_hz}
+            for frequency_hz, bandwidth_hz in s.resonances
         ],
         "lanes": [],
         "bands": [],
@@ -73,8 +69,8 @@ def _spectrum_data(s: GradientSpectrum) -> dict:
     )
     out["bands"] = [
         {
-            "low_hz": b.resonance.low_hz,
-            "high_hz": b.resonance.high_hz,
+            "low_hz": b.resonance[0] - b.resonance[1] / 2,
+            "high_hz": b.resonance[0] + b.resonance[1] / 2,
             "peak": _sig(b.peak),
             "peak_frequency_hz": round(b.frequency_hz, 3),
             "relative": round(b.relative, 4),
@@ -84,31 +80,13 @@ def _spectrum_data(s: GradientSpectrum) -> dict:
     return out
 
 
-def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
-    """The body of the "Gradient spectrum" card: the band table, the chart and its
-    explanation, or a note that there is no spectrum. `card_id` is used to build the
-    chart element ids (`{card_id}-chart`, `{card_id}-diagram`, `{card_id}-tip`)."""
+def _spectrum_html(spectrum: dict, card_id: str) -> str:
+    """The body of the "Gradient spectrum" card: the chart and its explanation, or a note
+    that there is no spectrum. `card_id` is used to build the chart element ids
+    (`{card_id}-chart`, `{card_id}-diagram`, `{card_id}-tip`)."""
     if spectrum["reason"] is not None:
         return f'<p class="muted">No gradient spectrum: {html.escape(spectrum["reason"])}.</p>'
 
-    table = html_table(
-        [
-            f"{scanner_label} forbidden band (Hz)",
-            f"Largest RSS in band ({_SPECTRUM_UNIT})",
-            "At (Hz)",
-            "Relative to spectrum peak",
-        ],
-        [
-            [
-                f"{b['low_hz']:g}–{b['high_hz']:g}",
-                fmt(b["peak"]),
-                f"{b['peak_frequency_hz']:.0f}",
-                f"{b['relative']:.3f}",
-            ]
-            for b in spectrum["bands"]
-        ],
-    )
-    bands = ", ".join(f"{b['low_hz']:g}–{b['high_hz']:g} Hz" for b in spectrum["bands"])
     controls = (
         '<div class="controls" role="group" aria-label="Spectrum scale">'
         '<button type="button" data-scale="linear" aria-pressed="true">Linear</button>'
@@ -121,13 +99,9 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
         f'<svg id="{diagram_id}" tabindex="0" role="img" aria-label="'
         + html.escape(
             f"Gradient spectrum: Gx, Gy, Gz and RSS against frequency, 0 to "
-            f"{spectrum['max_frequency_hz']:g} Hz, with the {scanner_label} forbidden bands "
-            f"{bands} shaded"
+            f"{spectrum['max_frequency_hz']:g} Hz"
         )
         + f'"></svg><div class="tip" id="{card_id}-tip" hidden></div></div>'
-    )
-    band_text = " and ".join(
-        f"{r['frequency_hz']:g} ± {r['bandwidth_hz'] / 2:g} Hz" for r in spectrum["resonances"]
     )
     window_ms = FFT_WINDOW_S * 1e3
     note = (
@@ -136,28 +110,21 @@ def _spectrum_html(spectrum: dict, scanner_label: str, card_id: str) -> str:
         "Hann windows with 50% overlap, the magnitude spectrum (amplitude spectral density) of "
         "each window, and the maximum over windows. The gradients are padded with half a window "
         "of zeros at each end. RSS is the root-sum-of-squares of the three axes in each window. "
-        "A band's largest value can be at its edge, from the tail of lower-frequency content. The red "
-        f"bands are the acoustic resonances of the {html.escape(scanner_label)} gradient coil: "
-        f"{band_text}. These are published values, not read from a scanner; "
-        "check them against the gradient .asc file of the scanner you use. On the dB scale, "
-        "each value is 20 log10 of its ratio to the largest RSS value, and values below "
+        "On the dB scale, each value is 20 log10 of its ratio to the largest RSS value, and "
+        "values below "
         f"{fmt(_SPECTRUM_DB_FLOOR)} dB are drawn at {fmt(_SPECTRUM_DB_FLOOR)} dB. "
         "Click the chart to mark the centre for the zoom buttons. "
         "Drag across the chart to zoom to that range. Hold Shift and drag, or scroll "
         "sideways, to pan.</p>"
     )
-    return table + controls + zoom_controls(diagram_id) + chart + note
+    return controls + zoom_controls(diagram_id) + chart + note
 
 
-def spectrum_card(
-    seq: pp.Sequence,
-    *,
-    coil: GradientCoil = PRISMA_AS82,
-    card_id: str = "gradient-spectrum",
-) -> Card:
-    """The "Gradient spectrum" card of one sequence against the resonances of `coil`: the
-    body is `_spectrum_html(data, coil.label, card_id)`, with `data` from `_spectrum_data`
-    of `grad_spectrum.gradient_spectrum(seq, resonances=coil.resonances)`.
+def spectrum_card(seq: pp.Sequence, *, card_id: str = "gradient-spectrum") -> Card:
+    """The "Gradient spectrum" card of one sequence: the body is
+    `_spectrum_html(data, card_id)`, with `data` from `_spectrum_data` of
+    `grad_spectrum.gradient_spectrum(seq)`. The card gives no resonance bands, so `data` has
+    empty `resonances` and `bands` (the card script reads `data.resonances`).
 
     `data` is always the JSON-ready spectrum dict and `script` is always `"spectrum"`,
     even when there are no gradients, so the card script can still read `data.reason`. The
@@ -167,8 +134,8 @@ def spectrum_card(
     (`extensions.refuse_rotations`).
     """
     refuse_rotations(seq)
-    data = _spectrum_data(gradient_spectrum(seq, resonances=coil.resonances))
-    body = _spectrum_html(data, coil.label, card_id)
+    data = _spectrum_data(gradient_spectrum(seq))
+    body = _spectrum_html(data, card_id)
     return Card(
         id=card_id,
         title="Gradient spectrum",
@@ -180,7 +147,7 @@ def spectrum_card(
 
 
 def _build(ctx: ReportContext) -> Card:
-    return spectrum_card(ctx.seq, coil=ctx.option(options.coil), card_id=SPEC.name)
+    return spectrum_card(ctx.seq, card_id=SPEC.name)
 
 
-SPEC = CardSpec("gradient-spectrum", 50, _build, (options.coil,))
+SPEC = CardSpec("gradient-spectrum", 50, _build)

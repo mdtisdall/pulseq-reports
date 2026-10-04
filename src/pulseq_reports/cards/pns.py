@@ -1,7 +1,8 @@
-"""PNS prediction summary card: the status line, the table of peaks, a button that
-shows the peak in the diagram, and the hardware note. The PNS chart is the PNS lane of
-the sequence diagram (`cards.diagram.diagram_card(..., pns_lane=True)`), not this card
-(`docs/plans/diagram-lanes.md`, section 4.6)."""
+"""PNS prediction summary card: the table of peaks, a button that shows the peak in the
+diagram, and the note about the model. The PNS chart is the PNS lane of the sequence
+diagram (`cards.diagram.diagram_card(..., pns_lane=True)`), not this card
+(`docs/plans/diagram-lanes.md`, section 4.6). Without the gradient .asc file of the
+scanner, the card has no prediction."""
 
 import html
 from pathlib import Path
@@ -12,7 +13,7 @@ import pypulseq as pp
 from pulseq_reports import options
 from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.markup import html_table
-from pulseq_reports.page import Card, Check, card_asset
+from pulseq_reports.page import Card, card_asset
 from pulseq_reports.pns import peak_tr_window, pns_prediction
 from pulseq_reports.registry import CardSpec, ReportContext
 from pulseq_reports.seq_index import sequence_index
@@ -21,9 +22,13 @@ PUBLISHES = ("goto",)
 
 _GOTO_TR_TEXT = "Show the peak's TR in the diagram"
 _GOTO_BLOCK_TEXT = "Show the peak's block in the diagram"
+_NO_ASC_HTML = (
+    '<p class="muted">No PNS prediction: it needs the gradient .asc file of the scanner '
+    "(<code>gradient_asc</code>).</p>"
+)
 
 
-def _pns_data(seq: pp.Sequence, *, gradient_asc: str | Path | None = None) -> dict:
+def _pns_data(seq: pp.Sequence, *, gradient_asc: str | Path) -> dict:
     """PNS prediction summary (`pns.pns_prediction`) as JSON-ready data, in percent of
     the stimulation limit and in ms. The card's body is written from it; it is not the
     card's own data (`_goto_data`)."""
@@ -32,7 +37,6 @@ def _pns_data(seq: pp.Sequence, *, gradient_asc: str | Path | None = None) -> di
         "reason": p.reason,
         "hardware": p.hardware,
         "asc_file": p.asc_file,
-        "example": p.asc_file is None,
         "peak_percent": round(100 * p.peak, 2),
         "peak_time_ms": round(p.peak_time_s * 1e3, 4) if p.peak_time_s is not None else None,
         "axis_peaks_percent": {axis: round(100 * v, 2) for axis, v in p.axis_peaks.items()},
@@ -58,53 +62,15 @@ def _goto_data(seq: pp.Sequence, peak_time_s: float) -> dict:
     return {"format": 1, "goto": goto}
 
 
-def _check(p: dict) -> Check:
-    """The card's check: failed when the predicted peak is 100 % or more of the stimulation
-    limit (the rule of the status line), from `_pns_data`. A prediction with a `reason`
-    passes."""
-    if p["reason"] is not None:
-        return Check(name="pns", passed=True, message=f"No PNS prediction: {p['reason']}.")
-    peak = p["peak_percent"]
-    if peak >= 100:
-        return Check(
-            name="pns",
-            passed=False,
-            message=f"Predicted PNS peak {peak:.1f} % is at or above the 100 % limit.",
-        )
-    return Check(
-        name="pns",
-        passed=True,
-        message=f"Predicted PNS peak {peak:.1f} % is below the 100 % limit.",
-    )
-
-
 def _pns_html(p: dict, goto_text: str | None, card_id: str) -> str:
-    """The body of the "PNS prediction" card: the status line, the table of peaks, the
-    button with the text `goto_text` (none when it is None) and the hardware note, or a
-    note that there is no prediction."""
+    """The body of the "PNS prediction" card: the table of peaks, the button with the text
+    `goto_text` (none when it is None) and the note about the model, or a note that there
+    is no prediction."""
     if p["reason"] is not None:
         return f'<p class="muted">No PNS prediction: {html.escape(p["reason"])}.</p>'
 
     peak = p["peak_percent"]
-    if peak >= 100:
-        status = (
-            '<p class="status bad"><span aria-hidden="true">✕</span> '
-            f"Predicted PNS peak {peak:.1f} % is at or above the 100 % limit.</p>"
-        )
-    else:
-        status = (
-            '<p class="status good"><span aria-hidden="true">✓</span> '
-            f"Predicted PNS peak {peak:.1f} % is below the 100 % limit.</p>"
-        )
-    if p["example"]:
-        source = (
-            "<p><strong>Example hardware, not a real scanner.</strong> Give the gradient "
-            ".asc file of your scanner (<code>gradient_asc</code>) for a real prediction.</p>"
-        )
-        hardware = p["hardware"]
-    else:
-        source = ""
-        hardware = f"{p['hardware']} ({p['asc_file']})"
+    hardware = f"{p['hardware']} ({p['asc_file']})"
     axes = p["axis_peaks_percent"]
     table = html_table(
         ["Quantity", "Value"],
@@ -123,27 +89,29 @@ def _pns_html(p: dict, goto_text: str | None, card_id: str) -> str:
         '<p class="muted">The prediction is the SAFE model (Hebrank and Gebhardt), from the '
         "pinned pypulseq fork's chunked SAFE recursion. Each axis is its predicted "
         "stimulation as a percent of that axis's stimulation limit. All axes is the "
-        "root-sum-of-squares of the three, and the check passes below 100 %. The stimulation "
-        "over time is the PNS lane of the sequence diagram, not a chart on this card. The "
-        "model can be inaccurate, and the scanner's own stimulation monitor decides: record "
-        "the PNS level that the scanner reports.</p>"
+        "root-sum-of-squares of the three. The stimulation over time is the PNS lane of the "
+        "sequence diagram, not a chart on this card. The model can be inaccurate, and the "
+        "scanner's own stimulation monitor decides: record the PNS level that the scanner "
+        "reports.</p>"
     )
-    return status + source + table + button + note
+    return table + button + note
 
 
 def pns_card(
     seq: pp.Sequence, *, gradient_asc: str | Path | None = None, card_id: str = "pns"
 ) -> Card:
     """The "PNS prediction" card for one sequence: the SAFE-model prediction summary
-    (`_pns_data`) as a status line, a table of the peak percent of the stimulation limit
-    for all axes, Gx, Gy and Gz, a button, and the hardware note.
+    (`_pns_data`) as a table of the peak percent of the stimulation limit for all axes,
+    Gx, Gy and Gz, a button, and the note about the model.
 
     The card has no chart: the stimulation over time is the PNS lane of the sequence
     diagram (`cards.diagram.diagram_card(..., pns_lane=True)`). `gradient_asc` is the
-    gradient .asc file of the scanner, or None for pypulseq's example hardware. The card
-    shares its `PnsLevels` computation with the diagram's lane (`pns.pns_levels_for`)
-    when both are given the same `gradient_asc`, so a page with both cards for one
-    sequence runs the SAFE model once.
+    gradient .asc file of the scanner. With `gradient_asc=None`, the card has no
+    prediction: it runs no SAFE model, has a muted note that a PNS prediction needs
+    `gradient_asc`, and has no button, no script and no data. The card shares its
+    `PnsLevels` computation with the diagram's lane (`pns.pns_levels_for`) when both are
+    given the same `gradient_asc`, so a page with both cards for one sequence runs the
+    SAFE model once.
 
     The button shows the peak in the diagram: the TR that holds the peak, or, when the
     sequence has no `TR` definition, the block that holds it. Its script
@@ -151,23 +119,26 @@ def pns_card(
     card (the diagram) acts on `goto`. A sequence with no gradients has no prediction:
     then the card has no button, no script and no data.
 
-    The card has one check, `pns`, which fails when the predicted peak is 100 % or more of
-    the stimulation limit; a card with no prediction passes. The card publishes `PUBLISHES`
-    (`goto`), as its spec says, and a card with a button has `scripts` with
-    `assets/cards/pns.js`.
+    The card gives no verdict. It publishes `PUBLISHES` (`goto`), as its spec says, and a
+    card with a button has `scripts` with `assets/cards/pns.js`.
 
     Raises `NotImplementedError` for a sequence with the rotation extension
     (`extensions.refuse_rotations`).
     """
     refuse_rotations(seq)
+    if gradient_asc is None:
+        return Card(
+            id=card_id,
+            title="PNS prediction",
+            body_html=_NO_ASC_HTML,
+            publishes=PUBLISHES,
+        )
     summary = _pns_data(seq, gradient_asc=gradient_asc)
-    check = _check(summary)
     if summary["reason"] is not None:
         return Card(
             id=card_id,
             title="PNS prediction",
             body_html=_pns_html(summary, None, card_id),
-            checks=(check,),
             publishes=PUBLISHES,
         )
     peak_time_s = pns_prediction(seq, gradient_asc=gradient_asc).peak_time_s
@@ -180,7 +151,6 @@ def pns_card(
         data=data,
         script="pns",
         scripts=(card_asset("pns"),),
-        checks=(check,),
         publishes=PUBLISHES,
     )
 
