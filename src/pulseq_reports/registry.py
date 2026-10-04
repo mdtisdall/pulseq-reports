@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pypulseq as pp
 
-from .page import Card, Check
+from .page import Card
 from .waveforms import TimeWindow, first_adc_window, full_window
 
 ENTRY_POINT_GROUP = "pulseq_reports.cards"
@@ -303,7 +303,7 @@ def _error_card(spec: CardSpec, error: Exception) -> Card:
         id=spec.name,
         title=f"{spec.name}: error",
         body_html=f'<p class="muted">{html.escape(message)}</p>',
-        checks=(Check(name="error", passed=False, message=message),),
+        error=message,
     )
 
 
@@ -338,7 +338,7 @@ def build_cards(
     When the `when` or the `build` of a card raises an exception (for example
     `NotImplementedError`, for a sequence that the card refuses), the card is an error card:
     its `id` is the spec's name, its title is "<name>: error", its body has the message, and
-    it has one failed `Check`. The exception, with its traceback, goes to the logger
+    its `error` is the message. The exception, with its traceback, goes to the logger
     `pulseq_reports`, and the other cards are built.
     """
     all_specs = discover()

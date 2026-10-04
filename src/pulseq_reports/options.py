@@ -12,7 +12,6 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .grad_limits import HardwareLimits
-from .grad_spectrum import COILS, PRISMA_AS82, GradientCoil
 from .registry import Flag, Option, OptionCli
 from .rf_exposure import B1RMS_WINDOW_S
 
@@ -59,12 +58,6 @@ def _limits_from_config(value: object, base_dir: Path) -> HardwareLimits:
     )
 
 
-def _coil_from_name(name: object) -> GradientCoil:
-    if name not in COILS:
-        raise ValueError(f"the coil {name!r} is not one of {sorted(COILS)}")
-    return COILS[name]
-
-
 def _gradient_asc_from_config(value: object, base_dir: Path) -> Path:
     if not isinstance(value, str):
         raise TypeError(f"gradient_asc must be a path: {value!r}")
@@ -75,15 +68,15 @@ gradient_asc = Option(
     "gradient_asc",
     Path,
     None,
-    "The gradient .asc file of the scanner, for the PNS prediction (default: pypulseq's "
-    "example hardware).",
+    "The gradient .asc file of the scanner, for the PNS prediction (without it, there is no "
+    "PNS prediction and no PNS lane).",
     cli=OptionCli(
         flags=(
             Flag(
                 "--gradient-asc",
                 Path,
-                "The gradient .asc file of the scanner, for the PNS prediction (default: "
-                "pypulseq's example hardware).",
+                "The gradient .asc file of the scanner, for the PNS prediction (without it, "
+                "there is no PNS prediction and no PNS lane).",
                 metavar="PATH",
             ),
         ),
@@ -97,7 +90,7 @@ limits = Option(
     HardwareLimits,
     None,
     "The gradient limits that the gradient limits card compares with: both --max-grad and "
-    "--max-slew, or neither (default: the limits of the sequence's system).",
+    "--max-slew, or neither (without them, the card has no percent columns).",
     cli=OptionCli(
         flags=(
             Flag(
@@ -115,25 +108,6 @@ limits = Option(
         ),
         from_flags=_limits_from_flags,
         from_config=_limits_from_config,
-    ),
-)
-
-coil = Option(
-    "coil",
-    GradientCoil,
-    PRISMA_AS82,
-    "The gradient coil, for the acoustic resonances of the gradient spectrum card.",
-    cli=OptionCli(
-        flags=(
-            Flag(
-                "--coil",
-                str,
-                "The gradient coil, for the acoustic resonances of the gradient spectrum card.",
-                choices=tuple(COILS),
-            ),
-        ),
-        from_flags=lambda values: _coil_from_name(values["coil"]),
-        from_config=lambda value, base_dir: _coil_from_name(value),
     ),
 )
 
@@ -156,7 +130,7 @@ pns_lane = Option(
     "pns_lane",
     bool,
     False,
-    "Add the PNS lane to the sequence diagram (it runs the SAFE model).",
+    "Add the PNS lane to the sequence diagram (it runs the SAFE model, and needs gradient_asc).",
 )
 
 views = Option(
@@ -188,11 +162,4 @@ max_rows = Option(
     int,
     500,
     "The largest number of blocks in the block table card.",
-)
-
-check_norms = Option(
-    "check_norms",
-    bool,
-    False,
-    "The gradient limits check also fails when the peak of |G| is above the amplitude limit.",
 )

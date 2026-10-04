@@ -1,13 +1,10 @@
-"""Gradient spectrum of a Pulseq sequence, checked against the acoustic resonances of
-a gradient coil (by default the Siemens MAGNETOM Prisma AS82).
+"""Gradient spectrum of a Pulseq sequence, and its largest values in the acoustic
+resonance bands that the caller gives.
 
 Oracle: the implementation before phase 5 of docs/plans/cards-at-scale.md. Do not
-change it.
-
-The gradient coil vibrates strongly at its mechanical resonances. Siemens
-lists these in the gradient system's .asc file (aflAcousticResonanceFrequency
-and aflAcousticResonanceBandwidth) and forbids protocols, such as EPI echo
-spacings, that put gradient energy in those bands.
+change its method. A resonance is a pair (frequency_hz, bandwidth_hz), the centre
+frequency and the full width of its band in Hz, as in the library; the default is no
+resonance.
 
 `gradient_spectrum` uses the same method as pypulseq's
 `calculate_gradient_spectrum`: 50 ms Hann windows with 50% overlap, the
@@ -39,31 +36,8 @@ NO_GRADIENTS = "no gradients"
 
 
 @dataclass(frozen=True)
-class AcousticResonance:
-    frequency_hz: float
-    bandwidth_hz: float
-
-    @property
-    def low_hz(self) -> float:
-        return self.frequency_hz - self.bandwidth_hz / 2
-
-    @property
-    def high_hz(self) -> float:
-        return self.frequency_hz + self.bandwidth_hz / 2
-
-
-# MAGNETOM Prisma, AS82 gradient coil (MP_GPA_K2309_2250V_951A_AS82.asc). The .asc
-# file is not public; these are the values in the QIS-MRI Pulseq workshop safety
-# check for its Prisma. Check them against the .asc file of the scanner you use.
-PRISMA_AS82_RESONANCES = (
-    AcousticResonance(frequency_hz=590.0, bandwidth_hz=100.0),
-    AcousticResonance(frequency_hz=1140.0, bandwidth_hz=220.0),
-)
-
-
-@dataclass(frozen=True)
 class BandPeak:
-    resonance: AcousticResonance
+    resonance: tuple[float, float]  # (frequency_hz, bandwidth_hz) of the band
     peak: float  # largest RSS spectrum value in the band, mT/m/sqrt(Hz)
     frequency_hz: float  # where that value is
     relative: float  # peak / the largest RSS spectrum value at any frequency
@@ -72,7 +46,7 @@ class BandPeak:
 @dataclass(frozen=True)
 class GradientSpectrum:
     reason: str | None  # why there is no spectrum, or None
-    resonances: tuple[AcousticResonance, ...]
+    resonances: tuple[tuple[float, float], ...]
     frequency_hz: np.ndarray
     axes: dict[str, np.ndarray]  # "x", "y", "z": spectrum, mT/m/sqrt(Hz)
     rss: np.ndarray  # root-sum-of-squares of the axes in each window, then the maximum
@@ -81,7 +55,7 @@ class GradientSpectrum:
 
 def gradient_spectrum(
     seq: pp.Sequence,
-    resonances: tuple[AcousticResonance, ...] = PRISMA_AS82_RESONANCES,
+    resonances: tuple[tuple[float, float], ...] = (),
 ) -> GradientSpectrum:
     """The spectrum of each gradient axis up to `MAX_FREQUENCY_HZ`, and the largest
     RSS value in each resonance band."""
@@ -156,13 +130,14 @@ def _chunk_spectrogram(g, start, stop, pad, nt, dt, nwin, to_mt):
 
 
 def _band_peaks(
-    freq: np.ndarray, rss: np.ndarray, resonances: tuple[AcousticResonance, ...]
+    freq: np.ndarray, rss: np.ndarray, resonances: tuple[tuple[float, float], ...]
 ) -> tuple[BandPeak, ...]:
     """The largest RSS value in each resonance band that has a frequency bin."""
     peak = float(rss.max())
     band_peaks = []
     for r in resonances:
-        inside = np.flatnonzero((freq >= r.low_hz) & (freq <= r.high_hz))
+        low_hz, high_hz = r[0] - r[1] / 2, r[0] + r[1] / 2
+        inside = np.flatnonzero((freq >= low_hz) & (freq <= high_hz))
         if inside.size == 0:
             continue
         i = inside[np.argmax(rss[inside])]

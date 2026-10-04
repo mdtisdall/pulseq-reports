@@ -392,7 +392,7 @@ JSON data (if any) is placed in a `<script type="application/json">`
 element, and the scripts and CSS texts of the cards (`Card.scripts`,
 `Card.css`) are included once each, even when more than one card has the
 same text. The tests also cover card and script id validation, the topic
-check (`TOPIC_KINDS`), the card checks (`Card.checks`), the project CSS
+check (`TOPIC_KINDS`), the project CSS
 (`extra_css`), the library CSS, the `__NAME__` placeholder substitution,
 `card_asset`, and `write_page`.
 
@@ -566,17 +566,14 @@ not in `TOPIC_KINDS`.
 
 **Assumptions:** None.
 
-#### `test_checks_are_not_on_the_page`
+#### `test_the_error_of_a_card_is_not_on_the_page`
 
-**Checks:** `render_page` does not show `Card.checks`.
+**Checks:** `render_page` does not show `Card.error`.
 
-**How:** The test renders a card with one failed `Check` whose name and
-message have markers. It checks that neither marker is in the page, and that
-the page equals the page of the same card without the check.
+**How:** The test renders a card with `error` set to a marker text. It checks that the marker is
+not in the page, and that the page equals the page of the same card without `error`.
 
 **Assumptions:** None.
-
----
 
 #### `test_each_script_is_its_own_script_element`
 
@@ -1457,24 +1454,49 @@ HTML as vb-pulseq's timing check (parity), and the card's `id`, `title`,
 timing check), calls `timing_card` with it, and compares
 `body_html` to `timing._timing_html(timing._timing_errors(seq))` called
 directly. It also checks `id == "timing"`, `title == "Timing check"`,
-"Timing check passed" is in the body, and `data` and `script` are both None.
+and that `data` and `script` are both None.
 
 **Assumptions:** The synthetic spin echo sequence passes pypulseq's timing
 check.
 
+#### `test_timing_card_of_a_sequence_without_timing_errors_has_no_error_table`
+
+**Checks:** For a sequence without timing errors, the number of errors in the body is 0
+and the body has no error table.
+
+**How:** The test builds the card for the synthetic spin echo sequence, reads the number
+in the sentence "pypulseq's timing check gave N errors" with a regular expression, and
+checks that it is 0 and that the body has no `<table`.
+
+**Assumptions:** The synthetic spin echo sequence passes pypulseq's timing check.
+
 #### `test_timing_card_lists_timing_errors_for_one_sequence`
 
-**Checks:** `timing_card` shows the failure text and the error type for a
-sequence with a timing violation.
+**Checks:** For a sequence with a timing violation, the number of errors in the body is
+the number of errors that `_timing_errors` gives (at least 1), the error table has one
+row for each error, and the body names the error type.
 
 **How:** The test builds a sequence with one RF block whose delay is set to
 0 after construction, below the RF dead time (as in vb-pulseq's own
 bad-sequence test), confirms that `_timing_errors` reports an `RF_DEAD_TIME`
-error, then checks that `timing_card`'s body has "Timing check failed" and
-"RF_DEAD_TIME".
+error, then reads the number of errors in the body's sentence and compares it
+with the length of `_timing_errors`. It counts the `<tr>` elements of the body, which must be
+the header row and one row for each error, and checks that "RF_DEAD_TIME" is in the body.
 
 **Assumptions:** pypulseq's `check_timing` reports an `RF_DEAD_TIME` error
 for an RF block whose delay is below the system's RF dead time.
+
+#### `test_timing_card_has_no_verdict`
+
+**Checks:** The card gives no verdict: its body has no `status good` and no `status bad`
+class, for a sequence without timing errors and for a sequence with one.
+
+**How:** The test builds the card for the synthetic spin echo sequence and for the
+RF dead time sequence of the test above, and checks that neither body has the text
+`status good` or `status bad`.
+
+**Assumptions:** `status good` and `status bad` are the classes (`assets/report.css`) that the
+timing card used for its verdict before it had none.
 
 #### `test_render_page_accepts_timing_card`
 
@@ -1836,9 +1858,11 @@ The spectrum is calculated as in pypulseq: 50 ms Hann windows with 50 %
 overlap, the magnitude spectrum of each window, and the maximum over windows.
 Here the gradients are sampled to the end of the sequence, with half a window
 of zeros added at each end. The RSS spectrum is the root-sum-of-squares of the
-three axes in each window, then the maximum over windows. The default
-resonance bands, of the MAGNETOM Prisma AS82 gradient coil, are 590 ± 50 Hz
-and 1140 ± 110 Hz. The gradients are sampled through the raster sampler
+three axes in each window, then the maximum over windows. A resonance is a
+(frequency, bandwidth) pair in Hz, and the default is no resonance. The tests
+that need bands use `RESONANCES` of the test file: 590 Hz with a bandwidth of
+100 Hz (540–640 Hz) and 1140 Hz with a bandwidth of 220 Hz (1030–1250 Hz). The
+gradients are sampled through the raster sampler
 (`sampling.GradientSampler`, phase 2 of `docs/plans/cards-at-scale.md`),
 in chunks of `CHUNK_WINDOWS` windows, so the memory does not grow with the
 sequence length.
@@ -1853,8 +1877,8 @@ peak for A = 1 mT/m.
 
 **Assumptions for the whole file:**
 
-- The resonance bands are published values for one Prisma gradient coil, not
-  read from a scanner's `.asc` file.
+- The resonance bands of `RESONANCES` are values that the test file chooses,
+  not read from a scanner's `.asc` file.
 - The test sine frequencies (300 Hz and 600 Hz) are exactly on frequency bins,
   and each window holds a whole number of cycles. So there is no scalloping
   loss, and the peak is the full value.
@@ -1862,28 +1886,20 @@ peak for A = 1 mT/m.
   (rtol 1e-12, several chunk sizes) was checked outside CI when this module
   moved from vb-pulseq.
 
-#### `test_prisma_as82_resonances`
-
-**Checks:** The default resonance bands are 540–640 Hz and 1030–1250 Hz.
-
-**How:** The test compares the low and high edge of each band in
-`PRISMA_AS82_RESONANCES` with these values.
-
-**Assumptions:** None.
-
 #### `test_spin_echo_spectrum`
 
-**Checks:** For the synthetic spin echo, the spectrum runs from 0 to 2 kHz,
-the x and y axes have a non-zero spectrum, the RSS is at least each axis at
+**Checks:** For the synthetic spin echo and the two bands of `RESONANCES`, the spectrum runs
+from 0 to 2 kHz, the x and y axes have a non-zero spectrum, the RSS is at least each axis at
 every frequency, and the largest RSS value in each band is inside that band.
 
-**How:** The test calculates the spectrum of the synthetic spin echo. It
+**How:** The test calculates the spectrum of the synthetic spin echo with `resonances=RESONANCES`. It
 checks that there is no reason, that the frequencies start at 0 and end at
 2 kHz, and that there are x, y and z spectra. The x and y spectra must have a
 maximum above 0 (the synthetic spin echo has no z gradient). Each axis
 spectrum must have the same length as the frequencies, and the RSS must be at
 least that axis at every frequency. There must be a band peak for each
-resonance, at a frequency inside the band, with a value relative to the
+resonance, in the order given, at a frequency inside the band (the resonance's
+frequency less and plus half its bandwidth), with a value relative to the
 overall peak from 0 to 1.
 
 **Assumptions:**
@@ -1893,8 +1909,8 @@ overall peak from 0 to 1.
 
 #### `test_sine_in_the_first_band`
 
-**Checks:** A 600 Hz sine gives an RSS peak at 600 Hz with the expected
-amplitude, the first band holds the overall peak, and less than 5 % leaks into
+**Checks:** With the bands of `RESONANCES`, a 600 Hz sine gives an RSS peak at 600 Hz with the
+expected amplitude, the first band holds the overall peak, and less than 5 % leaks into
 the second band.
 
 **How:** The test makes a 0.5 s, 1 mT/m, 600 Hz sine on x. The RSS peak must
@@ -1908,7 +1924,7 @@ relative value must be 1. The second band's must be less than 0.05.
 
 #### `test_sine_outside_the_bands`
 
-**Checks:** A 300 Hz sine puts less than 5 % of the peak in each band.
+**Checks:** With the bands of `RESONANCES`, a 300 Hz sine puts less than 5 % of the peak in each band.
 
 **How:** The test makes a 300 Hz sine and checks that both band values
 relative to the peak are less than 0.05.
@@ -1916,6 +1932,15 @@ relative to the peak are less than 0.05.
 **Assumptions:**
 
 - The abrupt start and end of the sine leak about 2 % into the bands.
+
+#### `test_without_resonances_there_are_no_band_peaks`
+
+**Checks:** Without `resonances` (the default), the spectrum has no resonance and no band peak.
+
+**How:** The test calculates the spectrum of the synthetic spin echo without `resonances`
+and checks that there is no reason, that `resonances` is `()` and that `band_peaks` is `()`.
+
+**Assumptions:** None.
 
 #### `test_short_sequence_is_padded_to_one_window`
 
@@ -1960,7 +1985,7 @@ reason and the band values.
 **Checks:** The spectrum does not depend on the chunk size.
 
 **How:** The test makes a synthetic GRE sequence of 30 TRs of 20 ms (600 ms,
-25 windows). It calculates the spectrum with `CHUNK_WINDOWS` set to 1,000,000
+25 windows). It calculates the spectrum, with the bands of `RESONANCES`, with `CHUNK_WINDOWS` set to 1,000,000
 (one chunk) and to 4 (7 chunks, the last one shorter). The frequencies must be
 equal, and each axis spectrum and the RSS must agree with a relative tolerance
 of 1e-12. The band peaks must be at the same frequencies.
@@ -1982,7 +2007,7 @@ synthetic spin echo, GRE, arbitrary-gradient, empty and 600 Hz sine
 sequences.
 
 **How:** For each sequence, the test calculates the spectrum with this
-module and with the oracle. The reasons must be equal. When there is a
+module and with the oracle, both with the bands of `RESONANCES`. The reasons must be equal. When there is a
 spectrum, the frequencies must be equal, the axis spectra and the RSS must
 agree within a relative 1e-12 or an absolute 1e-12 times the array's own
 peak, and the band peaks must agree on their resonance, their peak value,
@@ -2008,8 +2033,8 @@ blocks (task 5.3 of `docs/plans/cards-at-scale.md`).
 
 **How:** The test imports `scripts/diagram_scale.py` by path, through
 `synthetic.load_diagram_scale`, builds each sequence with `10^4 / TR_BLOCKS`
-TRs, and compares this module's spectrum with the oracle's, as the test above
-does, with the tolerance `1e-12 * max(1, duration in s)` instead of 1e-12.
+TRs, and compares this module's spectrum with the oracle's (both with the
+bands of `RESONANCES`), as the test above does, with the tolerance `1e-12 * max(1, duration in s)` instead of 1e-12.
 
 **Assumptions:**
 
@@ -2026,25 +2051,25 @@ does, with the tolerance `1e-12 * max(1, duration in s)` instead of 1e-12.
 `test_spectrum_card.py` tests `cards/spectrum.py`. `_spectrum_data` turns the
 gradient spectrum of one sequence (`grad_spectrum.gradient_spectrum`) into
 JSON-ready data, in Hz and mT/m/√Hz. `spectrum_card` builds the
-"Gradient spectrum" `Card`: for one sequence and one `GradientCoil`, the body is
-`_spectrum_html(data, coil.label, card_id)` — the
-band table, the Linear/dB chart controls and the chart itself, or a note that
-there is no spectrum. `data` is always the JSON-ready spectrum dict and
-`script` is always `"spectrum"`.
+"Gradient spectrum" `Card`: for one sequence, the body is
+`_spectrum_html(data, card_id)` — the Linear/dB chart controls and the chart
+itself, or a note that there is no spectrum. The card has no resonance bands:
+its `data` has empty `resonances` and `bands`. `data` is always the JSON-ready
+spectrum dict and `script` is always `"spectrum"`.
 
 The tests use `tests/synthetic.py`'s `spin_echo_sequence` and
 `empty_sequence`.
 
 #### `test_spectrum_data_for_spin_echo`
 
-**Checks:** For the synthetic spin echo sequence, the spectrum data has the
-two default resonances, lanes for Gx, Gy, Gz and RSS with one shared value
-range from 0 Hz to the maximum frequency, and the two bands.
+**Checks:** For the synthetic spin echo sequence and the two resonances of `RESONANCES`
+(given to `gradient_spectrum`), the spectrum data has the two resonances, lanes for Gx, Gy,
+Gz and RSS with one shared value range from 0 Hz to the maximum frequency, and the two bands.
 
-**How:** The test makes the spectrum data. It checks that there is no reason,
-and that the resonances are 590 Hz (100 Hz wide) and 1140 Hz (220 Hz wide).
-The lanes must be Gx, Gy, Gz and RSS. Each lane must have the unit mT/m/√Hz,
-the same value range as the RSS lane, and one segment from 0 Hz to the
+**How:** The test makes the spectrum data from `gradient_spectrum(seq, resonances=RESONANCES)`.
+It checks that there is no reason, and that the resonances are 590 Hz (100 Hz wide) and
+1140 Hz (220 Hz wide). The lanes must be Gx, Gy, Gz and RSS. Each lane must have the unit
+mT/m/√Hz, the same value range as the RSS lane, and one segment from 0 Hz to the
 maximum frequency. The bands must be 540–640 Hz and 1030–1250 Hz.
 
 **Assumptions:**
@@ -2054,13 +2079,12 @@ maximum frequency. The bands must be 540–640 Hz and 1030–1250 Hz.
 
 #### `test_report_has_gradient_spectrum_card`
 
-**Checks:** The rendered page has the gradient spectrum card with the two
-band rows, the chart, the Linear and dB buttons with Linear selected, and
-the −80 dB note.
+**Checks:** The rendered page has the gradient spectrum card with the chart, the Linear and dB
+buttons with Linear selected, and the −80 dB note.
 
 **How:** The test builds the card for the spin echo sequence, renders the page,
 cuts out the text from the card's id to the end of the result, and checks
-for the title, the cells "540–640" and "1030–1250", the diagram element, the
+for the title, the diagram element, the
 two scale buttons with their pressed states, and "drawn at −80 dB".
 
 **Assumptions:** None.
@@ -2078,33 +2102,14 @@ gradients." exactly, and that the note is in a rendered page with no
 
 **Assumptions:** None.
 
-#### `test_custom_coil_label_and_resonances_appear`
+#### `test_the_card_has_no_bands`
 
-**Checks:** A custom `GradientCoil` (its label and its resonances) changes the
-table header, the aria-label wording, the note's band text and gradient
-coil wording, and the data's resonances and bands, in place of the default
-Prisma wording and values.
+**Checks:** The card has no bands: its data has no resonance and no band, and its body has
+no table.
 
-**How:** The test builds the card with a coil that has one custom resonance
-(700 Hz, 40 Hz wide) and the label "Acme Scanner". It checks that the table header, the
-aria-label phrase and the note's gradient-coil phrase all use "Acme
-Scanner", that the note states "700 ± 20 Hz", that the data's `resonances`
-list holds only the custom resonance, that the data's `bands` low/high
-values are 680–720 Hz, and that they equal the bands of `_spectrum_data` of
-`gradient_spectrum` for the same sequence and resonances.
-
-**Assumptions:** None.
-
-#### `test_coil_label_is_escaped_in_the_note`
-
-**Checks:** The card escapes the coil's label in its note, as it already does
-in the table header and the `aria-label`. A label with `<`, `>` or `&` does
-not appear unescaped anywhere in the card's HTML (review finding B5).
-
-**How:** The test builds the card with a coil labelled "Coil <A&B>" and the
-resonance of `test_custom_coil_label_and_resonances_appear`. It checks that
-`body_html` does not contain "Coil <A&B>", and that it contains the note's
-phrase "the acoustic resonances of the Coil &lt;A&amp;B&gt; gradient coil".
+**How:** The test builds the card for the synthetic spin echo sequence and checks that
+`data["reason"]` is None, that `data["resonances"]` and `data["bands"]` are `[]`, and that
+the body has no `<table`.
 
 **Assumptions:** None.
 
@@ -2430,8 +2435,9 @@ model once, not twice; adding a block makes the next call recompute
 (`docs/plans/diagram-lanes.md`, section 4.6).
 
 **How:** The test patches `pns.pns_levels` (the name that `pns.pns_levels_for` calls)
-with a wrapper that records one entry for each call. It calls
-`cards.pns.pns_card(seq)` and then `cards.diagram.diagram_card(seq, [full_window(seq)], pns_lane=True)` for the same
+with a wrapper that records one entry for each call. With a test gradient `.asc` file, it calls
+`cards.pns.pns_card(seq, gradient_asc=path)` and then
+`cards.diagram.diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)` for the same
 sequence object and checks there was 1 call. It adds a delay block to the sequence and
 calls `pns_card` again, and checks there are then 2 calls.
 
@@ -2470,16 +2476,22 @@ a `.asc` file, `None`, the same file. It checks there were 2 calls.
 
 `test_pns_card.py` tests `cards/pns.py`. `_pns_data` (private) is
 `pns.pns_prediction`'s summary as a JSON-ready dict only (`reason`, `hardware`,
-`asc_file`, `example`, `peak_percent`, `peak_time_ms`, `axis_peaks_percent`), from
+`asc_file`, `peak_percent`, `peak_time_ms`, `axis_peaks_percent`), from
 which the card's body is written; it no longer has `lanes`, `end_ms` or `peak_tr_ms`.
-`pns_card` keeps the status line, the table of peaks and the hardware note, and it has
+`pns_card` has the table of peaks and the note about the model, gives no verdict, and has
 no chart: the stimulation over time is the PNS lane of the sequence diagram
 (`cards.diagram.diagram_card(..., pns_lane=True)`), which shares its `PnsLevels`
 computation with this card through `pns.pns_levels_for`. The card's own data is only
 what its script `assets/cards/pns.js` reads: `{"format": 1, "goto": ...}`, the message
 of the button that shows the peak in the diagram (the TR that holds the peak, or the
 block that holds it when the sequence has no `TR` definition). A card with no
-prediction has no button, no script and no data. The browser checks the button.
+prediction has no button, no script and no data. The card needs the gradient `.asc` file
+of the scanner (`gradient_asc`): without it, the card has no prediction and runs no SAFE
+model. The browser checks the button.
+
+The tests that need a prediction give the card a test gradient `.asc` file from the
+`write_gradient_asc` fixture of `tests/conftest.py` (the safe parameters of pypulseq's
+example hardware, with the hardware name "MP_GPA_TEST"; the real files are confidential).
 
 Most of the tests use the synthetic spin echo sequence
 (`tests/synthetic.py`'s `spin_echo_sequence`) or the three-TR sequence built
@@ -2494,13 +2506,12 @@ in this file (`_three_trs`, the same sequence as in `test_pns.py`: three
 
 #### `test_pns_data_for_spin_echo`
 
-**Checks:** For the synthetic spin echo sequence, the PNS data has exactly the
-summary-only keys, uses the example hardware, has a peak between 0 % and 100 % that is
+**Checks:** For the synthetic spin echo sequence and a test `.asc` file, the PNS data has exactly the
+summary-only keys, uses the hardware and the file name of the `.asc` file, has a peak between 0 % and 100 % that is
 at least each axis peak, and has axis peaks keyed x, y and z.
 
-**How:** The test makes the PNS data and checks its key set against the 7 summary
-keys. It checks that there is no reason, that the example hardware is used with no
-`.asc` file, that the peak is more than 0 % and less than 100 % and is at least each
+**How:** The test makes the PNS data with `gradient_asc` set to the test file and checks its key set against the 6 summary
+keys. It checks that there is no reason, that the hardware is "MP_GPA_TEST" and `asc_file` is the file's name, that the peak is more than 0 % and less than 100 % and is at least each
 axis peak, and that the axis peaks are keyed x, y and z.
 
 **Assumptions:** None.
@@ -2510,7 +2521,7 @@ axis peak, and that the axis peaks are keyed x, y and z.
 **Checks:** `_pns_data`'s numbers are `pns.pns_prediction`'s own fields, converted to
 percent and ms.
 
-**How:** The test computes `pns.pns_prediction(seq)` and `_pns_data(seq)` for the
+**How:** The test computes `pns.pns_prediction` and `_pns_data` with the test `.asc` file for the
 synthetic spin echo sequence and checks `peak_percent`, `peak_time_ms` and each axis of
 `axis_peaks_percent` against the prediction's `peak`, `peak_time_s` and `axis_peaks`
 (scaled and converted), within the rounding the card applies.
@@ -2523,7 +2534,7 @@ synthetic spin echo sequence and checks `peak_percent`, `peak_time_ms` and each 
 three-TR sequence, the card still reports the right peak time.
 
 **How:** For peak TR k = 0, 1 and 2, the test makes `_three_trs(k)`, computes
-`pns.pns_prediction` and `_pns_data`, and checks that `peak_time_ms` matches the
+`pns.pns_prediction` and `_pns_data` with the test `.asc` file, and checks that `peak_time_ms` matches the
 prediction's own `peak_time_s` (converted) and falls inside the TR `[50k, 50(k + 1)]`
 ms.
 
@@ -2534,21 +2545,17 @@ ms.
 
 #### `test_report_has_pns_card`
 
-**Checks:** For the synthetic spin echo sequence, the card has the id `"pns"`, the
-title "PNS prediction" and the script `"pns"`; its body has the below-limit
-result, the example hardware warning, the hardware and peak rows, and no chart, no SVG
-and no PNS view buttons; and `render_page` accepts it, with the title.
+**Checks:** For the synthetic spin echo sequence and a test `.asc` file, the card has the id `"pns"`, the
+title "PNS prediction" and the script `"pns"`; its body has the hardware cell with the file's name, the peak rows,
+no chart, no SVG, no PNS view buttons and no verdict class; and `render_page` accepts it, with the title.
 
 **How:** The test builds the card and checks its `id`, `title` and `script`. It checks
-the body for the status text, "Example hardware, not a real scanner.", a cell with the
-example hardware name, the rows for the peak of all axes, Gx, Gy and Gz, and that the
-body has no `<div class="chart">`, no `<svg` and no `data-pns-view`. It renders the
+the body for a cell with the hardware name and the file's name, the rows for the peak of all axes, Gx, Gy and Gz, and that the
+body has no `<div class="chart">`, no `<svg`, no `data-pns-view`, no `status good` and no `status bad`. It renders the
 page and checks for the section element with the card's id and the
 `data-card-script="pns"` attribute, and the title.
 
-**Assumptions:**
-
-- "Below the limit" is for the example hardware only.
+**Assumptions:** None.
 
 #### `test_report_without_gradients_has_no_pns_table`
 
@@ -2556,7 +2563,7 @@ page and checks for the section element with the card's id and the
 prediction and has no table, inside a rendered page.
 
 **How:** The test builds the card for the synthetic sequence with only a delay block
-and renders the page. It checks for the note "No PNS prediction: no gradients." and
+(with the test `.asc` file) and renders the page. It checks for the note "No PNS prediction: no gradients." and
 that there is no `<table>` element.
 
 **Assumptions:** None.
@@ -2567,7 +2574,7 @@ that there is no `<table>` element.
 data element key is that id too and holds the card's data, so two PNS cards can be on
 one page without an id clash.
 
-**How:** The test builds the card with `card_id="pns-b"` and checks that the card's own
+**How:** The test builds the card with the test `.asc` file and `card_id="pns-b"` and checks that the card's own
 id and script (`"pns"`) are as given. It renders the page, checks the section
 `id="pns-b"`, reads the data element `id="pns-b-data"` and checks that its JSON is the
 card's `data`.
@@ -2581,7 +2588,7 @@ card's `data`.
 `pns.peak_tr_window` gives, and the anchor is the peak time.
 
 **How:** The test builds the three-TR sequence with the peak in the second TR. It
-computes the prediction and the window with `pns.pns_prediction` and
+computes the prediction (with the test `.asc` file) and the window with `pns.pns_prediction` and
 `pns.peak_tr_window`, and checks that the card's data equals the format, the window
 and the peak time exactly, and that the window is 50 ms to 100 ms.
 
@@ -2605,10 +2612,27 @@ that the block has a duration above zero and that the peak time is inside it.
 **Checks:** A sequence with no gradients has no PNS prediction, so the card has no
 data, no script and no button.
 
-**How:** The test builds the card for the empty synthetic sequence and checks that
+**How:** The test builds the card for the empty synthetic sequence (with the test `.asc` file) and checks that
 `data` and `script` are None and that the body has no `<button`.
 
 **Assumptions:** None.
+
+#### `test_card_without_gradient_asc_has_no_pns`
+
+**Checks:** Without `gradient_asc`, the card has no PNS: no data, no script, no scripts, no table and no
+button, no `error`, and the SAFE model does not run.
+
+**How:** The test builds the card for the synthetic spin echo sequence with no `gradient_asc`, with the
+`no_safe_model` fixture of `tests/conftest.py`, which replaces each way into the SAFE model
+(`pns_levels.pns_levels`, `pns.pns_levels`, `pns.pns_levels_for`, `pns.pns_prediction`,
+`cards.pns.pns_prediction` and `cards.diagram.pns_levels_for`) with a function that raises
+`AssertionError`. It checks `data` and `script` are None, `scripts` is empty, the body has no
+`<table` and no `<button`, and `error` is None, and that `render_page` accepts the card.
+
+**Assumptions:**
+
+- The six names of the fixture are each way that the library's cards reach the SAFE model. A
+  new way needs a new name in the fixture.
 
 ### 2.13 Gradient limits (`test_grad_limits.py`)
 
@@ -3011,14 +3035,17 @@ compares `whole_rms_mt_per_m` against a fresh whole-file oracle call.
 ### 2.14 Gradient limits card (`test_gradient_limits_card.py`)
 
 `test_gradient_limits_card.py` tests `cards/gradient_limits.py`: the "Gradient
-limits" table (Gx, Gy, Gz and |G| rows, with the peak, its percent of the
-limit, the max slew, its percent, and the RMS), one table for each `TimeWindow`
+limits" table (Gx, Gy, Gz and |G| rows, with the peak, the max slew, and the RMS, and,
+when `limits` is given, the percent of the limit of the peak and of the max slew),
+one table for each `TimeWindow`
 (with the extra RMS column), the block and the time of each peak and max slew with
 its "Show" button, and the limits in the note.
 Every expected numeric cell is computed by hand from the trapezoid the test
 builds, using the same formulas as `test_grad_limits.py`. The tests read the card's
 tables with Python's `html.parser` (`_CardParser`): the text of each cell, without a
-button's own text, and the attributes of each button.
+button's own text, and the attributes of each button. `LIMITS` is the limits of the
+test system (`SYSTEM.max_grad` and `SYSTEM.max_slew`); the card does not take limits
+from the sequence's system, so the tests that look at the percent columns give it.
 
 Since phase 4 of `docs/plans/cards-at-scale.md`, a window's "RMS over whole file" column comes
 from the one `gradient_limits` call's own `whole_rms_mt_per_m`, not a second call with
@@ -3039,7 +3066,7 @@ peak, slew and RMS from the trapezoid's parameters (as in
 `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`) and their
 percents of `SYSTEM.max_grad` and `SYSTEM.max_slew`, and the expected cell texts,
 with "(block N, t ms)" after a value that has a block. It calls
-`gradient_limits_card` and checks the card's `id`, `title` and `data`, and that
+`gradient_limits_card` with `limits=LIMITS` and checks the card's `id`, `title` and `data`, and that
 its one table has exactly the expected cell texts.
 
 **Assumptions:** None.
@@ -3053,7 +3080,7 @@ window.
 **How:** The test builds a sequence with an x trapezoid and a window equal to
 the rising ramp, given as a `TimeWindow`. It computes the expected peak, slew and window RMS from the
 ramp alone (RMS from `amplitude^2 * rise_time / 3` divided by the window
-length), and the expected whole-file RMS as in the first test. It builds
+length), with `limits=LIMITS`, and the expected whole-file RMS as in the first test. It builds
 the expected cell texts from these hand-computed values, with both RMS columns
 (the peak is at the window end, 0.200 ms, and the slew segment starts at the
 window start, 0.000 ms), and checks that the card's body starts with the `<h3>`
@@ -3067,11 +3094,37 @@ of the window's label and that its one table has these cell texts.
 label, with the values that `gradient_limits` gives for that window's range.
 
 **How:** The test builds a sequence with an x trapezoid and a y trapezoid of
-different amplitudes, and two windows, one half of the sequence each. For each
+different amplitudes, and two windows, one half of the sequence each, and calls the card with `limits=LIMITS`. For each
 window it builds the expected cell texts from the fields of
 `gradient_limits(seq, window=...)`, with the block and time of each value, checks
 that the two tables differ, and checks that the card's body starts with the first
 `<h3>`, has the second, and that its two tables have these cell texts in order.
+
+**Assumptions:** None.
+
+#### `test_without_limits_the_table_has_no_percent_columns`
+
+**Checks:** Without `limits`, the card has no "% of limit" header and no percent cell: the
+whole-file table has 4 cells in each row, and the table of each window has 5. With `limits`, each
+row has the two percent cells more, and each table has two "% of limit" headers.
+
+**How:** The test builds the two-trapezoid sequence and two windows. For the card without
+windows and with the two windows, each without and with `limits=LIMITS`, it reads the tables
+and checks the number of tables (1, or 2 for the windows), the number of "% of limit" headers in
+each header row (0, or 2), and that each of the 5 rows (the header, Gx, Gy, Gz and |G|) has as many cells as 4
+(or 5 with windows) plus the number of percent columns.
+
+**Assumptions:** None.
+
+#### `test_without_limits_the_values_are_those_with_limits`
+
+**Checks:** The table without `limits` is the table with `limits` less its two percent
+columns: the other cells are the same.
+
+**How:** The test builds the two-trapezoid sequence, reads the table of the card without
+limits and the table of the card with `LIMITS`, checks that the percent columns of the second
+are columns 2 and 4, and that the first equals the second with those columns removed from
+each row.
 
 **Assumptions:** None.
 
@@ -3476,15 +3529,17 @@ characters.
 
 **Assumptions:** None.
 
-#### `test_pns_true_adds_the_pns_key_with_the_example_hardware`
+#### `test_pns_true_adds_the_pns_key_with_the_gradient_asc_hardware`
 
-**Checks:** With `pns_lane=True`, the `file` entry gets a `"pns"` key with the example
-hardware, the SAFE parameters, the gradient raster, `gradScale`, `binSamples`, the
+**Checks:** With `pns_lane=True` and a gradient `.asc` file, the `file` entry gets a `"pns"` key with the
+file's hardware, the SAFE parameters, the gradient raster, `gradScale`, `binSamples`, the
 summary and the stored level, all with the keys the plan's data section lists.
 
-**How:** The test builds a diagram card with `pns_lane=True` for the synthetic spin echo
-sequence, and checks the `"pns"` entry's key set, that `hardware` is
-`asc.EXAMPLE_HARDWARE`, `example` is True and `asc_file` is None, that `hw` has x, y, z
+**How:** The test writes a test gradient `.asc` file with the `write_gradient_asc` fixture of
+`tests/conftest.py` (the real files are confidential), builds a diagram card with
+`pns_lane=True` and `gradient_asc` set to it for the synthetic spin echo
+sequence, and checks the `"pns"` entry's key set, that `hardware` is the file's hardware name
+("MP_GPA_TEST"), `example` is False and `asc_file` is the file's name, that `hw` has x, y, z
 each with the 8 SAFE fields, that `dtS` equals the sequence's own gradient raster time,
 that `gradScale` is exactly 1.0 (a proton sequence), that `binSamples` is positive,
 that the summary has `peak`, `peak_time_s` and `axis_peaks` with a peak between 0 and 1
@@ -3492,25 +3547,27 @@ and a peak time, and that `levels` has `min` and `max` tables of dtype `float32`
 
 **Assumptions:** None.
 
-#### `test_pns_asc_path_uses_the_gradient_asc_hardware`
+#### `test_pns_true_without_gradient_asc_adds_no_pns_key_and_runs_no_safe_model`
 
-**Checks:** With `pns_lane=True` and `gradient_asc` set to a gradient `.asc` path, the `"pns"` entry uses that
-file's hardware, not the example hardware.
+**Checks:** With `pns_lane=True` and no `gradient_asc`, the `file` entry has no `"pns"` key, the
+card has no `error`, and the SAFE model does not run.
 
-**How:** The test writes a minimal gradient `.asc` file with pypulseq's example
-hardware's own PNS parameters (a local helper, the same technique as the
-`write_gradient_asc` fixture of `tests/conftest.py`: the real files are confidential), builds a diagram card
-with `pns_lane=True` and `gradient_asc` set to that path, and checks that the `"pns"` entry's `hardware` is the
-file's name, `example` is False and `asc_file` is the file's name.
+**How:** The test builds a diagram card with `pns_lane=True` and no `gradient_asc` for the
+synthetic spin echo sequence, with the `no_safe_model` fixture of `tests/conftest.py`, which
+replaces each way into the SAFE model with a function that raises `AssertionError`. It checks
+that `"pns"` is not a key of the `file` entry and that `error` is None.
 
-**Assumptions:** None.
+**Assumptions:**
+
+- The names of the fixture are each way that the library's cards reach the SAFE model
+  (see `test_card_without_gradient_asc_has_no_pns` in `test_pns_card.py`).
 
 #### `test_gradient_asc_without_pns_lane_raises_value_error`
 
 **Checks:** `gradient_asc` without `pns_lane=True` raises `ValueError` (the file would
 be ignored).
 
-**How:** The test writes a minimal gradient `.asc` file (the local helper) and builds a
+**How:** The test writes a test gradient `.asc` file (the `write_gradient_asc` fixture) and builds a
 diagram card with `gradient_asc` set to it and no `pns_lane`. It checks the
 `ValueError`, which names `gradient_asc`.
 
@@ -3534,7 +3591,7 @@ a sequence built with a non-proton gyromagnetic ratio.
 
 **How:** The test builds a one-block x-trapezoid sequence on a system with
 `gamma=11.262e6` (sodium, the same value the golden test of task 4.5 uses), builds a
-diagram card with `pns_lane=True`, and checks the `"pns"` entry's `gradScale` equals
+diagram card with `pns_lane=True` and a test gradient `.asc` file, and checks the `"pns"` entry's `gradScale` equals
 `seq_utils.GAMMA / seq.system.gamma` and is not 1.0.
 
 **Assumptions:** None.
@@ -3544,7 +3601,7 @@ diagram card with `pns_lane=True`, and checks the `"pns"` entry's `gradScale` eq
 **Checks:** A file with no gradient event gets no `"pns"` key even when `pns_lane` is
 true.
 
-**How:** The test builds a diagram card with `pns_lane=True` for the synthetic sequence
+**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic sequence
 with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks that
 `"pns"` is not a key of the `file` entry.
 
@@ -3553,12 +3610,12 @@ with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks tha
 #### `test_pns_levels_decode_back_to_pns_levels_for_exactly`
 
 **Checks:** The `"levels"` key of the `"pns"` entry, decoded, equals
-`pns.pns_levels_for(seq)`'s own `level_min`/`level_max` exactly.
+`pns.pns_levels_for(seq, gradient_asc=...)`'s own `level_min`/`level_max` exactly.
 
-**How:** The test builds a diagram card with `pns_lane=True` for the synthetic spin echo
+**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic spin echo
 sequence, decodes the `"pns"` entry's `"levels"` with `diagram_data.decode_tables`, and
 compares the two arrays' dtype (`float32`) and values (`numpy.array_equal`) against
-`pns.pns_levels_for(seq).level_min`/`level_max`.
+`pns.pns_levels_for(seq, gradient_asc=...).level_min`/`level_max` of the same file.
 
 **Assumptions:**
 
@@ -3636,7 +3693,7 @@ has no gradient), so its sentence is not keyed on the file's own data either.
 the PNS lane's explanation sentence (naming the PNS lane, that it is a percent
 of the SAFE stimulation limit, and the "10 s or less" exact-view span).
 
-**How:** The test builds a diagram card with `pns_lane=True` for the synthetic spin
+**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic spin
 echo sequence and checks that each of the three phrases ("PNS lane", "percent
 of the SAFE stimulation limit", "10 s or less") appears in the body.
 
@@ -3658,7 +3715,7 @@ none of the three explanation phrases appears in the body.
 true, so it gets no explanation sentence either: the sentence is keyed on
 the data (`has_pns`), not on the `pns_lane` argument alone.
 
-**How:** The test builds a diagram card with `pns_lane=True` for the synthetic
+**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic
 sequence with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and
 checks that none of the three explanation phrases appears in the body.
 
@@ -8421,8 +8478,8 @@ object with the same fields.
 
 **Checks:** `ReportContext.option` raises `ValueError` for an option that no selected spec
 declares. In a report, a card whose spec does not declare an option that another selected
-card declares is an error card that names the option, with a failed check, and the other
-card is built.
+card declares is an error card that names the option, in its `error` and in its body, and the
+other card is built, with no `error`.
 
 **How:** A spec that declares no option and reads `options.max_rows`, with the plugin's
 card, which declares it.
@@ -8434,9 +8491,10 @@ card, which declares it.
 **Checks:** When the `build` or the `when` of a spec raises (here `NotImplementedError`,
 the error of a card that refuses a sequence), `build_cards` makes an error card in its
 place: the spec's name as `id`, the title "<name>: error", the message with the error's
-type name in the body with its HTML characters escaped, and one failed check. The error
-with its traceback goes to the logger `pulseq_reports`, one time. The other card is built,
-and a page of the two cards renders.
+type name in the body with its HTML characters escaped, and the unescaped message with the
+error's type name in `error`. The error with its traceback goes to the logger
+`pulseq_reports`, one time. The other card is built, with no `error`, and a page of the two
+cards renders.
 
 **How:** The message of the error has `<b>`, so the test can see the escape. The test reads
 the logger's records with `caplog`, and checks that the record holds the error object.
@@ -8493,58 +8551,15 @@ this order, and no other card; their `order` values do not decrease.
 
 **Assumptions:** None.
 
-#### `test_a_check_passes_for_a_sequence_inside_its_limits`
+#### `test_a_card_that_builds_has_no_error`
 
-**Checks:** The check of the timing card, of the gradient limits card and of the PNS card is
-passed for a sequence that has no timing error, has gradients below the system limits of the
-sequence, and has a predicted PNS peak below 100 %.
+**Checks:** A card that builds has `error` None.
 
-**How:** `synthetic.spin_echo_sequence`, with `build_cards(seq, cards=[name])` for each of the
-three cards; each card has exactly one check.
+**How:** `build_cards` for the synthetic spin echo sequence with all the library cards
+(the PNS card has no `gradient_asc`, and no card raises for this sequence). The test checks
+that the list is not empty and that each card's `error` is None.
 
-**Assumptions:** None.
-
-#### `test_the_timing_check_fails_for_a_timing_error`
-
-**Checks:** The check of the timing card is failed when pypulseq's timing check gives an error.
-
-**How:** A sequence of one RF block whose delay (0) is below the RF dead time.
-
-**Assumptions:** None.
-
-#### `test_the_gradient_limits_check_fails_for_limits_below_the_peak`
-
-**Checks:** The check of the gradient limits card is failed when the peak amplitude of an axis
-is above its limit, and when the peak slew of an axis is above its limit (each alone, with the
-other limit far above the sequence). The message names the axis, the quantity and the table
-(here the whole file).
-
-**How:** `HardwareLimits` of 5 mT/m with a very large slew limit, and of 10 T/m/s with a very
-large amplitude limit, for the spin echo sequence, whose readout is on x.
-
-**Assumptions:** None.
-
-#### `test_the_gradient_limits_check_of_the_norm_needs_check_norms`
-
-**Checks:** For a sequence whose axes are each below `max_grad` and whose |G| peak is above it,
-the check is passed by default, is failed with `check_norms=True` (the message names |G|), and
-is passed with `check_norms=False`.
-
-**How:** One block with Gx and Gy trapezoids at 0.8 of `max_grad` with a rise time that keeps
-the slew below `max_slew`; |G| peaks at 0.8 times the square root of 2, 1.13 times the limit.
-
-**Assumptions:** None.
-
-#### `test_the_pns_check_fails_for_a_peak_of_100_percent_or_more`
-
-**Checks:** The check of the PNS card is failed when the predicted peak is 100 % or more of
-the stimulation limit.
-
-**How:** The spin echo sequence, with a test gradient `.asc` file (the `write_gradient_asc`
-fixture of `tests/conftest.py`) whose stimulation limits and thresholds are 0.1 of the example
-hardware's, so the same sequence has a peak above 100 %.
-
-**Assumptions:** None.
+**Assumptions:** No library card raises for the synthetic spin echo sequence.
 
 #### `test_without_the_diagram_the_rf_profile_card_is_not_built`
 
@@ -8621,9 +8636,9 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 #### `test_max_grad_and_max_slew_reach_the_gradient_limits_card`
 
-**Checks:** With both flags, the page equals the page of `build_cards` with those `HardwareLimits` and stderr is empty. Without them, the page equals the page of `build_cards` with no limits, and the warning on stderr names the sequence's system limits.
+**Checks:** With both flags, the page equals the page of `build_cards` with those `HardwareLimits` and stderr is empty, and it differs from the page without limits. Without them, the page equals the page of `build_cards` with no limits and stderr is empty (there is no default limits, so no warning).
 
-**How:** Two `main` calls; the expected values are computed from the read-back sequence's system.
+**How:** Two `main` calls; the expected pages are from `build_cards` on the read-back sequence.
 
 **Assumptions:** None.
 
@@ -8667,19 +8682,19 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 **Assumptions:** None.
 
-#### `test_a_file_with_a_failed_check_exits_2_and_names_the_check`
+#### `test_a_file_with_no_error_card_exits_0`
 
-**Checks:** Limits of 5 mT/m and 5 T/m/s make the gradient limits check fail: the status is 2, stderr names the file and the check, and the page is written.
+**Checks:** A file whose cards build without an error card exits 0.
 
-**How:** `--max-grad 5 --max-slew 5`.
+**How:** `--cards` with `FAST`, for the spin-echo sequence.
 
 **Assumptions:** None.
 
-#### `test_a_file_with_no_failed_check_exits_0`
+#### `test_a_page_with_an_error_card_exits_1_and_the_page_is_written`
 
-**Checks:** A file whose cards pass every check exits 0.
+**Checks:** A page with an error card (a card whose build raises) gives status 1, and the page is still written, with the timing card and the error card, and the error's type name.
 
-**How:** The spin-echo sequence is within the limits of its read-back system.
+**How:** `--card-module plugin_card:BROKEN` (the spec in `tests/plugin_card.py` whose build raises `NotImplementedError`) with `--cards timing,plugin-broken`. The test reads the page back and looks for the two card ids and `NotImplementedError`.
 
 **Assumptions:** None.
 
@@ -8688,14 +8703,6 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 **Checks:** A text file that is not a sequence and a missing file give status 1 and are named on stderr, and the page of the good file in the same call is written.
 
 **How:** Three files in one call.
-
-**Assumptions:** None.
-
-#### `test_the_status_1_wins_over_the_status_2`
-
-**Checks:** A missing file together with a file that has a failed check gives status 1.
-
-**How:** Limits of 5 and 5.
 
 **Assumptions:** None.
 
@@ -8725,7 +8732,7 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 #### `test_a_toml_and_a_json_config_file_give_the_page_of_the_same_flags`
 
-**Checks:** A `.toml` and a `.json` config file with the same values (limits table, coil, max_rows, check_norms, cards) give the page that the same values as flags give.
+**Checks:** A `.toml` and a `.json` config file with the same values (limits table, max_rows, cards) give the page that the same values as flags give.
 
 **How:** The limits label in the files is "command line", the label of the flags.
 
@@ -8785,7 +8792,7 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 **Checks:** Each name that `pulseq_reports` or `pulseq_reports.cards` exports is the same object as the name in the module that defines it, for example `pulseq_reports.build_cards is pulseq_reports.registry.build_cards`.
 
-**How:** Parametrized over the 20 (package, name, module) triples.
+**How:** Parametrized over the 17 (package, name, module) triples.
 
 **Assumptions:** None.
 

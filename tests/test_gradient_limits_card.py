@@ -52,6 +52,13 @@ def _parse(body_html: str) -> _CardParser:
     return parser
 
 
+LIMITS = grad_limits.HardwareLimits(
+    max_grad_mt_per_m=SYSTEM.max_grad / GAMMA * 1e3,
+    max_slew_t_per_m_per_s=SYSTEM.max_slew / GAMMA,
+    label="system limits",
+)
+
+
 def _where(value: str, block_id: int | None, time_s: float) -> str:
     """The text of a peak or slew cell: the value, and the block and time when there is a
     block."""
@@ -101,7 +108,7 @@ def test_table_has_axis_rows_and_percents():
     block_id = next(iter(seq.block_events))
     peak_cell = _where(fmt(values["peak_mt"]), block_id, gx.rise_time)
 
-    card = gradient_limits_card(seq)
+    card = gradient_limits_card(seq, limits=LIMITS)
 
     expected_table = [
         ["Axis", "Peak (mT/m)", "% of limit", "Max slew (T/m/s)", "% of limit", "RMS (mT/m)"],
@@ -124,7 +131,6 @@ def test_table_has_axis_rows_and_percents():
     assert card.title == "Gradient limits"
     assert card.data is None
     assert _parse(card.body_html).tables == [expected_table]
-    assert "pypulseq system limits" in card.body_html
 
 
 def test_window_gives_rms_over_window_and_over_whole_file():
@@ -146,7 +152,7 @@ def test_window_gives_rms_over_window_and_over_whole_file():
     # The peak is at the window end, and the slew segment starts at the window start.
     peak_cell = _where(fmt(window_peak_mt), block_id, gx.rise_time)
 
-    card = gradient_limits_card(seq, windows=[TimeWindow("ramp", *window)])
+    card = gradient_limits_card(seq, windows=[TimeWindow("ramp", *window)], limits=LIMITS)
 
     expected_table = [
         [
@@ -184,6 +190,41 @@ def test_window_gives_rms_over_window_and_over_whole_file():
     assert _parse(card.body_html).tables == [expected_table]
 
 
+def test_without_limits_the_table_has_no_percent_columns():
+    """Without `limits`, the tables have no "% of limit" header and no percent cell: the
+    whole-file table has four columns (axis, peak, max slew, RMS), and the table of a window
+    has five (RMS over the window and over the whole file). With `limits`, each table has
+    the two percent columns more. The cells of each row are as many as the headers."""
+    seq = _two_trapezoid_seq()
+    end = grad_limits.gradient_limits(seq).range_s[1]
+    windows = [TimeWindow("first half", 0.0, end / 2), TimeWindow("second half", end / 2, end)]
+
+    for kwargs, columns in (({}, 4), ({"windows": windows}, 5)):
+        for limits, percent_columns in ((None, 0), (LIMITS, 2)):
+            card = gradient_limits_card(seq, limits=limits, **kwargs)
+
+            tables = _parse(card.body_html).tables
+            assert len(tables) == len(kwargs.get("windows", [None]))
+            for table in tables:
+                assert table[0].count("% of limit") == percent_columns
+                assert [len(row) for row in table] == [columns + percent_columns] * 5
+
+
+def test_without_limits_the_values_are_those_with_limits():
+    """The cells that the percent columns do not hold are the same with and without
+    `limits`: the table without limits is the table with limits, less its percent columns."""
+    seq = _two_trapezoid_seq()
+
+    without = _parse(gradient_limits_card(seq).body_html).tables[0]
+    with_limits = _parse(gradient_limits_card(seq, limits=LIMITS).body_html).tables[0]
+
+    percent = [i for i, header in enumerate(with_limits[0]) if header == "% of limit"]
+    assert percent == [2, 4]
+    assert without == [
+        [cell for i, cell in enumerate(row) if i not in percent] for row in with_limits
+    ]
+
+
 def test_no_gradients_adds_a_reason_note():
     """A file with no gradient events: the table still has the four rows, all zero,
     and the muted note gives the reason."""
@@ -219,9 +260,9 @@ def test_card_with_a_window_makes_one_pass_over_the_per_event_values(monkeypatch
     assert len(calls) == 1
 
 
-def _expected_window_table(seq, window, limits=None) -> list[list[str]]:
+def _expected_window_table(seq, window) -> list[list[str]]:
     """The cell texts of the table of one window, from `gradient_limits` for that range."""
-    result = grad_limits.gradient_limits(seq, window=window, limits=limits)
+    result = grad_limits.gradient_limits(seq, window=window, limits=LIMITS)
     lim = result.limits
     rows = []
     for axis, label in (("x", "Gx"), ("y", "Gy"), ("z", "Gz")):
@@ -293,7 +334,9 @@ def test_two_windows_give_two_tables_with_the_values_of_each_range():
     second = (end / 2, end)
 
     card = gradient_limits_card(
-        seq, windows=[TimeWindow("first half", *first), TimeWindow("second half", *second)]
+        seq,
+        windows=[TimeWindow("first half", *first), TimeWindow("second half", *second)],
+        limits=LIMITS,
     )
 
     first_table = _expected_window_table(seq, first)
@@ -321,12 +364,12 @@ def test_note_gives_the_values_of_the_given_limits():
     """The note's limits are the values of the `limits` argument, with its label."""
     seq, _gx = _trapezoid_seq(0.4 * SYSTEM.max_grad)
     limits = grad_limits.HardwareLimits(
-        max_grad_mt_per_m=22.5, max_slew_t_per_m_per_s=77.0, label="test coil"
+        max_grad_mt_per_m=22.5, max_slew_t_per_m_per_s=77.0, label="test limits"
     )
 
     card = gradient_limits_card(seq, limits=limits)
 
-    assert f"Limits: test coil ({fmt(22.5)} mT/m, {fmt(77.0)} T/m/s)." in card.body_html
+    assert f"Limits: test limits ({fmt(22.5)} mT/m, {fmt(77.0)} T/m/s)." in card.body_html
 
 
 def test_render_page_accepts_gradient_limits_card():

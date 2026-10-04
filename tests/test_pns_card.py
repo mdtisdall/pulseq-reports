@@ -5,7 +5,6 @@ import pytest
 from synthetic import SYSTEM, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page, pns
-from pulseq_reports.asc import EXAMPLE_HARDWARE
 from pulseq_reports.cards.pns import _pns_data, pns_card
 from pulseq_reports.seq_index import sequence_index
 
@@ -13,7 +12,6 @@ _DATA_KEYS = {
     "reason",
     "hardware",
     "asc_file",
-    "example",
     "peak_percent",
     "peak_time_ms",
     "axis_peaks_percent",
@@ -44,26 +42,27 @@ def _three_trs(peak_tr: int) -> pp.Sequence:
     return seq
 
 
-def test_pns_data_for_spin_echo(default_seq):
+def test_pns_data_for_spin_echo(default_seq, write_gradient_asc):
     """`_pns_data` is `pns.pns_prediction`'s summary as a JSON-ready dict: no `lanes`,
     `end_ms` or `peak_tr_ms` any more (`docs/plans/diagram-lanes.md`, section 4.6). The
     PNS chart moved into the diagram's PNS lane, which this card no longer computes."""
-    data = _pns_data(default_seq)
+    asc = write_gradient_asc()
+    data = _pns_data(default_seq, gradient_asc=asc)
     assert set(data) == _DATA_KEYS
     assert data["reason"] is None
-    assert data["example"] is True
-    assert data["asc_file"] is None
-    assert data["hardware"] == EXAMPLE_HARDWARE
+    assert data["asc_file"] == asc.name
+    assert data["hardware"] == "MP_GPA_TEST"
     assert 0 < data["peak_percent"] < 100
     assert data["peak_percent"] >= max(data["axis_peaks_percent"].values())
     assert set(data["axis_peaks_percent"]) == {"x", "y", "z"}
 
 
-def test_pns_data_matches_pns_prediction(default_seq):
+def test_pns_data_matches_pns_prediction(default_seq, write_gradient_asc):
     """`_pns_data`'s numbers are `pns.pns_prediction`'s own fields, in percent and ms,
     rounded the same way as the old chart-bearing card rounded them."""
-    p = pns.pns_prediction(default_seq)
-    data = _pns_data(default_seq)
+    asc = write_gradient_asc()
+    p = pns.pns_prediction(default_seq, gradient_asc=asc)
+    data = _pns_data(default_seq, gradient_asc=asc)
     assert data["peak_percent"] == pytest.approx(100 * p.peak, abs=0.01)
     assert data["peak_time_ms"] == pytest.approx(1e3 * p.peak_time_s, abs=1e-4)
     for axis in "xyz":
@@ -71,34 +70,37 @@ def test_pns_data_matches_pns_prediction(default_seq):
 
 
 @pytest.mark.parametrize("peak_tr", [0, 1, 2])
-def test_pns_data_for_each_tr_position(peak_tr):
+def test_pns_data_for_each_tr_position(peak_tr, write_gradient_asc):
     """The card still reports the right peak for a sequence whose highest PNS is in a
     different TR (the TR-zoom feature itself moved to the diagram card's windows,
     `pns.peak_tr_window`, so it is not tested here any more)."""
     seq = _three_trs(peak_tr)
-    p = pns.pns_prediction(seq)
-    data = _pns_data(seq)
+    asc = write_gradient_asc()
+    p = pns.pns_prediction(seq, gradient_asc=asc)
+    data = _pns_data(seq, gradient_asc=asc)
     assert data["peak_time_ms"] == pytest.approx(1e3 * p.peak_time_s, abs=1e-4)
     lo, hi = 50 * peak_tr, 50 * (peak_tr + 1)
     assert lo <= data["peak_time_ms"] <= hi
 
 
-def test_report_has_pns_card(default_seq):
-    card = pns_card(default_seq)
+def test_report_has_pns_card(default_seq, write_gradient_asc):
+    asc = write_gradient_asc()
+    card = pns_card(default_seq, gradient_asc=asc)
     assert card.id == "pns"
     assert card.title == "PNS prediction"
     assert card.script == "pns"
 
     body = card.body_html
-    assert "is below the 100 % limit" in body
-    assert "Example hardware, not a real scanner." in body
-    assert f"<td>{EXAMPLE_HARDWARE}</td>" in body
+    assert f"<td>MP_GPA_TEST ({asc.name})</td>" in body
     for label in ("Peak, all axes (%)", "Peak, Gx (%)", "Peak, Gy (%)", "Peak, Gz (%)"):
         assert f"<td>{label}</td>" in body
     # No chart any more: it moved into the diagram's PNS lane.
     assert '<div class="chart"' not in body
     assert "<svg" not in body
     assert "data-pns-view" not in body
+    # No verdict.
+    assert "status good" not in body
+    assert "status bad" not in body
 
     # render_page accepts the card, with its script: the section tag has the
     # "data-card-script" attribute (page.py adds it when Card.script is not None).
@@ -107,18 +109,18 @@ def test_report_has_pns_card(default_seq):
     assert "<h2>PNS prediction</h2>" in result
 
 
-def test_report_without_gradients_has_no_pns_table():
-    card = pns_card(empty_sequence())
+def test_report_without_gradients_has_no_pns_table(write_gradient_asc):
+    card = pns_card(empty_sequence(), gradient_asc=write_gradient_asc())
     result = page.render_page("Title", "Subtitle", [card])
     assert '<p class="muted">No PNS prediction: no gradients.</p>' in result
     assert "<table>" not in result
 
 
-def test_card_id_is_used_for_the_section_and_data_element():
+def test_card_id_is_used_for_the_section_and_data_element(write_gradient_asc):
     """With a non-default `card_id`, the card's own id follows it (so two PNS cards,
     for example for two hardware files, can be on one page without an id clash), and its
     JSON data element key is that id too, with the card's data."""
-    card = pns_card(spin_echo_sequence(), card_id="pns-b")
+    card = pns_card(spin_echo_sequence(), gradient_asc=write_gradient_asc(), card_id="pns-b")
     assert card.id == "pns-b"
     assert card.script == "pns"
     result = page.render_page("Title", "Subtitle", [card])
@@ -127,13 +129,14 @@ def test_card_id_is_used_for_the_section_and_data_element():
     assert json.loads(element.split("</script>")[0]) == card.data
 
 
-def test_data_with_a_tr_definition_has_the_peak_tr_and_the_peak_time():
+def test_data_with_a_tr_definition_has_the_peak_tr_and_the_peak_time(write_gradient_asc):
     """With a `TR` definition, `goto` is the TR that `pns.peak_tr_window` gives and the
     peak time as the anchor, and nothing else is in the data."""
     seq = _three_trs(1)
-    p = pns.pns_prediction(seq)
+    asc = write_gradient_asc()
+    p = pns.pns_prediction(seq, gradient_asc=asc)
     t0, t1 = pns.peak_tr_window(seq, p.peak_time_s)
-    data = pns_card(seq).data
+    data = pns_card(seq, gradient_asc=asc).data
     assert data == {
         "format": 1,
         "goto": {"t0S": t0, "t1S": t1, "anchorS": p.peak_time_s},
@@ -141,13 +144,14 @@ def test_data_with_a_tr_definition_has_the_peak_tr_and_the_peak_time():
     assert (t0, t1) == pytest.approx((0.05, 0.10))
 
 
-def test_data_without_a_tr_definition_has_the_block_of_the_peak(default_seq):
+def test_data_without_a_tr_definition_has_the_block_of_the_peak(default_seq, write_gradient_asc):
     """Without a `TR` definition (`pns.peak_tr_window` gives None), `goto` is the play
     index of the block that holds the peak time, and nothing else is in the data."""
     seq = default_seq
-    p = pns.pns_prediction(seq)
+    asc = write_gradient_asc()
+    p = pns.pns_prediction(seq, gradient_asc=asc)
     assert pns.peak_tr_window(seq, p.peak_time_s) is None
-    data = pns_card(seq).data
+    data = pns_card(seq, gradient_asc=asc).data
     assert set(data) == {"format", "goto"}
     assert data["format"] == 1
     assert set(data["goto"]) == {"block"}
@@ -157,10 +161,25 @@ def test_data_without_a_tr_definition_has_the_block_of_the_peak(default_seq):
     assert index.duration_s[block] > 0
 
 
-def test_card_without_gradients_has_no_data_and_no_script():
+def test_card_without_gradients_has_no_data_and_no_script(write_gradient_asc):
     """No prediction (no gradients): nothing for a button to show, so the card has no
     data, no script and no button."""
-    card = pns_card(empty_sequence())
+    card = pns_card(empty_sequence(), gradient_asc=write_gradient_asc())
     assert card.data is None
     assert card.script is None
     assert "<button" not in card.body_html
+
+
+def test_card_without_gradient_asc_has_no_pns(default_seq, no_safe_model):
+    """Without `gradient_asc`, the card has no prediction: no data, no script, no table, no
+    button, and the SAFE model does not run (`no_safe_model` raises if it does)."""
+    card = pns_card(default_seq)
+
+    assert card.id == "pns"
+    assert card.data is None
+    assert card.script is None
+    assert card.scripts == ()
+    assert "<table" not in card.body_html
+    assert "<button" not in card.body_html
+    assert card.error is None
+    page.render_page("Title", "Subtitle", [card])

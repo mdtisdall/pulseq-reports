@@ -180,14 +180,12 @@ def test_topics_that_pass_the_check():
     page.render_page("Title", "Subtitle", cards)
 
 
-def test_checks_are_not_on_the_page():
-    check = page.Check(name="CHECK_NAME_MARKER", passed=False, message="CHECK_MESSAGE_MARKER")
-    with_checks = page.Card(id="a", title="A", body_html="<p>a</p>", checks=(check,))
-    without_checks = page.Card(id="a", title="A", body_html="<p>a</p>")
-    result = page.render_page("Title", "Subtitle", [with_checks])
-    assert "CHECK_NAME_MARKER" not in result
-    assert "CHECK_MESSAGE_MARKER" not in result
-    assert result == page.render_page("Title", "Subtitle", [without_checks])
+def test_the_error_of_a_card_is_not_on_the_page():
+    with_error = page.Card(id="a", title="A", body_html="<p>a</p>", error="ERROR_MARKER")
+    without_error = page.Card(id="a", title="A", body_html="<p>a</p>")
+    result = page.render_page("Title", "Subtitle", [with_error])
+    assert "ERROR_MARKER" not in result
+    assert result == page.render_page("Title", "Subtitle", [without_error])
 
 
 def test_each_script_is_its_own_script_element():

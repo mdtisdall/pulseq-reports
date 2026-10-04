@@ -1,38 +1,15 @@
 import numpy as np
 import pypulseq as pp
 import pytest
-from pypulseq.utils.safe_pns_prediction import safe_example_hw
 from synthetic import empty_sequence, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import page
-from pulseq_reports.asc import EXAMPLE_HARDWARE
 from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.diagram_data import decode_tables, diagram_tables, lane_meta
 from pulseq_reports.markup import zoom_controls
 from pulseq_reports.pns import pns_levels_for
 from pulseq_reports.seq_utils import GAMMA
 from pulseq_reports.waveforms import TimeWindow, duration_s, first_adc_window, full_window
-
-
-def _write_gradient_asc(tmp_path, name: str = "MP_GPA_TEST"):
-    """A minimal gradient .asc file with the PNS parameters of pypulseq's example
-    hardware (the same technique as `test_pns.py`'s `write_gradient_asc` fixture: the
-    real files are confidential, so this one is built from pypulseq's own public
-    example hardware)."""
-    hw = safe_example_hw()
-    lines = [f'asCOMP.tName = "{name}"']
-    for axis in "xyz":
-        a, suffix = getattr(hw, axis), axis.upper()
-        lines += [f"flGSWDTau{suffix}[{i}] = {getattr(a, f'tau{i + 1}')!r}" for i in range(3)]
-        lines += [f"flGSWDA{suffix}[{i}] = {getattr(a, f'a{i + 1}')!r}" for i in range(3)]
-        lines += [
-            f"flGSWDStimulationLimit{suffix} = {a.stim_limit!r}",
-            f"flGSWDStimulationThreshold{suffix} = {a.stim_thresh!r}",
-        ]
-        lines.append(f"asGPAParameters[0].sGCParameters.flGScaleFactor{suffix} = {a.g_scale!r}")
-    path = tmp_path / f"{name}.asc"
-    path.write_text("\n".join(lines) + "\n")
-    return path
 
 
 def _sodium_gradient_sequence() -> pp.Sequence:
@@ -161,9 +138,10 @@ def test_pns_false_by_default_adds_no_pns_key():
     assert "pns" not in file_entry
 
 
-def test_pns_true_adds_the_pns_key_with_the_example_hardware():
+def test_pns_true_adds_the_pns_key_with_the_gradient_asc_hardware(write_gradient_asc):
     seq = spin_echo_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+    path = write_gradient_asc()
+    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
     file_entry = card.data["file"]
 
     assert "pns" in file_entry
@@ -179,9 +157,9 @@ def test_pns_true_adds_the_pns_key_with_the_example_hardware():
         "summary",
         "levels",
     }
-    assert pns_entry["hardware"] == EXAMPLE_HARDWARE
-    assert pns_entry["example"] is True
-    assert pns_entry["asc_file"] is None
+    assert pns_entry["hardware"] == "MP_GPA_TEST"
+    assert pns_entry["example"] is False
+    assert pns_entry["asc_file"] == path.name
     assert set(pns_entry["hw"]) == {"x", "y", "z"}
     for axis_hw in pns_entry["hw"].values():
         assert set(axis_hw) == {
@@ -210,20 +188,18 @@ def test_pns_true_adds_the_pns_key_with_the_example_hardware():
         assert table["dtype"] == "float32"
 
 
-def test_pns_asc_path_uses_the_gradient_asc_hardware(tmp_path):
+def test_pns_true_without_gradient_asc_adds_no_pns_key_and_runs_no_safe_model(no_safe_model):
     seq = spin_echo_sequence()
-    path = _write_gradient_asc(tmp_path)
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
-    file_entry = card.data["file"]
-    pns_entry = file_entry["pns"]
-    assert pns_entry["hardware"] == "MP_GPA_TEST"
-    assert pns_entry["example"] is False
-    assert pns_entry["asc_file"] == path.name
+
+    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+
+    assert "pns" not in card.data["file"]
+    assert card.error is None
 
 
-def test_gradient_asc_without_pns_lane_raises_value_error(tmp_path):
+def test_gradient_asc_without_pns_lane_raises_value_error(write_gradient_asc):
     seq = spin_echo_sequence()
-    path = _write_gradient_asc(tmp_path)
+    path = write_gradient_asc()
     with pytest.raises(ValueError, match="gradient_asc"):
         diagram_card(seq, [full_window(seq)], gradient_asc=path)
 
@@ -235,34 +211,35 @@ def test_pns_lane_that_is_not_a_bool_raises_type_error(pns_lane):
         diagram_card(seq, [full_window(seq)], pns_lane=pns_lane)
 
 
-def test_pns_grad_scale_for_a_sequence_with_another_gyromagnetic_ratio():
+def test_pns_grad_scale_for_a_sequence_with_another_gyromagnetic_ratio(write_gradient_asc):
     """`gradScale = seq_utils.GAMMA / seq.system.gamma` (decision 14): not 1.0 for a
     sequence built with a non-proton gyromagnetic ratio (here sodium, 11.262e6 Hz/T, as
     in the golden test of task 4.5)."""
     seq = _sodium_gradient_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
     file_entry = card.data["file"]
     assert file_entry["pns"]["gradScale"] == pytest.approx(GAMMA / seq.system.gamma)
     assert file_entry["pns"]["gradScale"] != 1.0
 
 
-def test_pns_without_gradients_adds_no_pns_key():
+def test_pns_without_gradients_adds_no_pns_key(write_gradient_asc):
     seq = empty_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
     file_entry = card.data["file"]
     assert "pns" not in file_entry
 
 
-def test_pns_levels_decode_back_to_pns_levels_for_exactly():
+def test_pns_levels_decode_back_to_pns_levels_for_exactly(write_gradient_asc):
     """The `"levels"` key of the `"pns"` entry, decoded, equals the `level_min`/
-    `level_max` of `pns.pns_levels_for(seq)` exactly (the same values, encoded and
+    `level_max` of `pns.pns_levels_for(seq, gradient_asc=...)` exactly (the same values, encoded and
     decoded with `diagram_data.encode_tables`/`decode_tables`)."""
     seq = spin_echo_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+    path = write_gradient_asc()
+    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
     file_entry = card.data["file"]
 
     decoded = decode_tables(file_entry["pns"]["levels"])
-    levels = pns_levels_for(seq)
+    levels = pns_levels_for(seq, gradient_asc=path)
     assert decoded["min"].dtype == np.float32
     assert decoded["max"].dtype == np.float32
     assert np.array_equal(decoded["min"], levels.level_min)
@@ -320,9 +297,9 @@ _PNS_EXPLANATION_PHRASES = (
 )
 
 
-def test_pns_explanation_sentence_present_when_the_card_has_pns_data():
+def test_pns_explanation_sentence_present_when_the_card_has_pns_data(write_gradient_asc):
     seq = spin_echo_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
     for phrase in _PNS_EXPLANATION_PHRASES:
         assert phrase in card.body_html, phrase
 
@@ -354,11 +331,13 @@ def test_g_lane_explanation_sentence_present_even_without_gradients():
         assert phrase in card.body_html, phrase
 
 
-def test_pns_explanation_sentence_absent_without_gradients_even_with_pns_true():
+def test_pns_explanation_sentence_absent_without_gradients_even_with_pns_true(
+    write_gradient_asc,
+):
     """A file with no gradient event gets no `"pns"` key (`_diagram_data`) even when
     `pns` is not False, so it gets no PNS sentence either: the explanation is keyed
     on the data (`has_pns` in `diagram_card`), not on the `pns` argument alone."""
     seq = empty_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
     for phrase in _PNS_EXPLANATION_PHRASES:
         assert phrase not in card.body_html, phrase

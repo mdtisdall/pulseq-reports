@@ -15,7 +15,9 @@ level of `pns.pns_levels_for` (the same `PnsLevels` that the PNS summary card us
 `gradient_asc`, so a page with both computes the SAFE model once for one sequence). The
 browser (`assets/pns_lanes.js`) decodes it into the PNS lane. `pns_lane` is False by
 default: computing it costs the SAFE model's own time (section 4.1 of that plan), which
-a caller opts into.
+a caller opts into. The lane needs `gradient_asc`, the gradient .asc file of the scanner:
+with `pns_lane` and no `gradient_asc`, the card has no `"pns"` key and a note says that
+the lane needs `gradient_asc`.
 """
 
 import html
@@ -85,9 +87,10 @@ def _diagram_data(
     `file` has `duration_s`, `num_blocks`, `lanes` (`lane_meta`) and `tables`
     (`encode_tables(diagram_tables(seq))`). `diagram_tables(seq)` is built once and
     passed to `lane_meta` so it is not built twice. When `pns_lane` is true and the
-    sequence has a gradient event, `file` also gets a `"pns"` key (`_pns_entry`); a
-    sequence without gradients gets no `"pns"` key. `windows` has one entry for each of
-    `windows`: `label` and `view_ms`.
+    sequence has a gradient event and `gradient_asc` is given, `file` also gets a `"pns"`
+    key (`_pns_entry`); a sequence without gradients, or a call without `gradient_asc`,
+    gets no `"pns"` key. `windows` has one entry for each of `windows`: `label` and
+    `view_ms`.
     """
     tables = diagram_tables(seq)
     file = {
@@ -96,7 +99,7 @@ def _diagram_data(
         "lanes": lane_meta(seq, tables=tables),
         "tables": encode_tables(tables),
     }
-    if pns_lane:
+    if pns_lane and gradient_asc is not None:
         levels = pns_levels_for(seq, gradient_asc=gradient_asc)
         if levels.reason is None:
             file["pns"] = _pns_entry(seq, levels)
@@ -122,10 +125,12 @@ def diagram_card(
 
     `pns_lane` (`docs/plans/diagram-lanes.md`, section 4.7) adds a PNS lane: `False` (the
     default) computes no PNS and adds no `"pns"` key. `gradient_asc` is the gradient
-    `.asc` file of the scanner for the lane, or None for pypulseq's example hardware; it
-    needs `pns_lane=True`. A sequence with no gradient event gets no `"pns"` key even
-    when `pns_lane` is true. The PNS prediction is `pns.pns_levels_for`, which a PNS
-    summary card for the same sequence and the same `gradient_asc`
+    `.asc` file of the scanner for the lane; it needs `pns_lane=True`, and the lane needs
+    it: with `pns_lane=True` and `gradient_asc=None`, the card computes no PNS, has no
+    `"pns"` key, and the explanation paragraph says that the PNS lane needs
+    `gradient_asc`. A sequence with no gradient event gets no `"pns"` key even when
+    `pns_lane` and `gradient_asc` are given. The PNS prediction is `pns.pns_levels_for`,
+    which a PNS summary card for the same sequence and the same `gradient_asc`
     (`cards.pns.pns_card`) shares, so the SAFE model runs once.
 
     A group-controls container (`{card_id}-groups`) sits above the chart, after the
@@ -136,7 +141,8 @@ def diagram_card(
     the gradient vector's magnitude in each time bin, computed in the browser
     (`assets/g_lanes.js`) from the same tables as Gx, Gy and Gz, no extra data from this
     function. The explanation paragraph under the chart always gets one sentence about
-    the |G| lane, and one more about the PNS lane when the card has PNS data.
+    the |G| lane, and one more about the PNS lane when the card has PNS data, or, when
+    `pns_lane` is true without `gradient_asc`, one that says the lane needs `gradient_asc`.
 
     The card's `scripts` has `assets/cards/diagram.js`. It publishes `PUBLISHES` (the
     topics `sequence`, `cursor`, `anchor` and `view`) and subscribes to `SUBSCRIBES`
@@ -177,6 +183,11 @@ def diagram_card(
         if has_pns
         else ""
     )
+    if pns_lane and gradient_asc is None:
+        pns_note = (
+            " There is no PNS lane: it needs the gradient .asc file of the scanner "
+            "(<code>gradient_asc</code>)."
+        )
     body = (
         f'<div class="controls" role="group" aria-label="Time window">{buttons}</div>\n'
         f'<div class="controls" role="group" aria-label="Lanes" id="{card_id}-groups">'

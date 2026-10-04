@@ -10,19 +10,16 @@ import pypulseq as pp
 
 from .. import options
 from ..extensions import refuse_rotations
-from ..grad_limits import GradientLimits, HardwareLimits, _default_limits, gradient_limits
+from ..grad_limits import GradientLimits, HardwareLimits, gradient_limits
 from ..markup import fmt
-from ..page import Card, Check, card_asset
+from ..page import Card, card_asset
 from ..registry import CardSpec, ReportContext
 from ..seq_index import SequenceIndex, sequence_index
-from ..seq_utils import GAMMA
 from ..waveforms import TimeWindow, _check_windows
 
 _AXES = ("x", "y", "z")
 _AXIS_LABEL = {"x": "Gx", "y": "Gy", "z": "Gz"}
 _NO_VALUE = "—"
-# Relative tolerance: the unit conversions are floats, and a value at the limit passes.
-_LIMIT_TOLERANCE = 1e-9
 # The narrowest view of a "Show" button, as the diagram's `goto` of a block.
 _GOTO_MIN_VIEW_S = 1e-3
 
@@ -66,12 +63,13 @@ def _value_cell(
     return f"{html.escape(text)} {_goto_button(index, block_id, time_s, what)}"
 
 
-def _rows(windowed: GradientLimits, index: SequenceIndex) -> list[list[str]]:
+def _rows(
+    windowed: GradientLimits, index: SequenceIndex, limits: HardwareLimits | None
+) -> list[list[str]]:
     """The four rows (Gx, Gy, Gz, |G|) of HTML cells, from one `gradient_limits` call.
     `windowed.whole_rms_mt_per_m` gives the extra "RMS over whole file" column when
     `windowed` is over a window (computed in that same call); it is None when there is
-    no window."""
-    limits = windowed.limits
+    no window. The rows have the two "% of limit" cells only when `limits` is given."""
     whole_rms = windowed.whole_rms_mt_per_m
     rows = []
     for axis in _AXES:
@@ -80,21 +78,25 @@ def _rows(windowed: GradientLimits, index: SequenceIndex) -> list[list[str]]:
         row = [
             label,
             _value_cell(a.peak_mt_per_m, a.peak_block, a.peak_time_s, index, f"{label} peak"),
-            _pct(a.peak_mt_per_m, limits.max_grad_mt_per_m),
+        ]
+        if limits is not None:
+            row.append(_pct(a.peak_mt_per_m, limits.max_grad_mt_per_m))
+        row.append(
             _value_cell(
                 a.max_slew_t_per_m_per_s, a.slew_block, a.slew_time_s, index, f"{label} max slew"
-            ),
-            _pct(a.max_slew_t_per_m_per_s, limits.max_slew_t_per_m_per_s),
-            fmt(a.rms_mt_per_m),
-        ]
+            )
+        )
+        if limits is not None:
+            row.append(_pct(a.max_slew_t_per_m_per_s, limits.max_slew_t_per_m_per_s))
+        row.append(fmt(a.rms_mt_per_m))
         if whole_rms is not None:
             row.append(fmt(whole_rms[axis]))
         rows.append(row)
 
     # |G|, the three-axis vector. There is no vector slew (see GradientLimits), so that
-    # cell is blank. The percent of limit compares the vector peak with the per-axis
-    # max_grad, because an oblique prescription can put the vector peak onto a single
-    # physical axis.
+    # cell and its percent cell are blank. The percent of limit compares the vector peak
+    # with the per-axis max_grad, because an oblique prescription can put the vector peak
+    # onto a single physical axis.
     vector_row = [
         "|G|",
         _value_cell(
@@ -104,11 +106,13 @@ def _rows(windowed: GradientLimits, index: SequenceIndex) -> list[list[str]]:
             index,
             "|G| peak",
         ),
-        _pct(windowed.vector_peak_mt_per_m, limits.max_grad_mt_per_m),
-        _NO_VALUE,
-        _NO_VALUE,
-        fmt(_vector_rms({axis: windowed.axes[axis].rms_mt_per_m for axis in _AXES})),
     ]
+    if limits is not None:
+        vector_row.append(_pct(windowed.vector_peak_mt_per_m, limits.max_grad_mt_per_m))
+    vector_row.append(_NO_VALUE)
+    if limits is not None:
+        vector_row.append(_NO_VALUE)
+    vector_row.append(fmt(_vector_rms({axis: windowed.axes[axis].rms_mt_per_m for axis in _AXES})))
     if whole_rms is not None:
         vector_row.append(fmt(_vector_rms(whole_rms)))
     rows.append(vector_row)
@@ -124,17 +128,17 @@ def _table_html(headers: list[str], rows: list[list[str]]) -> str:
 
 
 def _table(
-    seq: pp.Sequence, window: tuple[float, float] | None, limits: HardwareLimits
-) -> tuple[str, GradientLimits]:
+    seq: pp.Sequence, window: tuple[float, float] | None, limits: HardwareLimits | None
+) -> str:
     """The table of the card, and the reason note when there is no gradient event, for one
-    range (`window`, or the whole file), with the `GradientLimits` that it shows."""
-    headers = [
-        "Axis",
-        "Peak (mT/m)",
-        "% of limit",
-        "Max slew (T/m/s)",
-        "% of limit",
-    ]
+    range (`window`, or the whole file). It has the "% of limit" columns only when `limits`
+    is given."""
+    headers = ["Axis", "Peak (mT/m)"]
+    if limits is not None:
+        headers.append("% of limit")
+    headers.append("Max slew (T/m/s)")
+    if limits is not None:
+        headers.append("% of limit")
     headers += (
         ["RMS (mT/m)"]
         if window is None
@@ -146,54 +150,10 @@ def _table(
     # call for it.
     windowed = gradient_limits(seq, window=window, limits=limits)
 
-    body = _table_html(headers, _rows(windowed, sequence_index(seq)))
+    body = _table_html(headers, _rows(windowed, sequence_index(seq), limits))
     if windowed.reason is not None:
         body += f'<p class="muted">{html.escape(f"{windowed.reason}.")}</p>'
-    return body, windowed
-
-
-def _excess(what: str, value: float, limit: float, unit: str, table_name: str) -> str | None:
-    """The message for a value above 100 % of its limit, or None."""
-    if value <= limit * (1 + _LIMIT_TOLERANCE):
-        return None
-    return (
-        f"{what} {fmt(value)} {unit} is {_pct(value, limit)} % of the {fmt(limit)} {unit} "
-        f"limit in {table_name}"
-    )
-
-
-def _excesses(windowed: GradientLimits, table_name: str, check_norms: bool) -> list[str]:
-    """The messages for the values of one table that are above 100 % of their limit: the
-    peak amplitude and the peak slew of each axis, and with `check_norms` the |G| peak
-    against the amplitude limit. A table with a `reason` has none."""
-    if windowed.reason is not None:
-        return []
-    limits = windowed.limits
-    found = []
-    for axis in _AXES:
-        a = windowed.axes[axis]
-        label = _AXIS_LABEL[axis]
-        found += [
-            _excess(f"{label} peak", a.peak_mt_per_m, limits.max_grad_mt_per_m, "mT/m", table_name),
-            _excess(
-                f"{label} slew",
-                a.max_slew_t_per_m_per_s,
-                limits.max_slew_t_per_m_per_s,
-                "T/m/s",
-                table_name,
-            ),
-        ]
-    if check_norms:
-        found.append(
-            _excess(
-                "|G| peak",
-                windowed.vector_peak_mt_per_m,
-                limits.max_grad_mt_per_m,
-                "mT/m",
-                table_name,
-            )
-        )
-    return [message for message in found if message is not None]
+    return body
 
 
 def gradient_limits_card(
@@ -201,13 +161,15 @@ def gradient_limits_card(
     *,
     windows: Sequence[TimeWindow] | None = None,
     limits: HardwareLimits | None = None,
-    check_norms: bool = False,
     card_id: str = "gradient-limits",
 ) -> Card:
     """The "Gradient limits" card: one table with the peak amplitude, the peak slew rate
     and the RMS amplitude of each logical axis (Gx, Gy, Gz) and of the three-axis vector
-    (|G|), each as a percent of `limits` where a limit applies (see
-    `grad_limits.gradient_limits`).
+    (|G|). With `limits` given, the table has two "% of limit" columns, the peak and the
+    max slew as a percent of `limits` where a limit applies (see
+    `grad_limits.gradient_limits`). With `limits=None`, it has no percent columns, and the
+    note says that no limits were given. The card does not take limits from the sequence's
+    system.
 
     With `windows` given, the card has one table for each window, headed by an `<h3>` with
     the window's label. The peak and the slew columns are over the window, and the RMS
@@ -222,41 +184,34 @@ def gradient_limits_card(
     and shows the button only while a card (the diagram) acts on `goto`. A value of 0 has no
     block, no time and no button.
 
-    The note at the end of the card gives the limits, with their label and their values.
+    The note at the end of the card gives the limits, with their label and their values,
+    when `limits` is given.
 
     No chart and no data (`data=None`). The card publishes `PUBLISHES` (`goto`), and has
     `scripts` with `assets/cards/gradient-limits.js` when a table has a button.
-
-    The card has one check, `gradient-limits`. It fails when the peak amplitude or the peak
-    slew of Gx, Gy or Gz in a table is above 100 % of its limit; the message names the
-    axis, the value and the table (the window's label, or the whole file). With
-    `check_norms`, it also fails when the |G| peak of a table is above 100 % of the amplitude
-    limit: a check that does not depend on the rotation of the gradients onto the scanner's
-    axes. The library has no vector slew, so there is no check on it. A table with no
-    gradient event has no value to check.
 
     Raises `NotImplementedError` for a sequence with the rotation extension
     (`extensions.refuse_rotations`). Raises `ValueError` for a window that is not inside
     the sequence or that does not end after its start.
     """
     refuse_rotations(seq)
-    used = limits if limits is not None else _default_limits(seq, GAMMA)
-    excesses: list[str] = []
     if windows is None:
-        body, windowed = _table(seq, None, used)
-        excesses += _excesses(windowed, "the whole file", check_norms)
+        body = _table(seq, None, limits)
     else:
         _check_windows(seq, windows)
         parts = []
         for w in windows:
-            table, windowed = _table(seq, (w.start_s, w.end_s), used)
+            table = _table(seq, (w.start_s, w.end_s), limits)
             parts.append(f"<h3>{html.escape(w.label)}</h3>\n{table}")
-            excesses += _excesses(windowed, f'the window "{w.label}"', check_norms)
         body = "\n\n".join(parts)
-    limits_text = (
-        f"{used.label or ''} ({fmt(used.max_grad_mt_per_m)} mT/m, "
-        f"{fmt(used.max_slew_t_per_m_per_s)} T/m/s)"
-    )
+    if limits is None:
+        limits_sentence = "No limits were given, so there is no percent of a limit."
+    else:
+        limits_text = (
+            f"{limits.label or ''} ({fmt(limits.max_grad_mt_per_m)} mT/m, "
+            f"{fmt(limits.max_slew_t_per_m_per_s)} T/m/s)"
+        )
+        limits_sentence = f"Limits: {html.escape(limits_text)}."
     body += (
         '<p class="muted">Peak is the largest gradient amplitude at any point of the '
         "waveform. Max slew is the largest rate of change between neighbouring points "
@@ -271,18 +226,8 @@ def gradient_limits_card(
         "when no logical axis is near the limit. The block and the time after a value are "
         "where it is first reached, in ms from the start of the sequence; for the max "
         "slew, the start of the steepest segment, or the block junction. "
-        f"Limits: {html.escape(limits_text)}.</p>"
-    )
-    check = Check(
-        name="gradient-limits",
-        passed=not excesses,
-        message=(
-            "; ".join(excesses)
-            if excesses
-            else "No peak amplitude or peak slew"
-            + (" (or |G| peak)" if check_norms else "")
-            + f" is above its limit ({used.label})."
-        ),
+        + limits_sentence
+        + "</p>"
     )
     has_button = "<button" in body
     return Card(
@@ -292,7 +237,6 @@ def gradient_limits_card(
         data=None,
         script="gradient-limits" if has_button else None,
         scripts=(card_asset("gradient-limits"),) if has_button else (),
-        checks=(check,),
         publishes=PUBLISHES,
     )
 
@@ -301,11 +245,8 @@ def _build(ctx: ReportContext) -> Card:
     return gradient_limits_card(
         ctx.seq,
         limits=ctx.option(options.limits),
-        check_norms=ctx.option(options.check_norms),
         card_id=SPEC.name,
     )
 
 
-SPEC = CardSpec(
-    "gradient-limits", 70, _build, (options.limits, options.check_norms), publishes=PUBLISHES
-)
+SPEC = CardSpec("gradient-limits", 70, _build, (options.limits,), publishes=PUBLISHES)

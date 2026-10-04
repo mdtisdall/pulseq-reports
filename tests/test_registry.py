@@ -1,12 +1,10 @@
 import dataclasses
 import inspect
 import logging
-import math
 
-import pypulseq as pp
 import pytest
 from plugin_card import CSS, SCRIPT, SPEC, make_spec
-from synthetic import SYSTEM, spin_echo_sequence
+from synthetic import spin_echo_sequence
 
 from pulseq_reports import options, page, registry
 from pulseq_reports.cards.blocks import blocks_card
@@ -18,7 +16,6 @@ from pulseq_reports.cards.rf_exposure import rf_exposure_card
 from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.cards.timing import timing_card
-from pulseq_reports.grad_limits import HardwareLimits
 from pulseq_reports.page import Card
 from pulseq_reports.registry import CardSpec, ReportContext, build_cards, discover
 from pulseq_reports.waveforms import full_window
@@ -127,9 +124,9 @@ def test_a_spec_reads_only_the_options_it_declares(plugin, add_specs):
     # is built, and so is the card that does not.
     cards = build_cards(seq, cards=["plugin-reader", "plugin-demo"])
     assert _ids(cards) == ["plugin-reader", "plugin-demo"]
-    assert [check.passed for check in cards[0].checks] == [False]
+    assert "max_rows" in cards[0].error
     assert "max_rows" in cards[0].body_html
-    assert cards[1].checks == ()
+    assert cards[1].error is None
 
 
 @pytest.mark.parametrize("failing", ["build", "when"])
@@ -152,12 +149,10 @@ def test_a_card_that_raises_is_an_error_card_and_the_others_are_built(
     assert _ids(cards) == ["plugin-broken", "plugin-demo"]
     broken_card, good_card = cards
     assert broken_card.title == "plugin-broken: error"
-    assert len(broken_card.checks) == 1
-    assert broken_card.checks[0].passed is False
-    assert "NotImplementedError" in broken_card.checks[0].message
+    assert broken_card.error == "NotImplementedError: <b>no rotations"
     assert "&lt;b&gt;no rotations" in broken_card.body_html
     assert "<b>" not in broken_card.body_html
-    assert good_card.checks == ()
+    assert good_card.error is None
     assert 'data-max-rows="' in good_card.body_html
     records = [r for r in caplog.records if r.name == "pulseq_reports"]
     assert len(records) == 1
@@ -225,90 +220,11 @@ def test_discovery_finds_the_nine_library_cards_in_their_order():
     assert [spec.order for spec in specs] == sorted(spec.order for spec in specs)
 
 
-def _only_check(seq, name, **option_values):
-    """The one check of the one card `name` that `build_cards` makes for `seq`."""
-    (card,) = build_cards(seq, cards=[name], **option_values)
-    assert card.id == name
-    (check,) = card.checks
-    return check
+def test_a_card_that_builds_has_no_error():
+    cards = build_cards(spin_echo_sequence())
 
-
-def _timing_error_sequence():
-    """One RF block whose delay is below the RF dead time, so pypulseq's timing check fails."""
-    seq = pp.Sequence(SYSTEM)
-    rf = pp.make_block_pulse(flip_angle=math.pi / 2, duration=1e-3, system=SYSTEM)
-    rf.delay = 0
-    seq.add_block(rf)
-    return seq
-
-
-def _oblique_sequence():
-    """One block with Gx and Gy at 0.8 of `max_grad` and a slew well below `max_slew`: each
-    axis is below its limit, and the peak of |G| is 1.13 times the limit."""
-    seq = pp.Sequence(SYSTEM)
-    axes = [
-        pp.make_trapezoid(
-            channel=channel,
-            amplitude=0.8 * SYSTEM.max_grad,
-            rise_time=300e-6,
-            flat_time=1e-3,
-            system=SYSTEM,
-        )
-        for channel in ("x", "y")
-    ]
-    seq.add_block(*axes)
-    return seq
-
-
-@pytest.mark.parametrize("name", ["timing", "gradient-limits", "pns"])
-def test_a_check_passes_for_a_sequence_inside_its_limits(name):
-    check = _only_check(spin_echo_sequence(), name)
-
-    assert check.passed is True
-
-
-def test_the_timing_check_fails_for_a_timing_error():
-    check = _only_check(_timing_error_sequence(), "timing")
-
-    assert check.passed is False
-
-
-@pytest.mark.parametrize(
-    ("limits", "quantity"),
-    [
-        (HardwareLimits(max_grad_mt_per_m=5.0, max_slew_t_per_m_per_s=1e6, label="tight"), "peak"),
-        (HardwareLimits(max_grad_mt_per_m=1e6, max_slew_t_per_m_per_s=10.0, label="tight"), "slew"),
-    ],
-)
-def test_the_gradient_limits_check_fails_for_limits_below_the_peak(limits, quantity):
-    check = _only_check(spin_echo_sequence(), "gradient-limits", limits=limits)
-
-    assert check.passed is False
-    # The readout is on x, so the message names that axis, the quantity and the table.
-    assert f"Gx {quantity}" in check.message
-    assert "whole file" in check.message
-
-
-@pytest.mark.parametrize(("check_norms", "passed"), [(True, False), (False, True)])
-def test_the_gradient_limits_check_of_the_norm_needs_check_norms(check_norms, passed):
-    seq = _oblique_sequence()
-    # Each axis is below its limit, so the axes do not fail the check.
-    assert _only_check(seq, "gradient-limits").passed is True
-
-    check = _only_check(seq, "gradient-limits", check_norms=check_norms)
-
-    assert check.passed is passed
-    if not passed:
-        assert "|G|" in check.message
-
-
-def test_the_pns_check_fails_for_a_peak_of_100_percent_or_more(write_gradient_asc):
-    seq = spin_echo_sequence()
-    low_threshold = write_gradient_asc(limit_scale=0.1)
-
-    check = _only_check(seq, "pns", gradient_asc=low_threshold)
-
-    assert check.passed is False
+    assert cards
+    assert [card.error for card in cards] == [None] * len(cards)
 
 
 def test_without_the_diagram_the_rf_profile_card_is_not_built():
