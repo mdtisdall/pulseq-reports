@@ -2,9 +2,19 @@
 
 The flags come from the cards that are installed (`registry.discover`): one flag, or one
 flag pair, for each distinct option. A config file (`--config`) gives the same options.
+
+The targets of the report are target profiles of pulseq-checks: `--target PROFILE` (more
+than one time), or `--check-config FILE`, a check configuration that names them (not both).
+The command runs the checks of pulseq-checks on each file for the targets, and gives the
+targets and the result matrix to the cards. `--check-results FILE.json` gives the matrix
+of an earlier run (`pulseq-check --json`) for one file, and then no check runs. Without
+targets, no check runs and the page has no target.
+
 The exit status is 0 when each page is written and no card is an error card, and 1 for an
-error in the arguments, in the config file or in a card spec, for a file that cannot be
-read or written, and for a page with an error card (the page is written).
+error in the arguments, in the config file or in a card spec, for a target profile, a check
+configuration or a result file that cannot be used (no page is written), for a file that
+cannot be read or written, for a file whose checks did not run (no page for that file), and
+for a page with an error card (the page is written).
 """
 
 import argparse
@@ -17,8 +27,18 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pypulseq as pp
+from pulseq_checks import (
+    ConfigError,
+    ProfileError,
+    ResultMatrix,
+    RunError,
+    TargetProfile,
+    read_check_config,
+    read_profile,
+    run_checks,
+)
 
-from . import __version__, registry
+from . import __version__, options, registry, targets
 from .page import write_page
 from .registry import CardSpec, Option, build_cards
 
@@ -109,8 +129,33 @@ def _build_parser(specs: Sequence[CardSpec]) -> argparse.ArgumentParser:
         "--config",
         type=Path,
         metavar="FILE",
-        help="A .toml or .json file of option values, by option name, and cards and skip. "
-        "A flag overrides the same key.",
+        help="A .toml or .json file of option values, by option name, and cards, skip, targets, "
+        "check_config and check_results (paths are relative to the file). A flag overrides "
+        "the same key.",
+    )
+    parser.add_argument(
+        "--target",
+        action="append",
+        type=Path,
+        metavar="PROFILE",
+        help="A target profile file (.toml or .json, the format of pulseq-checks). It can be "
+        "given more than one time; the order is the order of the targets and of their colors. "
+        "The checks run for each target. Not with --check-config.",
+    )
+    parser.add_argument(
+        "--check-config",
+        type=Path,
+        metavar="FILE",
+        help="A check configuration of pulseq-checks: its targets are the targets of the "
+        "report, and its select, required and fast_only select the checks. Not with --target.",
+    )
+    parser.add_argument(
+        "--check-results",
+        type=Path,
+        metavar="FILE.json",
+        help="The result matrix of an earlier run (the output of pulseq-check --json), for one "
+        ".seq file. The command then runs no checks. Needs --target or --check-config, and "
+        "the targets must be the targets of the matrix.",
     )
     group = parser.add_argument_group("card options")
     for option in _distinct_options(specs):
@@ -157,6 +202,30 @@ def _names(what: str, value: object) -> list[str]:
     raise _CliError(f"{what} must be a list of card names: {value!r}")
 
 
+def _config_paths(key: str, value: object, *, many: bool, base_dir: Path) -> list[Path]:
+    """The paths of the config file key `key`: a list of path strings (`many`) or one path
+    string. A relative path is relative to `base_dir`, the directory of the config file."""
+    items = value if many else [value]
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        kind = "a list of path strings" if many else "a path string"
+        raise _CliError(f"{key} must be {kind}: {value!r}")
+    return [base_dir / item for item in items]  # an absolute path replaces base_dir
+
+
+def _read_profiles(paths: Sequence[Path]) -> list[TargetProfile]:
+    try:
+        return [read_profile(path) for path in paths]
+    except ProfileError as error:
+        raise _CliError(str(error)) from error
+
+
+def _read_matrix(path: Path) -> ResultMatrix:
+    try:
+        return ResultMatrix.from_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:  # from_json and the JSON and UTF-8 errors
+        raise _CliError(f"the result file {str(path)!r} could not be used: {error}") from error
+
+
 def _output_paths(files: Sequence[Path], output: Path | None) -> list[Path]:
     if len(files) == 1:
         return [output if output is not None else Path(f"{files[0].stem}.html")]
@@ -192,7 +261,8 @@ def _run(argv: Sequence[str]) -> int:
         if args.config is not None:
             config = _read_config(args.config)
             base_dir = args.config.resolve().parent
-            unknown = sorted(set(config) - {"cards", "skip"} - {o.name for o in all_options})
+            keys = {"cards", "skip", "targets", "check_config", "check_results"}
+            unknown = sorted(set(config) - keys - {o.name for o in all_options})
             if unknown:
                 raise _CliError(f"--config {str(args.config)!r} has the unknown keys {unknown}")
 
@@ -229,8 +299,50 @@ def _run(argv: Sequence[str]) -> int:
                 where = "the flags" if flags else f"--config {str(args.config)!r}"
                 raise _CliError(f"{where}: {error}") from error
 
+        target_paths = args.target
+        if target_paths is None and "targets" in config:
+            target_paths = _config_paths("targets", config["targets"], many=True, base_dir=base_dir)
+        check_config_path = args.check_config
+        if check_config_path is None and "check_config" in config:
+            [check_config_path] = _config_paths(
+                "check_config", config["check_config"], many=False, base_dir=base_dir
+            )
+        results_path = args.check_results
+        if results_path is None and "check_results" in config:
+            [results_path] = _config_paths(
+                "check_results", config["check_results"], many=False, base_dir=base_dir
+            )
+        if target_paths is not None and check_config_path is not None:
+            raise _CliError("give --target or --check-config, not both")
+        if results_path is not None and target_paths is None and check_config_path is None:
+            raise _CliError("--check-results needs --target or --check-config")
+        if results_path is not None and len(args.files) > 1:
+            raise _CliError("--check-results is the result matrix of one file: give one .seq file")
+
+        run_options: dict[str, object] = {"select": None, "required": None, "fast_only": False}
+        if check_config_path is not None:
+            try:
+                check_config = read_check_config(check_config_path)
+            except ConfigError as error:
+                raise _CliError(str(error)) from error
+            target_paths = list(check_config.targets)
+            run_options = {
+                "select": check_config.select,
+                "required": check_config.required,
+                "fast_only": check_config.fast_only,
+            }
+        profiles = _read_profiles(target_paths or [])
+        matrix = None if results_path is None else _read_matrix(results_path)
+        try:
+            targets.report_targets(profiles)  # its errors are errors of the arguments
+        except ValueError as error:
+            raise _CliError(str(error)) from error
+        pns_lane_on = values.get("pns_lane", options.pns_lane.default)
+        wants_pns = any(s.name == "pns" or (s.name == "diagram" and pns_lane_on) for s in selected)
+        run_options["analyses"] = ("pns.safe.levels",) if wants_pns else ()
+
         outputs = _output_paths(args.files, args.output)
-        return _write_pages(args.files, outputs, cards, skip, values)
+        return _write_pages(args.files, outputs, cards, skip, values, profiles, matrix, run_options)
 
 
 def _write_pages(
@@ -239,7 +351,13 @@ def _write_pages(
     cards: Sequence[str] | None,
     skip: Sequence[str],
     values: dict[str, object],
+    profiles: Sequence[TargetProfile],
+    matrix: ResultMatrix | None,
+    run_options: dict[str, object],
 ) -> int:
+    """Write the page of each file. `profiles` are the targets (none: no check runs).
+    `matrix` is the result matrix that the caller gave; without it, the checks of
+    `run_options` run on each file for the targets."""
     status = 0
     for file, output in zip(files, outputs):
         try:
@@ -249,8 +367,23 @@ def _write_pages(
             _report(f"{file}: could not be read: {type(error).__name__}: {error}")
             status = 1
             continue
+        file_matrix = matrix
+        if profiles and matrix is None:
+            try:
+                file_matrix = run_checks(str(file), profiles, **run_options)
+            except RunError as error:
+                _report(f"{file}: the checks did not run: {error}")
+                status = 1
+                continue
         try:
-            built = build_cards(seq, cards=cards, skip=skip, **values)
+            built = build_cards(
+                seq,
+                cards=cards,
+                skip=skip,
+                targets=tuple(profiles),
+                check_results=file_matrix,
+                **values,
+            )
             write_page(output, file.name, f"pulseq-reports {__version__}", built)
         except (ValueError, TypeError, OSError) as error:
             _report(f"{file}: no page was written: {error}")

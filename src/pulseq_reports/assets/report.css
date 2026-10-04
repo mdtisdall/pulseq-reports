@@ -5,6 +5,13 @@
   --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.10);
   --good: #006300; --critical: #d03b3b;
   --rf: #2a78d6; --adc: #eb6834; --gx: #1baf7a; --gy: #eda100; --gz: #e87ba4;
+  /* The colors of the report's targets, by the order of the targets: target k has
+     --target-k (decision P28, at most 6; src/pulseq_reports/targets.py). Each color has a
+     contrast of at least 3:1 with --surface in its theme, and the six are separate from
+     each other for normal vision and for protanopia and deuteranopia (the dataviz
+     validator, all pairs). They are not the verdict colors, and some are near a lane color. */
+  --target-1: #847ffc; --target-2: #028a9b; --target-3: #9c851a;
+  --target-4: #7a4306; --target-5: #8e0f6d; --target-6: #034da8;
   /* The map chart's color scales (assets/map_chart.js, docs/plans/rf-profiles.md
      section 4.4). --map-seq-* is a 4-stop blue ramp from low to high (light to dark in
      the light theme, dark to light in the dark theme). --map-div-* is a 5-stop
@@ -22,6 +29,8 @@
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
     --good: #0ca30c; --critical: #d03b3b;
     --rf: #3987e5; --adc: #d95926; --gx: #199e70; --gy: #c98500; --gz: #d55181;
+    --target-1: #7c89e7; --target-2: #30a5a8; --target-3: #a1942f;
+    --target-4: #8c5e1a; --target-5: #995189; --target-6: #1364ce;
     --map-seq-0: #1c5cab; --map-seq-1: #2a78d6; --map-seq-2: #5598e7; --map-seq-3: #86b6ef;
     --map-div-0: #3987e5; --map-div-1: #1c5cab; --map-div-2: #2c2c2a;
     --map-div-3: #c98500; --map-div-4: #d95926;
@@ -33,6 +42,8 @@
   --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
   --good: #0ca30c; --critical: #d03b3b;
   --rf: #3987e5; --adc: #d95926; --gx: #199e70; --gy: #c98500; --gz: #d55181;
+  --target-1: #7c89e7; --target-2: #30a5a8; --target-3: #a1942f;
+  --target-4: #8c5e1a; --target-5: #995189; --target-6: #1364ce;
   --map-seq-0: #1c5cab; --map-seq-1: #2a78d6; --map-seq-2: #5598e7; --map-seq-3: #86b6ef;
   --map-div-0: #3987e5; --map-div-1: #1c5cab; --map-div-2: #2c2c2a;
   --map-div-3: #c98500; --map-div-4: #d95926;
@@ -66,6 +77,12 @@ button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid
 .controls[data-zoom-for] button { font-size: 11px; line-height: 1.3; padding: 1px 6px;
   border-radius: 4px; }
 button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+/* The legend of the report's targets (markup.target_legend_html): the name of each target
+   after a swatch of its color. */
+.target-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; margin: 0 0 10px;
+  padding: 0; }
+.target-legend .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+  border: 1px solid var(--border); }
 .chart { position: relative; }
 .chart svg { display: block; width: 100%; height: auto; }
 .chart svg:focus { outline: none; }
