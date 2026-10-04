@@ -79,6 +79,45 @@ const ChartMath = (() => {
     return null;
   }
 
+  // Returns the text of a lane's value `v` for the tooltip: `fmt(v)`, then the lane's unit
+  // if it has one, except for a string or null value (for example a gate lane's "on").
+  const valueText = (lane, v) => lane.unit && typeof v !== "string" && v !== null
+    ? `${fmt(v)} ${lane.unit}` : fmt(v);
+
+  // Returns the text of the minimum and the maximum of the minmax bin at t of `source` (a
+  // lane, or a series of one: anything with `segments`) for the tooltip, for example
+  // "−12.3 – 4.56 mT/m", with the unit of `lane`. Falls back to the fill value of `lane`,
+  // formatted as valueText does, when t is in a gap between bins (see minMaxAt).
+  const minMaxText = (lane, source, t) => {
+    const mm = minMaxAt(source, t);
+    if (mm === null) return valueText(lane, lane.fill);
+    const range = `${fmt(mm.min)} \u2013 ${fmt(mm.max)}`;
+    return lane.unit ? `${range} ${lane.unit}` : range;
+  };
+
+  // Returns the rows of the tooltip of `lane` at t, as a list of {label, color, text}: the
+  // name, the color (a CSS custom property name, without the `--`) and the value text of
+  // each row. A lane without the key `series` has one row, {label: lane.title, color:
+  // lane.color}: its text is the minimum and the maximum of its bin (minMaxAt, with the
+  // fill of the lane in a gap) for a lane with `minmax: true` that is not a gate lane, and
+  // else `valueAt` (a gate lane gives "on" or "off"), with the unit of the lane. A lane
+  // whose `series` is an array has one row for each series, in order, with the label and
+  // the color of the series, read the same way from the `segments` of the series with the
+  // `fill`, `minmax` and `unit` of the lane (an empty array gives no rows).
+  function tooltipRows(lane, t) {
+    if (Array.isArray(lane.series)) {
+      return lane.series.map(series => {
+        const source = {segments: series.segments, fill: lane.fill};
+        const text = lane.minmax ? minMaxText(lane, source, t)
+          : valueText(lane, valueAt(source, t));
+        return {label: series.label, color: series.color, text};
+      });
+    }
+    const text = lane.kind !== "gate" && lane.minmax
+      ? minMaxText(lane, lane, t) : valueText(lane, valueAt(lane, t));
+    return [{label: lane.title, color: lane.color, text}];
+  }
+
   // Returns the points of one segment that must actually be drawn for the
   // view [lo, hi]: points outside the view are dropped (keeping one point
   // just past each edge so the edge-to-point line still draws), and when
@@ -222,6 +261,60 @@ const ChartMath = (() => {
     });
   }
 
+  // Returns an entry of the `bands` option of `laneChart` as {lo, hi, color}: the pair
+  // [lo, hi] gives color null (drawn with the chart's `bandStyle`), and an object {lo, hi,
+  // color} gives its own color, a CSS custom property name without the `--` (null when the
+  // object has none).
+  function normalizeBand(band) {
+    if (Array.isArray(band)) return {lo: band[0], hi: band[1], color: null};
+    return {lo: band.lo, hi: band.hi, color: band.color ?? null};
+  }
+
+  // Returns the rectangles for a lane's `marks` (a list of {lo, hi, color} in chart units)
+  // in the view [lo, hi], as a list of {x0, x1, color} in plot coordinates (0 at `lo`,
+  // `width` at `hi`), so that a lane with thousands of marks draws a few rectangles. A
+  // mark that lies fully outside the view is dropped (one that touches it at an end
+  // stays). Each other mark is mapped to plot coordinates, and widened about its centre to
+  // `minWidth` when it is narrower, so it is visible at any zoom. Marks of the same color
+  // that overlap or touch (after the widening) are then merged, and the spans are cut to
+  // [0, width], so a mark partly in the view ends at the edge. The marks need not be
+  // sorted. The result has the colors in the order of their first mark, and the spans of
+  // each color in increasing x0 with no overlap.
+  function markSpans(marks, lo, hi, width, minWidth) {
+    const scale = width / (hi - lo);
+    const byColor = new Map();
+    for (const mark of marks) {
+      if (mark.hi < lo || mark.lo > hi) continue;
+      let x0 = (mark.lo - lo) * scale, x1 = (mark.hi - lo) * scale;
+      if (x1 - x0 < minWidth) {
+        const c = (x0 + x1) / 2;
+        x0 = c - minWidth / 2;
+        x1 = c + minWidth / 2;
+      }
+      let list = byColor.get(mark.color);
+      if (!list) {
+        list = [];
+        byColor.set(mark.color, list);
+      }
+      list.push([x0, x1]);
+    }
+    const spans = [];
+    for (const [color, list] of byColor) {
+      list.sort((a, b) => a[0] - b[0]);
+      let [x0, x1] = list[0];
+      for (let i = 1; i < list.length; i++) {
+        if (list[i][0] <= x1) {
+          if (list[i][1] > x1) x1 = list[i][1];
+        } else {
+          spans.push({x0: Math.max(0, x0), x1: Math.min(width, x1), color});
+          [x0, x1] = list[i];
+        }
+      }
+      spans.push({x0: Math.max(0, x0), x1: Math.min(width, x1), color});
+    }
+    return spans;
+  }
+
   // Returns n RGB colors, linear between `stops` (a list of [r, g, b] triples, 0-255,
   // spaced equally along the ramp), as a flat Uint8ClampedArray of 3*n values: color k
   // is at ramp[3*k], ramp[3*k+1], ramp[3*k+2]. The first color is stops[0] and the last
@@ -320,8 +413,8 @@ const ChartMath = (() => {
     return segments;
   }
 
-  return {fmt, sig3, segTree, minMaxSegments, niceTicks, valueAt, minMaxAt, visiblePoints,
-    clampView, zoomView, panView, dragView, laneGroupMap, visibleLanes, colorRamp, colorIndex,
-    nearestIndex};
+  return {fmt, sig3, segTree, minMaxSegments, niceTicks, valueAt, minMaxAt, tooltipRows,
+    visiblePoints, clampView, zoomView, panView, dragView, laneGroupMap, visibleLanes,
+    normalizeBand, markSpans, colorRamp, colorIndex, nearestIndex};
 })();
 if (typeof module !== "undefined") module.exports = ChartMath;

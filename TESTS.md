@@ -760,7 +760,12 @@ lane-group support, `docs/plans/diagram-lanes.md` section 4.5 item 3). `colorRam
 stops, `colorIndex` finds the index of a value in such a ramp over a domain,
 and `nearestIndex` finds the nearest grid index on a uniform axis: the map
 chart (`assets/map_chart.js`, `docs/plans/rf-profiles.md` section 4.4) uses
-them to color its raster and to snap its cursor to the grid. The
+them to color its raster and to snap its cursor to the grid.
+`tooltipRows` gives the rows of a lane's tooltip at a time (one row for a
+lane, or one for each of its `series`), `normalizeBand` turns an entry of the
+`bands` option (`[lo, hi]` or `{lo, hi, color}`) into one form, and
+`markSpans` turns a lane's `marks` into the few rectangles to draw for a view
+(`docs/plans/pulseq-checks-implementation.md` section 4.4). The
 report page (`page.py`) puts
 `chart_math.js` and `lane_chart.js` first among its scripts, each in its own
 `<script>` element, before any card scripts, the extra scripts and
@@ -770,9 +775,12 @@ and `dragView` for the zoom and pan controls on a chart. Its `render`
 function calls `visiblePoints` once for each line segment, with the current
 view and a bucket count of 2 times the plot width in viewBox units (812), so
 a zoomed-out chart with many points does not draw more points than the chart
-can show. Its tooltip (`setCursor`) calls `valueAt` for a lane without the
-key `minmax: true`, and `minMaxAt` for a lane with that key (except a gate
-lane, which is always read with `valueAt`).
+can show. Its tooltip (`setCursor`) builds one row for each row of
+`tooltipRows`, which calls `valueAt` for a lane without the key
+`minmax: true`, and `minMaxAt` for a lane with that key (except a gate lane,
+which is always read with `valueAt`). Its
+`render` function calls `markSpans` (with a minimum width of 1 viewBox unit)
+for the `marks` of a lane, and `normalizeBand` for each entry of `bands`.
 
 The tests load `chart_math.js` directly, with Node's `require`, from
 `src/pulseq_reports/assets/chart_math.js`. They use `node:test` and
@@ -1433,6 +1441,158 @@ for a single-point grid (`n <= 1`).
 **How:** The test calls `nearestIndex(5, 5, 4, 5)` (a degenerate domain) and checks
 the result is 0. It calls `nearestIndex(0, 100, 1, 50)` (a single grid point) and
 checks the result is 0.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_plain_line_lane_has_one_row_with_title_color_and_unit`
+
+**Checks:** `tooltipRows` gives one row for a lane without `series`, with the title of the lane as its label, the color of the lane, and the value at the time with the unit of the lane.
+
+**How:** The test makes a line lane (title "Gx", color "gx", unit "mT/m", fill 0) with one segment from (0, 0) to (10, 100). At t = 5 the result must be the one row `{label: "Gx", color: "gx", text: "50 mT/m"}`. At t = 20, outside the segment, the text must be the fill, "0 mT/m".
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_null_fill_has_no_unit`
+
+**Checks:** `tooltipRows` gives an em dash with no unit for a value that is null (a lane with a null fill, outside its segments).
+
+**How:** The test makes a lane with a unit and a null fill, and reads it outside its only segment. The text must be "—" alone.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_minmax_lane_reads_the_bin_and_falls_back_to_fill_in_a_gap`
+
+**Checks:** `tooltipRows` gives the minimum and the maximum of the bin at the time for a lane with `minmax: true`, with the unit, and the fill in a gap between bins.
+
+**How:** The test makes a minmax lane (unit "mT/m", fill 0) with two segments of one bin each: (0, -1) and (5, 2), and (20, -3) and (25, 4). At t = 3 and t = 22 the texts must be "−1 – 2 mT/m" and "−3 – 4 mT/m". At t = 15, in the gap, the text must be "0 mT/m".
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_minmax_lane_without_unit_has_no_unit_text`
+
+**Checks:** `tooltipRows` leaves the unit out of the text of a minmax lane that has none, and gives an em dash for a null fill in a gap.
+
+**How:** The test makes a minmax lane with no unit and a null fill, and one bin: (0, -1) and (5, 2). At t = 3 the text must be "−1 – 2". At t = 50 it must be "—".
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_gate_lane_is_on_or_off_even_with_minmax`
+
+**Checks:** `tooltipRows` reads a gate lane with `valueAt` ("on" or "off"), even when the lane also has `minmax: true` and a unit.
+
+**How:** The test makes a gate lane with one window, [2, 5], the key `minmax: true` and a unit. At t = 3 the text must be "on" and at t = 7 it must be "off". The label and the color are those of the lane.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_series_has_one_row_per_series_read_from_its_own_segments`
+
+**Checks:** `tooltipRows` gives one row for each series, in order, with the label and color of the series, and the value read from the segments of that series, with the unit and the fill of the lane.
+
+**How:** The test makes a lane (unit "%", fill 0) with two series: the first has one segment from (0, 0) to (10, 100), the second has the segments (0, 10) to (10, 20) and (20, 5) to (30, 7). At t = 5 the texts must be "50 %" and "15 %". At t = 25 they must be "0 %" (outside the first series) and "6 %". At t = 15, outside both, both must be the fill, "0 %".
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_series_of_a_minmax_lane_read_the_bin_of_each_series`
+
+**Checks:** `tooltipRows` reads the minimum and the maximum of the bin from the segments of each series for a lane with `minmax: true` and series, and gives the fill of the lane where a series has no bin.
+
+**How:** The test makes a minmax lane (unit "mT/m", fill 0) with two series, each with one bin: (0, -1) and (5, 2), and (0, -4) and (5, 6). At t = 3 the texts must be "−1 – 2 mT/m" and "−4 – 6 mT/m". At t = 50 both must be "0 mT/m".
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_tooltip_rows_empty_series_array_has_no_rows`
+
+**Checks:** `tooltipRows` gives no rows for a lane whose `series` is an empty array, even when the lane has segments of its own.
+
+**How:** The test makes a lane with `series: []` and a segment, and checks that the result is an empty array.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_normalize_band_pair_has_no_color_and_object_keeps_its_color`
+
+**Checks:** `normalizeBand` turns a pair `[lo, hi]` into `{lo, hi, color: null}`, and an object into the same fields with its own color (null when it has none).
+
+**How:** The test calls `normalizeBand` with `[1, 2]`, with `{lo: 3, hi: 4, color: "target-2"}` and with `{lo: 3, hi: 4}`, and compares each result with the expected object.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_maps_to_plot_coordinates`
+
+**Checks:** `markSpans` maps a mark in chart units to plot coordinates (0 at the start of the view, `width` at its end).
+
+**How:** The test calls `markSpans` for the view [100, 200] and a plot width of 1000 (10 plot units for each chart unit) with the mark [120, 150]. The result must be one span from 200 to 500 with the color of the mark.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_drops_marks_fully_outside_the_view`
+
+**Checks:** `markSpans` drops a mark that lies fully before or fully after the view.
+
+**How:** The test gives three marks for the view [100, 200]: [0, 50], [250, 300] and [120, 130]. Only the third must be in the result, as the span 200 to 300.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_cuts_a_mark_partly_in_view_at_the_edge`
+
+**Checks:** `markSpans` cuts a mark that is partly in the view at the edge of the plot.
+
+**How:** The test gives the marks [50, 120] and [180, 400] for the view [100, 200] and a plot width of 1000. The spans must be 0 to 200 and 800 to 1000.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_widens_a_narrow_mark_about_its_centre`
+
+**Checks:** `markSpans` widens a mark that is narrower than `minWidth` to `minWidth` about its centre, and leaves a wider mark as it is.
+
+**How:** The test gives the mark [150, 150.01] (0.1 plot units wide) with a minimum width of 2. The span must be 2 wide about the centre of the mark, 499.05 to 501.05 (with a tolerance of 1e-9). A mark [150, 150.2] (2 plot units wide) must stay 500 to 502.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_widened_mark_at_the_edge_is_cut_at_the_edge`
+
+**Checks:** `markSpans` cuts a widened mark at the edge of the plot, so it does not go outside [0, width].
+
+**How:** The test gives a mark of zero width at the start of the view (100) and one at the end (200), for the view [100, 200], a plot width of 1000 and a minimum width of 2. The spans must be 0 to 1 and 999 to 1000.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_merges_overlapping_and_touching_marks_of_the_same_color`
+
+**Checks:** `markSpans` merges marks of one color that overlap or touch into one span, and keeps the gaps between them.
+
+**How:** The test gives five marks of one color for the view [100, 200] and a plot width of 1000: [110, 120], [115, 130], [130, 135] (it touches the second), [150, 160] and [112, 113] (it lies inside the first). The spans must be 100 to 350 and 500 to 600.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_merges_marks_that_overlap_only_after_widening`
+
+**Checks:** `markSpans` merges two marks that do not overlap as they are, but overlap after the widening to `minWidth`.
+
+**How:** The test gives two marks of zero width, at 150 and 150.05 (500 and 500.5 in plot units), for a minimum width of 2. After the widening they are 499 to 501 and 499.5 to 501.5, so the result must be one span from 499 to 501.5 (with a tolerance of 1e-9).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_does_not_merge_marks_of_different_colors`
+
+**Checks:** `markSpans` does not merge marks of different colors, even when they overlap.
+
+**How:** The test gives the marks [110, 130] and [125, 135] of color "a" and [120, 140] of color "b" for the view [100, 200] and a plot width of 1000. The result must be the color "a" span 100 to 350 and then the color "b" span 200 to 400 (the colors in the order of their first mark).
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_does_not_need_sorted_input`
+
+**Checks:** `markSpans` gives the same spans for marks in any order, and each color's spans in increasing x0.
+
+**How:** The test gives four marks of one color, in order and in a shuffled order. The two results must be equal, and equal to the spans 100 to 300, 500 to 600 and 700 to 800.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_mark_spans_empty_input_gives_no_spans`
+
+**Checks:** `markSpans` gives an empty list for an empty list of marks.
+
+**How:** The test calls `markSpans` with `[]` and checks that the result is an empty array.
 
 **Assumptions:** None beyond the file's assumptions.
 
