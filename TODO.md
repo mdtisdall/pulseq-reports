@@ -29,6 +29,10 @@ The pin has more consequences:
   or changes it, `pns_levels.py` changes with it.
 - `v0.2.0rc1` pins the earlier fork commit `20b9e5e` (branch `pns-chunked`,
   on upstream `master` `f2c582b`). Do not delete that branch.
+- pulseq-checks and pulseq-analysis pin the same commit (T12 of
+  `docs/plans/pulseq-analysis.md` of pulseq-checks). Change the pin in the
+  three repositories at the same time. After `docs/plans/pulseq-checks.md`
+  is done, `pns_levels.py` is in pulseq-analysis, not here.
 
 To change the pin: put each change for upstream on its own fork branch from
 upstream `master` (for its pull request). Cherry-pick it onto
@@ -124,9 +128,9 @@ A change that adds such a conversion adds it here.
 | `assets/rf_profiles.js` (`_pulseCore`) | `gammaHzPerT` of the page data | \|B1\| (µT). |
 | `cards.gradient_limits.gradient_limits_card`, `cli._write_pages` | `GAMMA` | The gradient limits of `seq.system` (`_default_limits`). These go away with `docs/plans/pulseq-checks.md`. Then the percent columns of each target convert with `GAMMA`. |
 
-`grad_limits.py` moves to pulseq-checks, where `gradient_limits` has a
-`gamma` keyword (R9 of the pulseq-checks design). The gradient limits card
-gives it `GAMMA`.
+`grad_limits.py` moves to pulseq-analysis, where `gradient_limits` has a
+`gamma` keyword. The gradient limits card gives it `GAMMA`. pulseq-checks
+gives it the gamma of the target (R9 of the pulseq-checks design).
 
 **What.** Use the gamma of the target (or of the `Sequence` object) for each
 conversion in the list. The diagram data format then needs the gamma of each
