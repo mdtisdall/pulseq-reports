@@ -11,11 +11,12 @@ Amendment 1, 2026-10-04: phases 1 to 4 are done (#111, #112, #113, #110).
 is now version 4 (section 3.4 of the design, decisions P29 to P32). This
 amendment adds phase 2b (the pins), rewrites phase 6 (the spectrum card),
 corrects the series names of phase 7, and adds the facts 14 to 18 and the
-decisions D12 to D14. Section 8.1 records it.
+decisions D12 to D15. Section 8.1 records it. Amendment 2 (a separate pull
+request) replaces the proton rule P21 with the gamma of each target.
 
-This is the implementation plan of `docs/plans/pulseq-checks.md`, version 3
+This is the implementation plan of `docs/plans/pulseq-checks.md`, version 4
 (the design). The design gives the concepts, the principles and the
-decisions P1 to P28. This plan gives the phases, the tasks, the files, the
+decisions P1 to P32. This plan gives the phases, the tasks, the files, the
 workers and the order. Where this plan and the design do not agree, the
 design is correct: stop and ask the user.
 
@@ -56,7 +57,7 @@ nuclei (`TODO.md`), and the "later" items of section 6 of the design.
 
 ### 2.2 Decisions that are already made
 
-The decisions of the design (sections 9.1 to 9.3) apply. Do not open them
+The decisions of the design (sections 9.1 to 9.4) apply. Do not open them
 again. The decisions that this plan uses most:
 
 | # | Decision |
@@ -73,11 +74,21 @@ again. The decisions that this plan uses most:
 | P26 | `build_cards` takes `check_results=` and never runs checks. |
 | P27 | The example report has two example targets. |
 | P28 | At most 6 targets. |
+| P29 | The pins are `v0.1.0rc4` (amendment 1). |
+| P30 | The spectrum card: the bands and the `acoustic.resonance-energy` line of each target. No band peaks. |
+| P31 | The spectrum comes only from the analysis result `gradient.spectrum`. |
+| P32 | One spectrum: the first supported target with the state "done". |
 
 ### 2.3 Facts that this plan uses (verified on 2026-10-04)
 
 Paths are in `src/pulseq_reports/` unless a path says otherwise. Line
 numbers are at `a435eb7`.
+
+Facts 1 to 13 give the state at `a435eb7`, before phase 1. Phases 1 to 4
+changed some of them: for example the signatures of fact 5, the options of
+fact 4 and the modes of `scripts/cards_scale.py` in fact 13. Before a phase
+uses a fact of 1 to 13, it checks the fact on `main`. Facts 14 to 18 give the
+state at amendment 1.
 
 1. **The registry.** `CardSpec(name, order, build, options=(), publishes=(),
    subscribes=(), when=None)` (`registry.py:156`). `ReportContext(seq,
@@ -220,10 +231,10 @@ Do not open these decisions again.
 | # | Decision | Answer | Why |
 |---|---|---|---|
 | D1 | How the command knows that a card is an error card (P14) | A new field `Card.error: str \| None = None`. `_error_card` sets it to the message. | A test of the title text is fragile, and the design forbids a hidden rule. |
-| D2 | When the `coil` option goes away | In phase 1, with `PRISMA_AS82`. Without the default coil, the option has no value to choose. `gradient_spectrum` takes the resonances as (frequency, bandwidth) pairs in Hz, the form of `TargetProfile.acoustic_resonances`, and `AcousticResonance` goes away. | P8 and the design, section 4.7. |
+| D2 | When the `coil` option goes away | In phase 1, with `PRISMA_AS82`. Without the default coil, the option has no value to choose. `gradient_spectrum` takes the resonances as (frequency, bandwidth) pairs in Hz, the form of `TargetProfile.acoustic_resonances`, and `AcousticResonance` goes away. Amendment 1: phase 6 deletes the `gradient_spectrum` of pulseq-reports (D12). | P8 and the design, section 4.7. |
 | D3 | The timing card from phase 1 to phase 10 | Phase 1 removes its `Check` and its "passed" and "failed" text. The card shows the number of errors of `check_timing` and the error table, with no verdict. Phase 10 makes it from the results. | No release comes between the phases. |
 | D4 | `encode_tables` | It goes away, with `decode_tables`. Each caller calls `pulseq_analysis.series.encode_array` (or `decode_array`) for each array. The JSON of the page does not change. | No duplicate code. `docs/usage.md` does not document `encode_tables`. |
-| D5 | The form of the pins | Direct references in `[project] dependencies`, as `pulseq-checks` does: `pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc3` and `pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc2`, with `[tool.hatch.metadata] allow-direct-references = true`. | The tags of the design, section 5. `uv.lock` records the commits. |
+| D5 | The form of the pins | Direct references in `[project] dependencies`, as `pulseq-checks` does: `pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc3` and `pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc2`, with `[tool.hatch.metadata] allow-direct-references = true`. Amendment 1: the tags are `v0.1.0rc4` (P29, phase 2b). The form stays. | The tags of the design, section 5. `uv.lock` records the commits. |
 | D6 | The target colors | Six tokens `--target-1` to `--target-6` in `report.css`, light and dark. Phase 3 selects them with the `dataviz` skill. | P28. |
 | D7 | The targets in a card | `ReportContext.targets`: a tuple of `ReportTarget(profile, color, supported, reason)`, in the order of the targets. `supported` is false for a gamma other than `GAMMA`, with the reason. `ReportContext.check_results` is the matrix or `None`. | One place for the rules of P21 and P28. |
 | D8 | The "Show" buttons | Phase 3 adds one helper for the button HTML and one card script, `show-buttons`, that wires each button to a `goto` message. The summary card, the timing card and the gradient limits card use them. The helper changes a block ID into the play index. | Phases 9 and 10 do not depend on each other. |
@@ -233,6 +244,7 @@ Do not open these decisions again.
 | D12 | Where the local spectrum module goes away (amendment 1) | In phase 6, not in phase 2b. Phase 2b changes only the pins, so its pages are equal byte for byte. | With P31, the card never calls a spectrum function. A change of the card to `pulseq_analysis.grad_spectrum` in phase 2b is work that phase 6 removes. |
 | D13 | The analyses that the command asks for (amendment 1) | `pns.safe.levels` as now, and `gradient.spectrum` when the `gradient-spectrum` card is on the page. | Principle 10 of the design. |
 | D14 | The unit of the spectrum card (amendment 1) | mT/m/√Hz, as now: the card multiplies the values of the series by `1e3 / GAMMA`. | Principle 8 of the design. Section 8.1 of the `pulseq-analysis` plan `docs/plans/gradient-spectrum.md`. |
+| D15 | `fast_only` and the analyses (amendment 1) | The command asks for the analyses of the cards on the page also with `fast_only`, as `pulseq-checks` does. A caller that does not want the time uses `--skip` for the card. `docs/usage.md` gives the cost (phase 11). | The card on the page is the request. `fast_only` selects checks, not analyses. |
 
 ### 2.5 Terms
 
@@ -329,8 +341,10 @@ Rules:
 
 1. A phase edits only its files. If it must edit a different file, it stops
    and asks the executing agent.
-2. `options.py`, `cli.py` and `scripts/cards_scale.py`: several phases edit
-   different parts. Rebase the later phase and keep both edits.
+2. `options.py`, `cli.py`, `scripts/cards_scale.py`, `tests/test_cli.py`,
+   `tests/test_registry.py`, `tests/test_extensions.py` and
+   `tests/test_file_rasters.py`: several phases edit different parts. Rebase
+   the later phase and keep both edits.
 3. `TESTS.md`: each phase edits only the sections of its test files. If a
    conflict occurs, keep both sides.
 
@@ -538,6 +552,9 @@ D14).
    `TESTS.md` section 2.9. Change or delete each import of fact 16. A test
    that only tests the spectrum calculation goes away: `pulseq-analysis`
    tests it (design, section 8). Do not renumber the `TESTS.md` sections.
+   `test_rf_exposure_and_spectrum_do_not_depend_on_the_reader_opts`
+   (`test_file_rasters.py`) keeps its `rf_exposure` part and loses its
+   spectrum part. Its name and its `TESTS.md` entry change with it.
 2. **The signature.** `spectrum_card(seq, *, targets=(), check_results=None,
    card_id=...)`. It keeps `refuse_rotations(seq)`, so a file with the
    rotation extension still gives an error card, as the other cards do. It
@@ -574,8 +591,9 @@ D14).
 8. **The command (D13).** `cli.py` adds `"gradient.spectrum"` to `analyses`
    when the `gradient-spectrum` card is on the page.
 9. **`scripts/cards_scale.py`.** The `spectrum` mode runs `run_checks(...,
-   select=[], analyses=["gradient.spectrum"])` with a profile, and gives the
-   matrix to the card.
+   select=[], analyses=["gradient.spectrum"])` with
+   `tests/profiles/example_a.toml`, and gives the matrix to the card. It
+   gives the time of `run_checks` and the time of the card separately.
 10. **`TODO.md`.** The row of fact 18 names `cards/spectrum.py` and `GAMMA`.
 
 ### 4.7 Phase 7: the PNS card and the PNS lane
@@ -602,8 +620,9 @@ D14).
    and the runs as marks in the color of the target (P22). The status text
    gives the peak of each target.
 5. `scripts/cards_scale.py`: the `pns` and `diagram --pns-lanes` modes run
-   `run_checks(..., select=[], analyses=["pns.safe.levels"])` with a profile,
-   and give the matrix to the card.
+   `run_checks(..., select=[], analyses=["pns.safe.levels"])` with
+   `tests/profiles/example_a.toml`, and give the matrix to the card. They
+   give the time of `run_checks` and the time of the card separately.
 6. `tests/test_pns_lanes_golden.py` stays: it compares the exact PNS of the
    JavaScript with `pulseq_analysis.pns_levels`.
 
@@ -654,10 +673,17 @@ D14).
 1. `docs/usage.md`: each section that names a check, an option that went
    away, an old module path or the exit status (sections 2 to 8, and
    "Rotation extension"). The new inputs, the summary card, the targets in
-   the cards, and the lane format of phase 4.
+   the cards, and the lane format of phase 4. The table of the times of the
+   cards: the PNS and spectrum rows give the time of their analysis in
+   `run_checks` and the time of the card (section 4.6, item 9, and section
+   4.7, item 5). The cost of the analyses with `fast_only` (D15).
 2. `README.md`: the questions of "What it is for" and the list of cards.
 3. `CHANGELOG.md`: the entry `0.2.0rc3` with "Breaking changes", "Added" and
    "Fixed". Each removed name or option, with what replaces it.
+   `pulseq_reports.grad_spectrum` is one of them: `gradient_spectrum` and
+   `GradientSpectrum` are in `pulseq_analysis.grad_spectrum` (in Hz/m/√Hz),
+   and the check `acoustic.resonance-energy` replaces `band_peaks` and
+   `BandPeak`.
 4. **The example (P27).** `examples/targets/` (new): two profiles whose names
    say that they are examples, with the values of section 4.3, item 7, and
    resonance bands that a comment calls invented. `examples/gre_report.py`
@@ -816,7 +842,8 @@ a result that is not "done", a matrix without the analysis, and no matrix.
 **Task 6.3.** Tier X. The data format of the card first (before task 6.2),
 the browser check with two targets, and the review.
 
-Task 6.1 comes first. Task 6.2 starts when it is done.
+Task 6.1 and the data format of task 6.3 come first. Task 6.2 starts when
+both are done.
 
 Checks:
 
@@ -969,3 +996,9 @@ phase 1), and the proposal for the others.
   `pulseq_analysis.grad_spectrum`. The user decided P29 to P32 of the design
   and D12 to D14. New phase 2b moves the pins. Phase 6 deletes the duplicate
   and reads the spectrum from the matrix. Phase 7 uses the new series names.
+- 2026-10-04, review of amendment 1: the user decided D15 (`fast_only`
+  keeps the analyses of the cards) and narrowed P30 (it does not change P6).
+  Facts 1 to 13 are marked as the state before phase 1. The user also
+  decided to replace P21 with the gamma of each target, in all cards, in
+  `0.2.0rc3`. That is amendment 2 and design version 5, in a separate pull
+  request. Until then, the text of amendment 1 keeps P21.

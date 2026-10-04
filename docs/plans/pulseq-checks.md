@@ -26,7 +26,8 @@ History:
   `acoustic.resonance-energy` compares the spectrum with the resonances of a
   target. Section 3.4 gives the changes. Principle 10 and the decisions P29
   to P32 are new. Phases 1 to 4 of the implementation plan were done with
-  version 3.
+  version 3. Version 5 (a separate pull request) replaces P21 with the gamma
+  of each target.
 
 The `pulseq-checks` and `pulseq-analysis` documents refer to versions 1 and 2
 by commit, so their links still work. Both packages are stable for this work,
@@ -462,7 +463,7 @@ Without targets and without results, the summary card is not on the page.
 | `gradient-limits` | All (for the percent columns) | The peaks, with no percent columns. A note says that no target gives limits. | One percent column for each target that gives `max_grad` and `max_slew`, in the color of the target. The peaks are measured one time, with `pulseq_analysis.grad_limits`. |
 | `pns` | All that give SAFE parameters | No PNS. A note says that no target gives SAFE parameters, or that the matrix has no PNS (principle 9). | One part for each target, from its analysis result `pns.safe.levels`: the peak, its time, the axis peaks and the hardware name. |
 | `diagram` (PNS lane) | All that give SAFE parameters | No PNS lane. | One PNS lane. The envelope `pns_total` of each target is overlaid in the color of the target. The runs of `pns_above_1` are marked in the color of the target (decision P22). The exact PNS of a zoomed view uses the SAFE parameters of the target profile. |
-| `gradient-spectrum` | All (for the spectrum), all that give acoustic resonances (for the bands) | The spectrum, with no resonance bands. A note says that no target gives resonances. Without a matrix, or without the analysis `gradient.spectrum`: a note and no chart (principle 10). | One spectrum: the analysis result of the first target with the state "done" (decision P32). The bands of each target, in the color of the target. One line for each target with the result of `acoustic.resonance-energy` (decision P30). |
+| `gradient-spectrum` | All (for the spectrum), all that give acoustic resonances (for the bands) | The spectrum, with no resonance bands. A note says that no target gives resonances. Without a matrix, or without the analysis `gradient.spectrum`: a note and no chart (principle 10). | One spectrum: the analysis result of the first supported target with the state "done" (decision P32). The bands of each supported target, in the color of the target. One line for each supported target with the result of `acoustic.resonance-energy` (decision P30). |
 | `rf-profile` | All that give B0 | A pulse with a `ppm` offset shows a note that its offset cannot be changed into Hz. The other pulses do not change. | The profiles of each target overlaid, in the color of the target. They differ only for pulses with a `ppm` offset. |
 | `rf-exposure` | None | No change. | No change. |
 | `definitions` | None | No change. | No change. |
@@ -492,7 +493,7 @@ Each mark comes from a check result, a finding or an analysis result
 | `timing` | A list of the findings of `timing.pypulseq` and `timing.rasters` for each target, with a "Show" button for each row (section 4.5). |
 | `gradient-limits` | A list of the findings of `gradient.amplitude.axis`, `gradient.slew.axis` and `gradient.amplitude.any-orientation` for each target, with a "Show" button for each row. |
 | `diagram` (PNS lane) | The runs of the series `pns_above_1` of each target, marked in the color of the target. They are complete: the findings limit does not apply to them. They use the threshold of `pns.safe` (1.0), so they agree with the check (decision P22). |
-| `gradient-spectrum` | For each target, the state, the value and the limit of `acoustic.resonance-energy`, or its reason. The card does not calculate a share of the energy or a peak in a band (decision P30). |
+| `gradient-spectrum` | For each supported target, the state, the value and the limit of `acoustic.resonance-energy`, or its reason. The card does not calculate a share of the energy or a peak in a band (decision P30). |
 
 The percent columns of the gradient limits card use the proton gamma, as all
 the cards do (principle 8). A target with another gamma is not in the card,
@@ -669,9 +670,9 @@ The user made these decisions on 2026-10-04. Do not open them again.
 | # | Decision | Answer | Where |
 |---|---|---|---|
 | P29 | The pins | `pulseq-checks` `v0.1.0rc4` and `pulseq-analysis` `v0.1.0rc4`. The work continues from the phases that are done. It does not do them again. | 3.4, 5 |
-| P30 | The gradient spectrum card for each target | The bands of the target in its color, and one line with the result of `acoustic.resonance-energy` (state, value and limit, or the reason). No table of band peaks: a comparison with target data comes only from the check. | 4.4, 4.6 |
+| P30 | The gradient spectrum card for each target | The bands of the target in its color, and one line with the result of `acoustic.resonance-energy` (state, value and limit, or the reason). The card does not calculate band peaks or the share of the energy in the bands, because the check gives that comparison. This does not change P6: the gradient limits card keeps its percent columns. | 4.4, 4.6 |
 | P31 | The source of the spectrum | Only the analysis result `gradient.spectrum` in the result matrix. Without it, the card shows a note and no chart. A report has no default target: a default target, if one is added later, also goes through `pulseq-checks` and `pulseq-analysis`. | 2, 4.2, 4.4 |
-| P32 | The spectrum with several targets | One spectrum: the analysis result of the first supported target with the state "done". The bands of all targets. If the spectrum of another target is different, a note names that target. | 4.4 |
+| P32 | The spectrum with several targets | One spectrum: the analysis result of the first supported target with the state "done". The bands of each supported target. If the spectrum of another target is different, a note names that target. | 4.4 |
 
 ## 10. Terms
 
