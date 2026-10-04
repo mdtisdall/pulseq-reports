@@ -7,14 +7,15 @@ from collections.abc import Sequence
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.extensions import refuse_rotations
+from pulseq_analysis.grad_limits import GradientLimits, gradient_limits
+from pulseq_analysis.seq_index import SequenceIndex, sequence_index
+from pulseq_checks import HardwareLimits
 
 from .. import options
-from ..extensions import refuse_rotations
-from ..grad_limits import GradientLimits, HardwareLimits, gradient_limits
 from ..markup import fmt
 from ..page import Card, card_asset
 from ..registry import CardSpec, ReportContext
-from ..seq_index import SequenceIndex, sequence_index
 from ..waveforms import TimeWindow, _check_windows
 
 _AXES = ("x", "y", "z")
@@ -148,7 +149,7 @@ def _table(
     # One call: with a window, gradient_limits also computes the whole-file RMS in the
     # same pass over the index (GradientLimits.whole_rms_mt_per_m), instead of a second
     # call for it.
-    windowed = gradient_limits(seq, window=window, limits=limits)
+    windowed = gradient_limits(seq, window=window)
 
     body = _table_html(headers, _rows(windowed, sequence_index(seq), limits))
     if windowed.reason is not None:

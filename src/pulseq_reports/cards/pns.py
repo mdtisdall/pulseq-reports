@@ -9,14 +9,14 @@ from pathlib import Path
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.extensions import refuse_rotations
+from pulseq_analysis.pns import peak_tr_window, pns_prediction
+from pulseq_analysis.seq_index import sequence_index
 
 from pulseq_reports import options
-from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card, card_asset
-from pulseq_reports.pns import peak_tr_window, pns_prediction
 from pulseq_reports.registry import CardSpec, ReportContext
-from pulseq_reports.seq_index import sequence_index
 
 PUBLISHES = ("goto",)
 

@@ -4,9 +4,10 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from oracles import rf_exposure as oracle
+from pulseq_analysis import seq_utils
 from synthetic import SYSTEM, empty_sequence, gre_sequence, spin_echo_sequence
 
-from pulseq_reports import rf_exposure, seq_utils
+from pulseq_reports import rf_exposure
 
 
 def _b1_ut(flip_rad: float, duration_s: float) -> float:

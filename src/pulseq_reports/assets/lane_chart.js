@@ -522,7 +522,7 @@ const PulseqReport = (() => {
   // ---- The shared table decoder (docs/plans/rf-profiles.md section 4.1, item 2: any card
   // can decode a table the same way) ----
 
-  // The typed array for one table entry {dtype, length, data} (diagram_data.encode_tables,
+  // The typed array for one table entry {dtype, length, data} (pulseq_analysis.series.encode_array,
   // and any other card that sends a table the same way): base64 -> gzip bytes ->
   // DecompressionStream -> the typed array for its dtype. Throws for a dtype this
   // function does not know, and when the decompressed length does not match `length`

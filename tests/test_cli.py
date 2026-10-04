@@ -3,10 +3,10 @@ import json
 import pypulseq as pp
 import pytest
 from plugin_card import SPEC
+from pulseq_checks import HardwareLimits
 from synthetic import gre_sequence, spin_echo_sequence
 
 from pulseq_reports import __version__, cli, options, registry
-from pulseq_reports.grad_limits import HardwareLimits
 from pulseq_reports.page import render_page
 from pulseq_reports.registry import build_cards, discover
 

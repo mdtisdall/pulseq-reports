@@ -12,7 +12,7 @@
 //
 // Usage: node golden_seq_lanes.js IN.json OUT.json
 //
-// IN.json: {"format": 1, "tables": <encode_tables(...) output>,
+// IN.json: {"format": 1, "tables": <pulseq_analysis.series.encode_array of each table>,
 //           "lanes": <lane_meta(...) output>,
 //           "queries": [{"kind": "exact", "t0": s, "t1": s} |
 //                       {"kind": "minmax", "t0": s, "t1": s, "bins": int}]}
@@ -36,7 +36,7 @@ const SeqLanes = require(
   path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "seq_lanes.js")
 );
 
-// The typed array constructor for each dtype that `encode_tables` can
+// The typed array constructor for each dtype that `pulseq_analysis.series.encode_array` can
 // produce (section 4.2 of the plan). Any other dtype name is a bug in the
 // caller, not a case this script should paper over.
 const TYPED_ARRAY_CTORS = {
@@ -46,7 +46,7 @@ const TYPED_ARRAY_CTORS = {
   float64: Float64Array,
 };
 
-// One table's `{"dtype", "length", "data"}` (`encode_tables`'s wire form,
+// One table's `{"dtype", "length", "data"}` (`pulseq_analysis.series.encode_array`'s wire form,
 // section 4.1) decoded into a typed array: base64 to bytes, gzip to the
 // little-endian bytes of the array, and those bytes copied into a fresh
 // `ArrayBuffer` so the typed array view is aligned (the `Buffer` that

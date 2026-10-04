@@ -15,10 +15,10 @@ from dataclasses import dataclass
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.seq_index import block_cache_off, sequence_index
+from pulseq_analysis.seq_utils import GAMMA, gradient_points
 
 from .markup import Lane, _points, fmt, lanes_json
-from .seq_index import block_cache_off, sequence_index
-from .seq_utils import GAMMA, gradient_points
 
 _AXES = ("gx", "gy", "gz")
 

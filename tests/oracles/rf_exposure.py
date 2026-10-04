@@ -15,8 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 import pypulseq as pp
 from oracles.blocks import iter_blocks
-
-from pulseq_reports.seq_utils import GAMMA, hold_samples
+from pulseq_analysis.seq_utils import GAMMA, hold_samples
 
 WINDOW_S = 10.0  # averaging window (s) for the highest B1+rms
 

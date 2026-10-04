@@ -40,7 +40,7 @@ process started, not a delta):
 - `card_s`, `card_peak_rss_bytes`: `diagram_card(...)` for the sequence, with windows
   `[first_adc_window, full_window]`. This is the number that counts against the
   "Python time to make the card data" budget.
-- `breakdown`: `diagram_tables`, `lane_meta` and `encode_tables` timed separately, by
+- `breakdown`: `diagram_tables`, `lane_meta` and the `encode_array` calls timed separately, by
   calling them once more after `card_s` is measured (so this adds extra work of its
   own; it does not change what `card_s` measures).
 - `render_s`, `page_bytes`: `render_page(...)` for the one card, and the UTF-8 length
@@ -80,6 +80,7 @@ from pathlib import Path
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.series import encode_array
 
 from pulseq_reports import diagram_data
 from pulseq_reports.cards.diagram import diagram_card
@@ -309,8 +310,8 @@ def run(blocks: int, case: str, out_dir: Path, timing_probe: bool) -> dict:
     diagram_data.lane_meta(seq, tables=tables_again)
     lane_meta_s = time.perf_counter() - lane_meta_start
     encode_start = time.perf_counter()
-    diagram_data.encode_tables(tables_again)
-    encode_tables_s = time.perf_counter() - encode_start
+    {name: encode_array(array) for name, array in tables_again.items()}
+    encode_s = time.perf_counter() - encode_start
 
     file_entry = card.data["file"]
     num_unique_rf = file_entry["tables"]["rf_delay"]["length"]
@@ -356,7 +357,7 @@ def run(blocks: int, case: str, out_dir: Path, timing_probe: bool) -> dict:
         "breakdown": {
             "diagram_tables_s": diagram_tables_s,
             "lane_meta_s": lane_meta_s,
-            "encode_tables_s": encode_tables_s,
+            "encode_s": encode_s,
         },
         "render_s": render_s,
         "page_bytes": page_bytes,

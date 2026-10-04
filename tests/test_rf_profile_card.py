@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import pypulseq as pp
 import pytest
+from pulseq_analysis.seq_utils import hold_samples
+from pulseq_analysis.series import decode_array, encode_array
 from pypulseq.event_lib import EventLibrary
 from rf_sequences import (
     CRUSHER_AREA,
@@ -40,8 +42,6 @@ from pulseq_reports.cards.rf_profile import (
     _rf_table,
     rf_profile_card,
 )
-from pulseq_reports.diagram_data import decode_tables, encode_tables
-from pulseq_reports.seq_utils import hold_samples
 from pulseq_reports.waveforms import full_window
 
 # ---- Sequence helpers ----
@@ -105,7 +105,7 @@ def test_rf_table_matches_hold_samples_and_definitions():
     for name, dtype in expected_dtypes.items():
         assert table[name].dtype == dtype, name
 
-    decoded = decode_tables(encode_tables(table))
+    decoded = {name: decode_array(encode_array(a)) for name, a in table.items()}
     ppm_hz = 1e-6 * abs(system.gamma) * system.B0
     for k, use in enumerate(["excitation", "refocusing", "saturation"]):
         # The RF as pypulseq stores and rebuilds it (`seq.get_block`), not the object
@@ -380,7 +380,7 @@ def test_sequence_without_rf_has_an_empty_entry_and_no_pulses_note():
     assert entry["labeled"] is True
     assert entry["first_rf_block"] is None
     assert entry["pulses"] == []
-    decoded = decode_tables(entry["rf"])
+    decoded = {name: decode_array(d) for name, d in entry["rf"].items()}
     for name, arr in decoded.items():
         assert arr.size == 0, name
 

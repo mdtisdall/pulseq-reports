@@ -1,6 +1,7 @@
 """Self-contained HTML review reports for Pulseq sequences."""
 
-from .grad_limits import HardwareLimits
+from pulseq_checks import HardwareLimits
+
 from .page import Card, render_page, write_page
 from .registry import build_cards
 from .waveforms import TimeWindow, first_adc_window, full_window

@@ -27,10 +27,9 @@ from dataclasses import dataclass
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.sampling import GradientSampler
+from pulseq_analysis.seq_index import sequence_index
 from scipy.signal import spectrogram
-
-from .sampling import GradientSampler
-from .seq_index import sequence_index
 
 MAX_FREQUENCY_HZ = 2000.0
 FFT_WINDOW_S = 0.05

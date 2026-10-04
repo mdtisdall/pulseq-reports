@@ -5,24 +5,31 @@
 RF, gradient and ADC event is expanded one time only, by `seq_index.rf_events`,
 `grad_events` and `adc_events`, on the first block that uses it, with the block cache
 off (never once for each block). The offsets and values it stores are exactly those of
-`waveforms._block_events`. `encode_tables` and `decode_tables` are the gzip+base64 wire
-form of the tables and its inverse. `lane_meta` gives the lane titles, colors, domains,
-ticks and tick labels of `file_lanes`, computed from the tables instead of the expanded
-points, so it costs O(N) and O(unique events), not O(the file's points).
+`waveforms._block_events`. The callers encode each table with
+`pulseq_analysis.series.encode_array`, the gzip+base64 wire form of one array.
+`lane_meta` gives the lane titles, colors, domains, ticks and tick labels of
+`file_lanes`, computed from the tables instead of the expanded points, so it costs O(N)
+and O(unique events), not O(the file's points).
 """
-
-import base64
-import gzip
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.seq_index import adc_events, grad_events, rf_events, sequence_index
+from pulseq_analysis.seq_utils import GAMMA, gradient_offsets
 
 from .markup import lanes_json
-from .seq_index import _index_dtype, adc_events, grad_events, rf_events, sequence_index
-from .seq_utils import GAMMA, gradient_offsets
 from .waveforms import _AXES, _lanes, _rf_offsets
 
 CHECKPOINT_BLOCKS = 1024
+
+
+def _index_dtype(max_value: int):
+    """The smallest of uint8, uint16, uint32 that holds `max_value`."""
+    if max_value <= 0xFF:
+        return np.uint8
+    if max_value <= 0xFFFF:
+        return np.uint16
+    return np.uint32
 
 
 class _Pool:
@@ -156,41 +163,6 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
         "adc_delay": np.asarray(adc_delay, dtype=np.float64),
         "adc_length": np.asarray(adc_length, dtype=np.float64),
     }
-
-
-def encode_tables(tables: dict[str, np.ndarray]) -> dict[str, dict]:
-    """Each table as `{"dtype", "length", "data"}`, where `data` is the little-endian
-    bytes of the array, gzipped (level 6) and base64-encoded. Each table is compressed
-    separately, so each decompressed buffer is aligned for its typed array. The gzip
-    header has no time stamp and a fixed OS byte, so the same tables always give the
-    same bytes."""
-    encoded: dict[str, dict] = {}
-    for name, arr in tables.items():
-        arr = np.asarray(arr)
-        little = arr.astype(arr.dtype.newbyteorder("<"), copy=False)
-        # mtime=0: no time stamp in header bytes 4-7 (else a rebuilt report differs).
-        # With mtime=0, Python 3.12 lets zlib write the header, and zlib's OS byte
-        # (byte 9) depends on the platform (3 on Linux, 19 on macOS). Set it to 255
-        # ("unknown"), the value Python's own gzip header uses. No decoder reads either.
-        compressed = gzip.compress(little.tobytes(), compresslevel=6, mtime=0)
-        compressed = compressed[:9] + b"\xff" + compressed[10:]
-        encoded[name] = {
-            "dtype": arr.dtype.name,
-            "length": int(arr.size),
-            "data": base64.b64encode(compressed).decode("ascii"),
-        }
-    return encoded
-
-
-def decode_tables(encoded: dict[str, dict]) -> dict[str, np.ndarray]:
-    """The inverse of `encode_tables`: the tables as numpy arrays with their original
-    dtypes."""
-    tables: dict[str, np.ndarray] = {}
-    for name, meta in encoded.items():
-        raw = gzip.decompress(base64.b64decode(meta["data"]))
-        dtype = np.dtype(meta["dtype"]).newbyteorder("<")
-        tables[name] = np.frombuffer(raw, dtype=dtype, count=meta["length"]).copy()
-    return tables
 
 
 def _rounded_peak(values: np.ndarray, digits: int = 4) -> float:

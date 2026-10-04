@@ -3,8 +3,8 @@
 import html
 
 import pypulseq as pp
+from pulseq_analysis.extensions import refuse_rotations
 
-from pulseq_reports.extensions import refuse_rotations
 from pulseq_reports.grad_spectrum import (
     FFT_WINDOW_S,
     MAX_FREQUENCY_HZ,

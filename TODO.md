@@ -24,15 +24,16 @@ The pin has more consequences:
   none of the other upstream commits after the release. A project that uses
   uv gets this pin too (`docs/usage.md`, section 1), and builds its own
   sequences with it.
-- `pns_levels.py` imports the private `_safe_gwf_to_pns_chunk`
-  (`docs/plans/diagram-lanes.md`, decision 11). If the upstream review renames
-  or changes it, `pns_levels.py` changes with it.
+- `pns_levels.py` of pulseq-analysis imports the private
+  `_safe_gwf_to_pns_chunk` (`docs/plans/diagram-lanes.md`, decision 11). If the
+  upstream review renames or changes it, `pns_levels.py` changes with it, in
+  pulseq-analysis.
 - `v0.2.0rc1` pins the earlier fork commit `20b9e5e` (branch `pns-chunked`,
   on upstream `master` `f2c582b`). Do not delete that branch.
 - pulseq-checks and pulseq-analysis pin the same commit (T12 of
   `docs/plans/pulseq-analysis.md` of pulseq-checks). Change the pin in the
-  three repositories at the same time. After `docs/plans/pulseq-checks.md`
-  is done, `pns_levels.py` is in pulseq-analysis, not here.
+  three repositories at the same time. `pns_levels.py` is in pulseq-analysis,
+  not here.
 
 To change the pin: put each change for upstream on its own fork branch from
 upstream `master` (for its pull request). Cherry-pick it onto
@@ -40,7 +41,8 @@ upstream `master` (for its pull request). Cherry-pick it onto
 pin that commit. Do not move or delete a tag.
 
 **What.** When a pypulseq release has all four changes: pin that release in
-`[project] dependencies`, remove `[tool.uv.sources]`, change `pns_levels.py`
+`[project] dependencies` and remove `[tool.uv.sources]` in pulseq-reports,
+pulseq-checks and pulseq-analysis, change `pns_levels.py` of pulseq-analysis
 to the released name of the chunk function, and remove the fork paragraph of
 `docs/usage.md`. When a release has only some of them, make a new pin branch
 from that release, with the other changes.

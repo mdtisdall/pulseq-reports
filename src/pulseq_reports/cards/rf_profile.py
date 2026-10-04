@@ -19,9 +19,12 @@ from collections.abc import Sequence
 
 import numpy as np
 import pypulseq as pp
+from pulseq_analysis.extensions import refuse_rotations
+from pulseq_analysis.seq_index import rf_events, sequence_index
+from pulseq_analysis.seq_utils import hold_samples
+from pulseq_analysis.series import encode_array
 
-from pulseq_reports import diagram_data, options
-from pulseq_reports.extensions import refuse_rotations
+from pulseq_reports import options
 from pulseq_reports.markup import fmt
 from pulseq_reports.page import Card, card_asset
 from pulseq_reports.registry import CardSpec, ReportContext
@@ -35,8 +38,6 @@ from pulseq_reports.rf_profiles import (
     pulse_list,
     rf_uses_labeled,
 )
-from pulseq_reports.seq_index import rf_events, sequence_index
-from pulseq_reports.seq_utils import hold_samples
 
 VIEWS = ("profile", "z_df", "2d")
 PUBLISHES = ("goto",)
@@ -122,7 +123,7 @@ def _rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
       `shape_at`.
 
     A sequence without RF gives every column and both pools with length 0, with these
-    dtypes. The card sends this table encoded by `diagram_data.encode_tables`.
+    dtypes. The card sends this table with each array encoded by `encode_array`.
     `RfProfiles` (the browser, `assets/rf_profiles.js`) reads it together with the
     sequence view of the diagram card (`SeqLanes.sequenceView`), whose dense RF index is
     the same as this table's.
@@ -200,7 +201,7 @@ def _rf_profile_data(seq: pp.Sequence) -> dict:
     True; `slice_thickness_m` (the `SliceThickness` definition, or None);
     `fov_m` (the `FOV` definition as [x, y, z], or None); `b0_t`; `gamma_hz_per_t`
     (`abs(seq.system.gamma)`); `first_rf_block` (the play index of the first RF block,
-    or None without RF); `rf` (`_rf_table(seq)`, encoded with `diagram_data.encode_tables`);
+    or None without RF); `rf` (`_rf_table(seq)`, each array encoded with `encode_array`);
     `pulses` (`rf_profiles.pulse_list(seq)`, each pulse as `dataclasses.asdict`).
 
     For a sequence where it is False: `labeled` False; `unlabeled_rf_events` (the
@@ -230,7 +231,7 @@ def _rf_profile_data(seq: pp.Sequence) -> dict:
         "b0_t": float(seq.system.B0),
         "gamma_hz_per_t": abs(float(seq.system.gamma)),
         "first_rf_block": int(index.rf_first[0]) if index.rf_first.size else None,
-        "rf": diagram_data.encode_tables(_rf_table(seq)),
+        "rf": {name: encode_array(array) for name, array in _rf_table(seq).items()},
         "pulses": [dataclasses.asdict(p) for p in pulse_list(seq)],
     }
 

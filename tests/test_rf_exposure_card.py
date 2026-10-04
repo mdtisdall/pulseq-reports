@@ -1,11 +1,11 @@
 import math
 
 import pytest
+from pulseq_analysis.seq_utils import GAMMA
 from synthetic import empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page
 from pulseq_reports.cards.rf_exposure import _rf_exposure_data, rf_exposure_card
-from pulseq_reports.seq_utils import GAMMA
 
 
 def _b1_ut(flip_rad: float, duration_s: float) -> float:

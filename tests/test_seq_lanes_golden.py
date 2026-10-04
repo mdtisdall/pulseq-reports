@@ -32,6 +32,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from pulseq_analysis.series import encode_array
 from synthetic import (
     arbitrary_gradient_sequence,
     empty_sequence,
@@ -65,7 +66,7 @@ def _run_golden(seq, queries: list[dict], tmp_path: Path) -> tuple[dict, dict]:
     tables = diagram_data.diagram_tables(seq)
     payload = {
         "format": 1,
-        "tables": diagram_data.encode_tables(tables),
+        "tables": {name: encode_array(a) for name, a in tables.items()},
         "lanes": diagram_data.lane_meta(seq, tables=tables),
         "queries": queries,
     }
