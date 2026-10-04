@@ -455,3 +455,194 @@ test("test_nearest_index_degenerate_domain_or_single_point_is_index_0", () => {
   assert.equal(nearestIndex(5, 5, 4, 5), 0);
   assert.equal(nearestIndex(0, 100, 1, 50), 0);
 });
+
+// tooltipRows, normalizeBand and markSpans (docs/plans/pulseq-checks-implementation.md section
+// 4.4, decision D9) are the pure parts of the series, the marks and the colored bands of
+// `laneChart`.
+const {tooltipRows, normalizeBand, markSpans} = require(
+  path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "chart_math.js")
+);
+
+test("test_tooltip_rows_plain_line_lane_has_one_row_with_title_color_and_unit", () => {
+  const lane = {title: "Gx", color: "gx", unit: "mT/m", fill: 0,
+    segments: [[[0, 0], [10, 100]]]};
+  assert.deepEqual(tooltipRows(lane, 5), [{label: "Gx", color: "gx", text: "50 mT/m"}]);
+  // Outside the segments the value is the fill.
+  assert.deepEqual(tooltipRows(lane, 20), [{label: "Gx", color: "gx", text: "0 mT/m"}]);
+});
+
+test("test_tooltip_rows_null_fill_has_no_unit", () => {
+  const lane = {title: "RF", color: "rf", unit: "uT", fill: null, segments: [[[0, 1], [10, 1]]]};
+  assert.equal(tooltipRows(lane, 50)[0].text, "—");
+});
+
+test("test_tooltip_rows_minmax_lane_reads_the_bin_and_falls_back_to_fill_in_a_gap", () => {
+  const lane = {title: "G", color: "g", unit: "mT/m", minmax: true, fill: 0,
+    segments: [[[0, -1], [5, 2]], [[20, -3], [25, 4]]]};
+  assert.deepEqual(tooltipRows(lane, 3),
+    [{label: "G", color: "g", text: "−1 – 2 mT/m"}]);
+  assert.deepEqual(tooltipRows(lane, 22),
+    [{label: "G", color: "g", text: "−3 – 4 mT/m"}]);
+  // t = 15 is in the gap between the two bins.
+  assert.deepEqual(tooltipRows(lane, 15), [{label: "G", color: "g", text: "0 mT/m"}]);
+});
+
+test("test_tooltip_rows_minmax_lane_without_unit_has_no_unit_text", () => {
+  const lane = {title: "G", color: "g", minmax: true, fill: null,
+    segments: [[[0, -1], [5, 2]]]};
+  assert.equal(tooltipRows(lane, 3)[0].text, "−1 – 2");
+  assert.equal(tooltipRows(lane, 50)[0].text, "—");
+});
+
+test("test_tooltip_rows_gate_lane_is_on_or_off_even_with_minmax", () => {
+  const lane = {kind: "gate", title: "ADC", color: "adc", unit: "x", minmax: true,
+    windows: [[2, 5]]};
+  assert.deepEqual(tooltipRows(lane, 3), [{label: "ADC", color: "adc", text: "on"}]);
+  assert.deepEqual(tooltipRows(lane, 7), [{label: "ADC", color: "adc", text: "off"}]);
+});
+
+test("test_tooltip_rows_series_has_one_row_per_series_read_from_its_own_segments", () => {
+  const lane = {title: "Lane", color: "lane", unit: "%", fill: 0,
+    series: [
+      {label: "Target 1", color: "target-1", segments: [[[0, 0], [10, 100]]]},
+      {label: "Target 2", color: "target-2", segments: [[[0, 10], [10, 20]], [[20, 5], [30, 7]]]},
+    ]};
+  assert.deepEqual(tooltipRows(lane, 5), [
+    {label: "Target 1", color: "target-1", text: "50 %"},
+    {label: "Target 2", color: "target-2", text: "15 %"},
+  ]);
+  // Past the first series' segments: its row is the fill, the other series still has a value.
+  assert.deepEqual(tooltipRows(lane, 25), [
+    {label: "Target 1", color: "target-1", text: "0 %"},
+    {label: "Target 2", color: "target-2", text: "6 %"},
+  ]);
+  // In the gap of the second series, and past the first: both are the fill.
+  assert.deepEqual(tooltipRows(lane, 15), [
+    {label: "Target 1", color: "target-1", text: "0 %"},
+    {label: "Target 2", color: "target-2", text: "0 %"},
+  ]);
+});
+
+test("test_tooltip_rows_series_of_a_minmax_lane_read_the_bin_of_each_series", () => {
+  const lane = {title: "Lane", color: "lane", unit: "mT/m", minmax: true, fill: 0,
+    series: [
+      {label: "A", color: "target-1", segments: [[[0, -1], [5, 2]]]},
+      {label: "B", color: "target-2", segments: [[[0, -4], [5, 6]]]},
+    ]};
+  assert.deepEqual(tooltipRows(lane, 3), [
+    {label: "A", color: "target-1", text: "−1 – 2 mT/m"},
+    {label: "B", color: "target-2", text: "−4 – 6 mT/m"},
+  ]);
+  assert.deepEqual(tooltipRows(lane, 50), [
+    {label: "A", color: "target-1", text: "0 mT/m"},
+    {label: "B", color: "target-2", text: "0 mT/m"},
+  ]);
+});
+
+test("test_tooltip_rows_empty_series_array_has_no_rows", () => {
+  const lane = {title: "Lane", color: "lane", fill: 0, segments: [[[0, 0], [10, 100]]],
+    series: []};
+  assert.deepEqual(tooltipRows(lane, 5), []);
+});
+
+test("test_normalize_band_pair_has_no_color_and_object_keeps_its_color", () => {
+  assert.deepEqual(normalizeBand([1, 2]), {lo: 1, hi: 2, color: null});
+  assert.deepEqual(normalizeBand({lo: 3, hi: 4, color: "target-2"}),
+    {lo: 3, hi: 4, color: "target-2"});
+  assert.deepEqual(normalizeBand({lo: 3, hi: 4}), {lo: 3, hi: 4, color: null});
+});
+
+test("test_mark_spans_maps_to_plot_coordinates", () => {
+  // View [100, 200] over a plot of width 1000: 10 plot units for each chart unit.
+  const spans = markSpans([{lo: 120, hi: 150, color: "a"}], 100, 200, 1000, 1);
+  assert.deepEqual(spans, [{x0: 200, x1: 500, color: "a"}]);
+});
+
+test("test_mark_spans_drops_marks_fully_outside_the_view", () => {
+  const marks = [
+    {lo: 0, hi: 50, color: "a"},
+    {lo: 250, hi: 300, color: "a"},
+    {lo: 120, hi: 130, color: "a"},
+  ];
+  assert.deepEqual(markSpans(marks, 100, 200, 1000, 1), [{x0: 200, x1: 300, color: "a"}]);
+});
+
+test("test_mark_spans_cuts_a_mark_partly_in_view_at_the_edge", () => {
+  const marks = [{lo: 50, hi: 120, color: "a"}, {lo: 180, hi: 400, color: "b"}];
+  assert.deepEqual(markSpans(marks, 100, 200, 1000, 1), [
+    {x0: 0, x1: 200, color: "a"},
+    {x0: 800, x1: 1000, color: "b"},
+  ]);
+});
+
+test("test_mark_spans_widens_a_narrow_mark_about_its_centre", () => {
+  // A mark of 0.01 chart units is 0.1 plot units wide; it becomes 2 wide about 500.05.
+  const [span] = markSpans([{lo: 150, hi: 150.01, color: "a"}], 100, 200, 1000, 2);
+  assert.ok(Math.abs(span.x0 - 499.05) < 1e-9);
+  assert.ok(Math.abs(span.x1 - 501.05) < 1e-9);
+  // A mark at least minWidth wide is not changed.
+  const [wide] = markSpans([{lo: 150, hi: 150.2, color: "a"}], 100, 200, 1000, 2);
+  assert.ok(Math.abs(wide.x0 - 500) < 1e-9);
+  assert.ok(Math.abs(wide.x1 - 502) < 1e-9);
+});
+
+test("test_mark_spans_widened_mark_at_the_edge_is_cut_at_the_edge", () => {
+  assert.deepEqual(markSpans([{lo: 100, hi: 100, color: "a"}], 100, 200, 1000, 2),
+    [{x0: 0, x1: 1, color: "a"}]);
+  assert.deepEqual(markSpans([{lo: 200, hi: 200, color: "a"}], 100, 200, 1000, 2),
+    [{x0: 999, x1: 1000, color: "a"}]);
+});
+
+test("test_mark_spans_merges_overlapping_and_touching_marks_of_the_same_color", () => {
+  const marks = [
+    {lo: 110, hi: 120, color: "a"},
+    {lo: 115, hi: 130, color: "a"},
+    {lo: 130, hi: 135, color: "a"},
+    {lo: 150, hi: 160, color: "a"},
+    // Inside the first mark: no change to the merged span.
+    {lo: 112, hi: 113, color: "a"},
+  ];
+  assert.deepEqual(markSpans(marks, 100, 200, 1000, 1), [
+    {x0: 100, x1: 350, color: "a"},
+    {x0: 500, x1: 600, color: "a"},
+  ]);
+});
+
+test("test_mark_spans_merges_marks_that_overlap_only_after_widening", () => {
+  // Two marks 0.5 plot units apart, each widened to 2: they overlap and merge.
+  const marks = [{lo: 150, hi: 150, color: "a"}, {lo: 150.05, hi: 150.05, color: "a"}];
+  const spans = markSpans(marks, 100, 200, 1000, 2);
+  assert.equal(spans.length, 1);
+  assert.ok(Math.abs(spans[0].x0 - 499) < 1e-9);
+  assert.ok(Math.abs(spans[0].x1 - 501.5) < 1e-9);
+});
+
+test("test_mark_spans_does_not_merge_marks_of_different_colors", () => {
+  const marks = [
+    {lo: 110, hi: 130, color: "a"},
+    {lo: 120, hi: 140, color: "b"},
+    {lo: 125, hi: 135, color: "a"},
+  ];
+  assert.deepEqual(markSpans(marks, 100, 200, 1000, 1), [
+    {x0: 100, x1: 350, color: "a"},
+    {x0: 200, x1: 400, color: "b"},
+  ]);
+});
+
+test("test_mark_spans_does_not_need_sorted_input", () => {
+  const sorted = [
+    {lo: 110, hi: 120, color: "a"}, {lo: 115, hi: 130, color: "a"},
+    {lo: 150, hi: 160, color: "a"}, {lo: 170, hi: 180, color: "a"},
+  ];
+  const shuffled = [sorted[3], sorted[1], sorted[2], sorted[0]];
+  assert.deepEqual(markSpans(shuffled, 100, 200, 1000, 1), markSpans(sorted, 100, 200, 1000, 1));
+  assert.deepEqual(markSpans(shuffled, 100, 200, 1000, 1), [
+    {x0: 100, x1: 300, color: "a"},
+    {x0: 500, x1: 600, color: "a"},
+    {x0: 700, x1: 800, color: "a"},
+  ]);
+});
+
+test("test_mark_spans_empty_input_gives_no_spans", () => {
+  assert.deepEqual(markSpans([], 100, 200, 1000, 1), []);
+});
