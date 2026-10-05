@@ -1,10 +1,15 @@
 """Waveform data for the sequence diagram and the block table.
 
 `file_lanes` gives the exact chart lanes of a sequence, or of the blocks in a time
-range: RF magnitude and phase, the ADC gate and the three gradient axes, in ms, µT,
-rad and mT/m. It is the reference for the browser's `SeqLanes` (`assets/seq_lanes.js`),
-which draws the diagram from the tables of `diagram_data`. `block_rows` gives the rows
-of the block table from the same description of each block.
+range: RF magnitude and phase, the ADC gate and the three gradient axes, with times in
+ms. The values are in the units of the file: Hz for the RF magnitude, rad for the phase and
+Hz/m for the gradients, with no gamma. Each value lane gives its `peak` and `symmetric`
+instead of a domain, ticks and tick labels: the browser changes the values into µT and mT/m
+with the gamma of the selected target, and calculates the domain, the ticks and the labels
+(`ChartMath.valueDomain`, `ChartMath.rescaleLane`). It is the reference for the browser's
+`SeqLanes` (`assets/seq_lanes.js`), which draws the diagram from the tables of
+`diagram_data`. `block_rows` gives the rows of the block table from the same description of
+each block.
 
 Each function reads one block at a time. A range reads only the blocks that overlap it.
 """
@@ -18,8 +23,7 @@ import pypulseq as pp
 from pulseq_analysis.seq_index import block_cache_off, sequence_index
 from pulseq_analysis.seq_utils import gradient_points
 
-from .markup import Lane, _points, fmt, lanes_json
-from .units import PROTON_GAMMA, hz_to_ut
+from .markup import Lane, _points, lanes_json
 
 _AXES = ("gx", "gy", "gz")
 
@@ -51,14 +55,14 @@ def _check_windows(seq: pp.Sequence, windows: Iterable[TimeWindow]) -> None:
 
 @dataclass(frozen=True)
 class _BlockEvents:
-    """The diagram content of one block: times in s, and values in µT, rad and mT/m."""
+    """The diagram content of one block: times in s, and values in Hz, rad and Hz/m."""
 
     block_id: int
     start_s: float
     duration_s: float
-    rf_mag: tuple[np.ndarray, np.ndarray] | None  # times (s), µT, with the zero ends
+    rf_mag: tuple[np.ndarray, np.ndarray] | None  # times (s), Hz, with the zero ends
     rf_phase: tuple[np.ndarray, np.ndarray] | None  # times (s), rad, where |B1| > 1% peak
-    grads: dict[str, tuple[np.ndarray, np.ndarray]]  # "gx": times (s), mT/m
+    grads: dict[str, tuple[np.ndarray, np.ndarray]]  # "gx": times (s), Hz/m
     adc: tuple[float, float] | None  # start and end (s)
     events: str  # the text of the block table's Events column
 
@@ -84,13 +88,13 @@ def _in_range(start: float, duration: float, lo: float | None, hi: float | None)
 
 
 def _rf_offsets(rf) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """The delay (s) and the offsets and values of one RF event's magnitude (µT) and
+    """The delay (s) and the offsets and values of one RF event's magnitude (Hz) and
     phase (rad) points, relative to the delay: `mag_offsets = [0, rt..., rt[-1]]` with a
     zero-padded `mag`, and `phase_offsets = rt[keep]` with `phase` there, where `keep`
     is `mag` above 1% of its peak."""
     rt = np.asarray(rf.t, dtype=float)
     signal = np.asarray(rf.signal, dtype=complex)
-    mag = hz_to_ut(np.abs(signal), PROTON_GAMMA)
+    mag = np.abs(signal)
     phase = np.angle(signal * np.exp(1j * (rf.phase_offset + 2 * np.pi * rf.freq_offset * rt)))
     mag_offsets = np.concatenate([[0.0], rt, [rt[-1]]])
     mag_padded = np.concatenate([[0.0], mag, [0.0]])
@@ -119,7 +123,7 @@ def _block_events(block_id: int, t: float, duration: float, block) -> _BlockEven
         g = getattr(block, axis, None)
         if g is not None:
             gt, amp = gradient_points(g, t)
-            grads[axis] = (gt, amp / PROTON_GAMMA * 1e3)
+            grads[axis] = (gt, amp)
             events.append(f"G{axis[1]} {g.type}")
 
     adc_window = None
@@ -185,41 +189,26 @@ def block_rows(
     return rows, total
 
 
-def _value_domain(peak: float, symmetric: bool) -> tuple[list[float], list[float], list[str]]:
-    """The domain, ticks and tick labels of a value lane whose largest absolute rounded
-    point is `peak`."""
-    if peak == 0.0:
-        return [-1.0, 1.0], [0.0], ["0"]
-    if symmetric:
-        return (
-            [-1.1 * peak, 1.1 * peak],
-            [-peak, 0.0, peak],
-            [
-                fmt(-peak),
-                "0",
-                fmt(peak),
-            ],
-        )
-    return [0.0, 1.1 * peak], [0.0, peak], ["0", fmt(peak)]
-
-
 def _value_lane(
     lane_id, title, unit, color, segments, peak, symmetric, has_events, fill=0.0
-) -> Lane:
-    """One line lane. `peak` is the largest absolute value of its rounded points."""
-    domain, ticks, labels = _value_domain(peak, symmetric)
-    return Lane(
-        id=lane_id,
-        title=title,
-        unit=unit,
-        color=color,
-        segments=segments,
-        domain=domain,
-        ticks=ticks,
-        tick_labels=labels,
-        empty=not has_events,
-        fill=fill,
-    )
+) -> dict:
+    """One line lane of values in the units of the file. `unit` is the unit that the chart
+    shows after the conversion with a gamma (`mT/m` or `µT`). `peak` is the largest absolute
+    value of the lane's points in the units of the file (Hz/m or Hz), `symmetric` is True for
+    a signed lane. The lane has no domain, no ticks and no tick labels: `ChartMath.valueDomain`
+    calculates them for the gamma that the chart shows (the value is in `peak`)."""
+    return {
+        "id": lane_id,
+        "title": title,
+        "unit": unit,
+        "color": color,
+        "kind": "line",
+        "segments": segments,
+        "peak": peak,
+        "symmetric": symmetric,
+        "empty": not has_events,
+        "fill": fill,
+    }
 
 
 def _phase_lane(segments: list, has_events: bool) -> Lane:
@@ -255,7 +244,8 @@ def _adc_lane(windows: list, has_events: bool) -> dict:
 def _lanes(segments: dict, windows: list, peaks: dict, has_events: dict) -> list:
     """The six lanes in their page order. `segments` has the segments of "rf_mag",
     "rf_phase", "gx", "gy" and "gz". `windows` has the ADC windows. `peaks` has the peak
-    of "rf_mag", "gx", "gy" and "gz". `has_events` has one bool for each of the six ids."""
+    (the largest absolute value, in Hz or Hz/m) of "rf_mag", "gx", "gy" and "gz".
+    `has_events` has one bool for each of the six ids."""
     return [
         _value_lane(
             "rf_mag",
@@ -289,18 +279,19 @@ def file_lanes(
     seq: pp.Sequence, *, start_s: float | None = None, end_s: float | None = None
 ) -> list[dict]:
     """The exact chart lanes of the blocks of `seq` that overlap [start_s, end_s]: RF
-    |B1| (µT), RF phase (rad), the ADC gate, and Gx, Gy, Gz (mT/m), with times in ms.
+    |B1| (Hz), RF phase (rad), the ADC gate, and Gx, Gy, Gz (Hz/m), with times in ms. The
+    value lanes have `peak` and `symmetric`, not a domain (`_value_lane`).
 
-    With no range, these are the lanes of vb-pulseq `sequence_data` (parity). The line
-    lanes RF |B1|, Gx, Gy and Gz are one segment each, with a zero point at the start of
-    the first block in the range and at the end of the last one (0 and the sequence end
-    when there is no range). A block that crosses a range edge is included whole, so
-    points can be outside the range.
+    The line lanes RF |B1|, Gx, Gy and Gz are one segment each, with a zero point at the
+    start of the first block in the range and at the end of the last one (0 and the
+    sequence end when there is no range). A block that crosses a range edge is included
+    whole, so points can be outside the range.
     """
     grads: dict[str, list] = {axis: [] for axis in _AXES}
     rf_mag: list = []
     rf_phase: list = []
     adc_windows: list = []
+    peaks = {lane_id: 0.0 for lane_id in ("rf_mag", *_AXES)}
     first_start = last_end = None
     for e in _events_in_range(seq, start_s, end_s):
         if first_start is None:
@@ -309,8 +300,11 @@ def file_lanes(
         if e.rf_mag is not None:
             rf_mag.append(_points(*e.rf_mag))
             rf_phase.append(_points(*e.rf_phase, digits=3))
+            peaks["rf_mag"] = max(peaks["rf_mag"], float(np.max(np.abs(e.rf_mag[1]))))
         for axis, (t, amp) in e.grads.items():
             grads[axis].append(_points(t, amp))
+            if amp.size:
+                peaks[axis] = max(peaks[axis], float(np.max(np.abs(amp))))
         if e.adc is not None:
             a0, a1 = e.adc
             adc_windows.append([round(a0 * 1e3, 4), round(a1 * 1e3, 4)])
@@ -326,10 +320,6 @@ def file_lanes(
     segments = {"rf_mag": joined(rf_mag), "rf_phase": rf_phase}
     for axis in _AXES:
         segments[axis] = joined(grads[axis])
-    peaks = {
-        lane_id: max((abs(v) for seg in segments[lane_id] for _, v in seg), default=0.0)
-        for lane_id in ("rf_mag", *_AXES)
-    }
     has_events = {
         "rf_mag": bool(rf_mag),
         "rf_phase": bool(rf_phase),

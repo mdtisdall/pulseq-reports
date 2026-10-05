@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {fmt, niceTicks, valueAt, minMaxAt, visiblePoints, clampView, zoomView, panView,
-  dragView, laneGroupMap, visibleLanes} = require(
+  dragView, laneGroupMap, visibleLanes, valueDomain, rescaleLane} = require(
   path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "chart_math.js")
 );
 
@@ -645,4 +645,140 @@ test("test_mark_spans_does_not_need_sorted_input", () => {
 
 test("test_mark_spans_empty_input_gives_no_spans", () => {
   assert.deepEqual(markSpans([], 100, 200, 1000, 1), []);
+});
+
+// ---- The value lanes of the diagram: valueDomain and rescaleLane ----
+
+const GAMMA_1H = 42576000; // Hz/T, the proton
+
+test("test_value_domain_is_the_rule_of_the_python_value_lane", () => {
+  // Each row is the result of `waveforms._value_domain(peak, symmetric)` of the version that
+  // calculated the domain in Python (the 3 significant digits of `f"{v:.3g}"`: a tie goes to
+  // the even digit, an exponent appears below 1e-4 and from 1e3, and a hyphen is U+2212).
+  const minus = "\u2212";
+  const rows = [
+    [0, true, [-1, 1], [0], ["0"]],
+    [0, false, [-1, 1], [0], ["0"]],
+    [25, true, [-27.500000000000004, 27.500000000000004], [-25, 0, 25], [minus + "25", "0", "25"]],
+    [25, false, [0, 27.500000000000004], [0, 25], ["0", "25"]],
+    [12.25, true, [-13.475000000000001, 13.475000000000001], [-12.25, 0, 12.25],
+      [minus + "12.2", "0", "12.2"]],
+    [22.25, false, [0, 24.475], [0, 22.25], ["0", "22.2"]],
+    [0.03125, true, [-0.034375, 0.034375], [-0.03125, 0, 0.03125],
+      [minus + "0.0312", "0", "0.0312"]],
+    [1234.5, true, [-1357.95, 1357.95], [-1234.5, 0, 1234.5],
+      [minus + "1.23e+03", "0", "1.23e+03"]],
+    [99.99999, false, [0, 109.999989], [0, 99.99999], ["0", "100"]],
+    [7, false, [0, 7.700000000000001], [0, 7], ["0", "7"]],
+    [1.125, false, [0, 1.2375], [0, 1.125], ["0", "1.12"]],
+    [0.0001, false, [0, 0.00011000000000000002], [0, 0.0001], ["0", "0.0001"]],
+    [1.234e-5, true, [-1.3574e-5, 1.3574e-5], [-1.234e-5, 0, 1.234e-5],
+      [minus + "1.23e" + minus + "05", "0", "1.23e" + minus + "05"]],
+    [999.5, false, [0, 1099.45], [0, 999.5], ["0", "1e+03"]],
+    [0.1235, false, [0, 0.13585], [0, 0.1235], ["0", "0.123"]],
+    [5.2, true, [-5.720000000000001, 5.720000000000001], [-5.2, 0, 5.2],
+      [minus + "5.2", "0", "5.2"]],
+  ];
+  for (const [peak, symmetric, domain, ticks, labels] of rows) {
+    assert.deepEqual(
+      valueDomain(peak, symmetric), {domain, ticks, tick_labels: labels}, `${peak} ${symmetric}`
+    );
+  }
+});
+
+// A gradient lane in Hz/m (the unit of the chart is mT/m), as `SeqLanes` gives it.
+function gradLane(overrides = {}) {
+  return {
+    id: "gx", title: "Gx", unit: "mT/m", color: "gx", kind: "line", peak: 1064400,
+    symmetric: true, empty: false, fill: 0,
+    segments: [[[0, 0], [1, 1064400], [2, -532200], [3, 0]]], ...overrides,
+  };
+}
+
+test("test_rescale_lane_gives_the_values_and_the_axis_of_the_gamma", () => {
+  const lane = rescaleLane(gradLane(), GAMMA_1H);
+  assert.deepEqual(lane.segments, [[
+    [0, 0 / GAMMA_1H * 1e3], [1, 1064400 / GAMMA_1H * 1e3], [2, -532200 / GAMMA_1H * 1e3],
+    [3, 0 / GAMMA_1H * 1e3],
+  ]]);
+  // 1064400 Hz/m is 25 mT/m for the proton gamma.
+  assert.ok(Math.abs(lane.segments[0][1][1] - 25) < 1e-12);
+  assert.deepEqual(
+    {domain: lane.domain, ticks: lane.ticks, tick_labels: lane.tick_labels},
+    valueDomain(25, true)
+  );
+  // A gamma of half the size doubles the values and the axis.
+  const half = rescaleLane(gradLane(), GAMMA_1H / 2);
+  assert.ok(Math.abs(half.segments[0][1][1] - 50) < 1e-12);
+  assert.deepEqual(half.ticks, valueDomain(50, true).ticks);
+  // The lane that was given is not changed.
+  assert.equal(gradLane().segments[0][1][1], 1064400);
+});
+
+test("test_rescale_lane_with_a_negative_gamma_changes_the_sign_of_a_signed_lane_only", () => {
+  const positive = rescaleLane(gradLane(), GAMMA_1H);
+  const negative = rescaleLane(gradLane(), -GAMMA_1H);
+  // (`+ 0` turns the -0 of a zero value into 0.)
+  assert.deepEqual(
+    negative.segments[0].map(p => p[1] + 0), positive.segments[0].map(p => -p[1] + 0)
+  );
+  // The peak is a magnitude: the axis, the ticks and the labels are those of |gamma|.
+  assert.deepEqual(negative.domain, positive.domain);
+  assert.deepEqual(negative.ticks, positive.ticks);
+  assert.deepEqual(negative.tick_labels, positive.tick_labels);
+
+  // The RF magnitude (a magnitude, in Hz) and a magnitude of the gradient (|G|, no peak: the
+  // axis is the lane's own) use |gamma|.
+  const rf = {
+    id: "rf_mag", unit: "\u00b5T", peak: 333.5, symmetric: false, segments: [[[0, 0], [1, 333.5]]],
+  };
+  assert.deepEqual(rescaleLane(rf, -GAMMA_1H), rescaleLane(rf, GAMMA_1H));
+  assert.ok(Math.abs(rescaleLane(rf, GAMMA_1H).segments[0][1][1] - 333.5 / GAMMA_1H * 1e6) < 1e-15);
+  const magnitude = {
+    id: "gmag", unit: "mT/m", symmetric: false, domain: [0, 3], ticks: [0, 2], tick_labels: ["0", "2"],
+    segments: [[[0, 0], [1, 85152]]],
+  };
+  const same = rescaleLane(magnitude, -GAMMA_1H);
+  assert.deepEqual(same, rescaleLane(magnitude, GAMMA_1H));
+  assert.deepEqual(same.domain, [0, 3]);
+  assert.ok(same.segments[0][1][1] > 0);
+});
+
+test("test_rescale_lane_keeps_the_minimum_before_the_maximum_of_a_minmax_lane", () => {
+  // The pairs are (bin start, minimum) and (bin centre, maximum). A negative gamma turns the
+  // minimum into the maximum, so the pair is sorted again (the tooltip reads min then max).
+  const lane = gradLane({
+    minmax: true, segments: [[[0, -1000], [0.5, 3000], [1, 0], [1.5, 2000]]],
+  });
+  const negative = rescaleLane(lane, -GAMMA_1H).segments[0];
+  const positive = rescaleLane(lane, GAMMA_1H).segments[0];
+  assert.deepEqual(negative.map(p => p[0]), [0, 0.5, 1, 1.5]);
+  assert.equal(negative[0][1], -positive[1][1]);
+  assert.equal(negative[1][1], -positive[0][1]);
+  assert.equal(negative[2][1], -positive[3][1]);
+  assert.equal(negative[3][1] + 0, -positive[2][1] + 0);
+  for (const i of [0, 2]) assert.ok(negative[i][1] <= negative[i + 1][1]);
+});
+
+test("test_rescale_lane_returns_a_lane_without_symmetric_as_it_is", () => {
+  const phase = {id: "rf_phase", unit: "rad", domain: [-1, 1], segments: [[[0, 1]]]};
+  const gate = {id: "adc", kind: "gate", windows: [[0, 1]]};
+  assert.equal(rescaleLane(phase, GAMMA_1H), phase);
+  assert.equal(rescaleLane(gate, -GAMMA_1H), gate);
+});
+
+test("test_rescale_lane_refuses_a_gamma_that_is_0_or_not_finite_and_an_unknown_unit", () => {
+  for (const gamma of [0, NaN, Infinity, undefined]) {
+    assert.throws(() => rescaleLane(gradLane(), gamma), /gamma/, `gamma ${gamma}`);
+  }
+  assert.throws(() => rescaleLane(gradLane({unit: "T/m"}), GAMMA_1H), /unit/);
+});
+
+test("test_rescale_lane_rounds_the_peak_to_4_decimals_with_the_tie_to_the_even_digit", () => {
+  // 1 Hz/m with a gamma of 32000 Hz/T is exactly 0.03125 mT/m. Python's round(0.03125, 4) is
+  // 0.0312 (an exact tie goes to the even digit), where toFixed(4) gives 0.0313.
+  const lane = rescaleLane(gradLane({peak: 1, segments: [[[0, 1]]]}), 32000);
+  assert.equal(lane.segments[0][0][1], 0.03125);
+  assert.deepEqual(lane.ticks, [-0.0312, 0, 0.0312]);
+  assert.deepEqual(lane.domain, valueDomain(0.0312, true).domain);
 });

@@ -1,9 +1,10 @@
 import math
 
+import numpy as np
 import pypulseq as pp
 import pytest
 from oracles.blocks import iter_blocks
-from synthetic import DWELL, GAMMA_1H, NUM_SAMPLES, SYSTEM, gre_sequence, spin_echo_sequence
+from synthetic import DWELL, NUM_SAMPLES, SYSTEM, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import waveforms
 
@@ -18,18 +19,47 @@ def spin_echo():
 
 def test_spin_echo_lanes(spin_echo):
     seq, by_id = spin_echo
-    max_grad_mt = SYSTEM.max_grad / GAMMA_1H * 1e3
+    max_grad = SYSTEM.max_grad  # Hz/m: the lanes are in the units of the file
     # Block pulses have no slice-select gradient, so only Gx (prephaser, readout) and
     # Gy (the two crushers) carry events; Gz stays empty.
     for axis in ("gx", "gy"):
         assert not by_id[axis]["empty"]
-        assert max(abs(v) for _, v in by_id[axis]["segments"][0]) <= max_grad_mt + 1e-3
+        assert max(abs(v) for _, v in by_id[axis]["segments"][0]) <= max_grad + 1
     assert by_id["gz"]["empty"]
     (window,) = by_id["adc"]["windows"]
     assert window[1] - window[0] == pytest.approx(NUM_SAMPLES * DWELL * 1e3, abs=0.01)
     assert len(by_id["rf_phase"]["segments"]) == 2  # excitation and refocusing
     first_adc = waveforms.first_adc_window(seq)
     assert first_adc.end_s * 1e3 > window[1]
+
+
+def test_value_lanes_are_in_the_units_of_the_file_with_a_peak_and_no_axis(spin_echo):
+    seq, by_id = spin_echo
+    rf_peak = max(
+        float(np.max(np.abs(seq.get_block(b).rf.signal)))
+        for b in seq.block_events
+        if seq.get_block(b).rf is not None
+    )
+    grad_peak = {
+        axis: max(
+            (
+                abs(getattr(seq.get_block(b), axis).amplitude)
+                for b in seq.block_events
+                if getattr(seq.get_block(b), axis) is not None
+            ),
+            default=0.0,
+        )
+        for axis in ("gx", "gy", "gz")
+    }
+
+    assert by_id["rf_mag"]["peak"] == pytest.approx(rf_peak, rel=1e-12)
+    assert by_id["rf_mag"]["symmetric"] is False
+    for axis, peak in grad_peak.items():
+        assert by_id[axis]["peak"] == pytest.approx(peak, rel=1e-12)
+        assert by_id[axis]["symmetric"] is True
+    assert grad_peak["gz"] == 0.0
+    for lane_id in ("rf_mag", "gx", "gy", "gz"):
+        assert not {"domain", "ticks", "tick_labels"} & set(by_id[lane_id])
 
 
 def test_block_table(spin_echo):

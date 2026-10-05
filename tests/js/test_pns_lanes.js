@@ -17,9 +17,10 @@ const PnsLanes = require(
 // table of that README, not read from pypulseq.
 
 const DT = 1e-5; // the gradient raster, s (10 microseconds)
-// The factor from the mT/m of the tables to Hz/m (`SeqLanes.GRAD_HZ_PER_VALUE`), written here
-// again: the model's samples are in Hz/m and its totals in Hz/T.
-const HZ_PER_VALUE = 42576;
+// The gradient values of the tables are in Hz/m, and the model's totals are in Hz/T. The
+// amplitudes of the hand-made events below are written in mT/m: this is the factor to Hz/m
+// (the proton gamma times 1e-3).
+const HZ_PER_MT = 42.576e3;
 // The stimulation limit of the test models, Hz/T (the magnitude of the proton gamma).
 const THRESHOLD = 42576000;
 
@@ -48,8 +49,8 @@ function trivialPns(overrides = {}) {
   );
 }
 
-// Four gradient event shapes (delay, offsets and values in raster units and
-// mT/m), reused by many blocks of many different lengths: the module's
+// Four gradient event shapes (delay and offsets in raster units, values in
+// mT/m: `buildEventTables` writes them in Hz/m), reused by many blocks of many different lengths: the module's
 // per-event cache is keyed by (event, axis, block length), so reusing one
 // event at several lengths exercises more than one cache entry for it.
 const EVENT_TEMPLATES = [
@@ -68,7 +69,7 @@ function buildEventTables(dt) {
     grad_offset_at.push(grad_offset.length);
     grad_at.push(grad_value.length);
     for (const o of tmpl.offsetsDt) grad_offset.push(o * dt);
-    for (const v of tmpl.valuesMt) grad_value.push(v);
+    for (const v of tmpl.valuesMt) grad_value.push(v * HZ_PER_MT);
   }
   return {
     grad_delay: Float64Array.from(grad_delay),
@@ -160,11 +161,11 @@ function bruteForceTotals(tables, dt, hw) {
           if (t < t0) {
             value = 0;
           } else if (p + 1 >= nPts) {
-            value = t <= t0 ? tables.grad_value[valAt + p] * HZ_PER_VALUE : 0;
+            value = t <= t0 ? tables.grad_value[valAt + p] : 0;
           } else {
             const t1 = delay + tables.grad_offset[offAt + p + 1];
-            const v0 = tables.grad_value[valAt + p] * HZ_PER_VALUE;
-            const v1 = tables.grad_value[valAt + p + 1] * HZ_PER_VALUE;
+            const v0 = tables.grad_value[valAt + p];
+            const v1 = tables.grad_value[valAt + p + 1];
             value = t1 === t0 ? v1 : v0 + ((v1 - v0) / (t1 - t0)) * (t - t0);
           }
         }
@@ -337,8 +338,8 @@ function assertWithinPeakTol(got, want, tol, msg) {
   assert.ok(diff <= tol * Math.max(peak, 1e-300), `${msg}: diff=${diff} peak=${peak} tol=${tol}`);
 }
 
-function decodeModel(tables, overrides, gradHzPerValue = HZ_PER_VALUE) {
-  return PnsLanes.decode(tables, trivialPns(overrides), gradHzPerValue);
+function decodeModel(tables, overrides) {
+  return PnsLanes.decode(tables, trivialPns(overrides));
 }
 
 const LANE_META = {
@@ -429,7 +430,7 @@ function buildBorderTables() {
   const grad_offset_at = Uint32Array.from([0, 4]);
   const grad_at = Uint32Array.from([0, 4]);
   const grad_offset = Float64Array.from([0, 2, 9, 10, 0, 3, 8].map((x) => x * DT));
-  const grad_value = Float64Array.from([0, 8, 8, 8, 8, 8, 0]);
+  const grad_value = Float64Array.from([0, 8, 8, 8, 8, 8, 0].map((v) => v * HZ_PER_MT));
   return {
     duration_index: Uint8Array.from([0, 1]),
     durations: Float64Array.from([10 * DT, 8 * DT]),
@@ -826,28 +827,26 @@ test("test_on_raster_false_never_uses_the_exact_view", () => {
   assert.equal(long.exact, false);
 });
 
-// ---- 9. gradHzPerValue and threshold ------------------------------------------
+// ---- 9. The gradient values and the threshold ---------------------------------
 
-test("test_grad_hz_per_value_multiplies_every_gradient_sample", () => {
-  // A model decoded with the factor 2 * F must equal, within the peak tolerance, a model of the
-  // same tables with every grad_value doubled and the factor F (`grad_value * gradHzPerValue`
-  // in Hz/m). This is not required to be bit-exact: the two models take different code paths
-  // to the same number (one scale multiply per sample against a pre-doubled input table), so
-  // 1e-12 of the peak is the bound, as in section 1 above.
+test("test_totals_double_with_the_gradient_values", () => {
+  // The SAFE model is linear in the gradient: the totals of the tables with every grad_value
+  // doubled are twice the totals of the tables. The two recursions add the same terms in the
+  // same order, so 1e-12 of the peak is the bound, as in section 1 above.
   const tables = buildPnsTables(60, 29, { durationOptionsDt: [15, 25], noEventProb: 0.3 });
   const doubledTables = { ...tables, grad_value: Float64Array.from(tables.grad_value, (v) => v * 2) };
-  const scaledModel = decodeModel(tables, {}, 2 * HZ_PER_VALUE);
-  const doubledModel = decodeModel(doubledTables);
-  const scaledTotals = collectPlainRecursion(scaledModel);
-  const doubledTotals = collectPlainRecursion(doubledModel);
-  assert.ok(peakOf(scaledTotals) > 0);
-  assertWithinPeakTol(scaledTotals, doubledTotals, 1e-12, "factor 2 * F vs doubled grad_value");
+  const totals = collectPlainRecursion(decodeModel(tables));
+  const doubledTotals = collectPlainRecursion(decodeModel(doubledTables));
+  assert.ok(peakOf(totals) > 0);
+  assertWithinPeakTol(
+    doubledTotals, Float64Array.from(totals, (v) => 2 * v), 1e-12, "doubled grad_value vs 2 * totals"
+  );
 });
 
 test("test_totals_are_in_hz_per_t_of_the_samples_in_hz_per_m", () => {
   // The SAFE model is linear: samples in Hz/m instead of T/m give the total times |gamma|.
-  // The brute force of this file reads the tables with the factor, so the model's totals equal
-  // it (and are far above 1, the size of a fraction of the limit, for these gradients).
+  // The brute force of this file reads the tables as they are, so the model's totals equal it
+  // (and are far above 1, the size of a fraction of the limit, for these gradients).
   const tables = buildPnsTables(40, 31, { durationOptionsDt: [20, 35], noEventProb: 0.3 });
   const model = decodeModel(tables);
   const brute = bruteForceTotals(tables, DT, HW);
@@ -855,15 +854,10 @@ test("test_totals_are_in_hz_per_t_of_the_samples_in_hz_per_m", () => {
   assert.ok(peakOf(brute.total) > 1e3);
 });
 
-test("test_decode_refuses_a_threshold_and_a_factor_that_are_not_numbers_above_zero", () => {
+test("test_decode_refuses_a_threshold_that_is_not_a_number_above_zero", () => {
   const tables = buildPnsTables(5, 3);
   for (const threshold of [0, -1, NaN, Infinity, undefined]) {
     assert.throws(() => decodeModel(tables, { threshold }), /threshold/, `threshold ${threshold}`);
-  }
-  for (const factor of [NaN, Infinity, undefined]) {
-    assert.throws(
-      () => PnsLanes.decode(tables, trivialPns(), factor), /gradHzPerValue/, `factor ${factor}`
-    );
   }
 });
 

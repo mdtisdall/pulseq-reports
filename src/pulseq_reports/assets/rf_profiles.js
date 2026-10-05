@@ -824,7 +824,7 @@ const RfProfiles = (() => {
     const t = new Float64Array(P), g = new Float64Array(P);
     for (let p = 0; p < P; p++) {
       t[p] = ge.delayS + ge.offsetsS[p];
-      g[p] = ge.values[p] * seqView.gradHzPerValue;
+      g[p] = ge.values[p];
     }
     return {t, g, cum: _cumulative(t, g)};
   }

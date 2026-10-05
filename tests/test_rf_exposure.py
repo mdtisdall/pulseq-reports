@@ -32,7 +32,7 @@ def _pulse_train(gaps_s: list[float]) -> pp.Sequence:
 
 
 def test_block_pulse_train():
-    e = rf_exposure.rf_exposure(_pulse_train([3.0, 17.0]))
+    e = rf_exposure.rf_exposure(_pulse_train([3.0, 17.0]), GAMMA_1H)
     assert e.num_pulses == 2
     assert e.duration_s == pytest.approx(20, abs=0.01)
     assert e.peak_b1_ut == pytest.approx(B1_UT, rel=1e-6)
@@ -51,7 +51,7 @@ def test_block_pulse_train():
     ],
 )
 def test_highest_window(gaps_s, pulses_in_window):
-    e = rf_exposure.rf_exposure(_pulse_train(gaps_s))
+    e = rf_exposure.rf_exposure(_pulse_train(gaps_s), GAMMA_1H)
     assert e.b1rms_window_s == 10
     assert e.b1rms_window_used_s == 10
     assert e.b1rms_window_ut == pytest.approx(
@@ -62,7 +62,7 @@ def test_highest_window(gaps_s, pulses_in_window):
 def test_short_sequence_window():
     # A 10 s window holds 33 repetitions of the 0.3 s sequence, and a part of about 60 ms
     # that can hold one more pulse.
-    e = rf_exposure.rf_exposure(_pulse_train([0.3]))
+    e = rf_exposure.rf_exposure(_pulse_train([0.3]), GAMMA_1H)
     repeats = math.floor(10 / e.duration_s)
     assert repeats == 33
     assert e.b1rms_window_ut == pytest.approx(
@@ -71,8 +71,25 @@ def test_short_sequence_window():
     assert e.b1rms_window_ut > e.b1rms_ut
 
 
+def test_a_negative_gamma_gives_the_values_of_its_magnitude():
+    seq = _pulse_train([3.0, 17.0])
+    assert rf_exposure.rf_exposure(seq, -GAMMA_1H) == rf_exposure.rf_exposure(seq, GAMMA_1H)
+
+
+def test_the_values_follow_the_magnitude_of_the_gamma():
+    """B1 is the amplitude in Hz over |gamma|, so a gamma of half the size doubles the peak,
+    the energy is 4 times as large and B1+rms doubles."""
+    seq = _pulse_train([3.0, 17.0])
+    full = rf_exposure.rf_exposure(seq, GAMMA_1H)
+    half = rf_exposure.rf_exposure(seq, -GAMMA_1H / 2)
+    assert half.peak_b1_ut == pytest.approx(2 * full.peak_b1_ut, rel=1e-12)
+    assert half.energy_ut2_s == pytest.approx(4 * full.energy_ut2_s, rel=1e-12)
+    assert half.b1rms_ut == pytest.approx(2 * full.b1rms_ut, rel=1e-12)
+    assert half.b1rms_window_ut == pytest.approx(2 * full.b1rms_window_ut, rel=1e-12)
+
+
 def test_no_rf():
-    e = rf_exposure.rf_exposure(empty_sequence())
+    e = rf_exposure.rf_exposure(empty_sequence(), GAMMA_1H)
     assert e.num_pulses == 0
     assert e.peak_block is None
     assert e.energy_ut2_s == 0
@@ -88,10 +105,10 @@ def test_periodic_false_does_not_wrap():
     # the highest 10 s window can catch only 1 pulse: the two pulses are 15 s apart, more
     # than the 10 s window, in both directions within the single play.
     seq = _pulse_train([15.0, 5.0])
-    e_periodic = rf_exposure.rf_exposure(seq, periodic=True)
+    e_periodic = rf_exposure.rf_exposure(seq, GAMMA_1H, periodic=True)
     assert e_periodic.b1rms_window_ut == pytest.approx(math.sqrt(2 * PULSE_ENERGY / 10), rel=1e-6)
 
-    e = rf_exposure.rf_exposure(seq, periodic=False)
+    e = rf_exposure.rf_exposure(seq, GAMMA_1H, periodic=False)
     assert e.duration_s > e.b1rms_window_s
     assert e.b1rms_window_used_s == e.b1rms_window_s
     assert e.b1rms_window_ut == pytest.approx(math.sqrt(1 * PULSE_ENERGY / 10), rel=1e-6)
@@ -102,7 +119,7 @@ def test_periodic_false_window_is_whole_sequence_when_shorter_than_window():
     # highest window is the whole sequence: its real length is the sequence duration, and its
     # B1+rms equals the plain (non-windowed) B1+rms, both from the sequence's one pulse.
     seq = _pulse_train([0.3])
-    e = rf_exposure.rf_exposure(seq, periodic=False)
+    e = rf_exposure.rf_exposure(seq, GAMMA_1H, periodic=False)
     assert e.duration_s < e.b1rms_window_s
     assert e.b1rms_window_used_s == pytest.approx(e.duration_s)
     assert e.b1rms_ut == pytest.approx(math.sqrt(PULSE_ENERGY / e.duration_s), rel=1e-6)
@@ -110,7 +127,7 @@ def test_periodic_false_window_is_whole_sequence_when_shorter_than_window():
 
 
 def test_periodic_false_no_rf():
-    e = rf_exposure.rf_exposure(empty_sequence(), periodic=False)
+    e = rf_exposure.rf_exposure(empty_sequence(), GAMMA_1H, periodic=False)
     assert e.num_pulses == 0
     assert e.b1rms_window_ut == 0
     assert e.b1rms_window_used_s == e.duration_s
@@ -153,7 +170,7 @@ def test_matches_oracle_on_synthetic_sequences(make_seq, periodic):
     lengths."""
     seq = make_seq()
     for window_s in (1e-3, 10.0, 100.0):
-        ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
+        ours = rf_exposure.rf_exposure(seq, GAMMA_1H, periodic=periodic, b1rms_window_s=window_s)
         theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
         _assert_matches_oracle(ours, theirs)
 
@@ -174,7 +191,7 @@ def test_matches_oracle_for_window_length_categories(window_s, periodic):
     than the whole sequence (about 20 s, from two 1 ms pulses and 3 s and 17 s gaps),
     for both `periodic` values."""
     seq = _pulse_train([3.0, 17.0])
-    ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
+    ours = rf_exposure.rf_exposure(seq, GAMMA_1H, periodic=periodic, b1rms_window_s=window_s)
     theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
     _assert_matches_oracle(ours, theirs)
 
@@ -216,7 +233,9 @@ def test_matches_oracle_on_random_pulse_trains(seed):
     )
     for window_s in windows:
         for periodic in (True, False):
-            ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
+            ours = rf_exposure.rf_exposure(
+                seq, GAMMA_1H, periodic=periodic, b1rms_window_s=window_s
+            )
             theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
             _assert_matches_oracle(ours, theirs)
 
@@ -255,7 +274,7 @@ def test_tie_at_window_end_matches_oracle_exactly():
     window_s = spacing  # a whole number (1) of the spacing
 
     for periodic in (True, False):
-        ours = rf_exposure.rf_exposure(seq, periodic=periodic, b1rms_window_s=window_s)
+        ours = rf_exposure.rf_exposure(seq, GAMMA_1H, periodic=periodic, b1rms_window_s=window_s)
         theirs = oracle.rf_exposure(seq, window_s=window_s, periodic=periodic)
         assert ours.b1rms_window_used_s == theirs.window_used_s
         assert ours.b1rms_window_ut == theirs.b1rms_window_ut
@@ -325,7 +344,7 @@ def test_search_candidates_match_brute_force_over_every_sample(seed):
     and for several window lengths."""
     rng = np.random.default_rng(1_000_000 + seed)
     seq = _small_random_pulse_train(rng)
-    train, duration = rf_exposure._pulse_train(seq)
+    train, duration = rf_exposure._pulse_train(seq, GAMMA_1H)
     if train.num_pulses == 0:
         pytest.skip("no RF pulses in this seed's train")
 

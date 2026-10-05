@@ -33,6 +33,121 @@ const ChartMath = (() => {
     return out;
   }
 
+  // ---- The value lanes of the diagram, from the units of the file to the units of the
+  // chart (decision P36 of docs/plans/pulseq-checks.md; waveforms.py gives the lanes) ----
+
+  // The exact decimal digits of |v| rounded to `digits` digits after the point (v finite,
+  // |v| < 1e15), half to even on the exact binary value, as Python's `round(v, digits)`:
+  // returns the integer n with |v| ~ n / 10^digits. `toFixed` is exact but rounds a tie up,
+  // so the digits are cut from a long expansion and the tie is decided here.
+  function _roundedScaled(v, digits) {
+    const [whole, fraction] = Math.abs(v).toFixed(60).split(".");
+    const kept = Number(whole + fraction.slice(0, digits));
+    const rest = fraction.slice(digits);
+    const first = rest.charCodeAt(0) - 48;
+    const more = /[1-9]/.test(rest.slice(1));
+    return first > 5 || (first === 5 && (more || kept % 2 === 1)) ? kept + 1 : kept;
+  }
+
+  // Returns |v| rounded to 4 decimals as Python's `round(float(v), 4)` does (a value of 1e15
+  // or more is returned as it is): the rounding of the peak of a value lane, as
+  // `markup._points` rounded the points of a lane in Python.
+  function _round4(v) {
+    const a = Math.abs(v);
+    return a < 1e15 ? _roundedScaled(a, 4) / 1e4 : a;
+  }
+
+  // Returns the text of v >= 0 as Python's `f"{v:.3g}"`: 3 significant digits (half to even
+  // on the exact binary value), no trailing zeros, and an exponent ("1.23e+03", "1.23e-05")
+  // when the exponent is below -4 or at least 3. `sig3` differs in these two points (it
+  // rounds a tie up and never writes an exponent).
+  function _g3(v) {
+    if (v === 0) return "0";
+    const [mantissa, exponentText] = v.toExponential(60).split("e");
+    const digits = mantissa.replace(".", "");
+    let head = Number(digits.slice(0, 3));
+    let exponent = Number(exponentText);
+    const first = digits.charCodeAt(3) - 48;
+    const more = /[1-9]/.test(digits.slice(4));
+    if (first > 5 || (first === 5 && (more || head % 2 === 1))) head += 1;
+    if (head === 1000) { head = 100; exponent += 1; }
+    const text = String(head);
+    const strip = fraction => fraction.replace(/0+$/, "");
+    if (exponent < -4 || exponent >= 3) {
+      const fraction = strip(text.slice(1));
+      const sign = exponent < 0 ? "-" : "+";
+      const power = String(Math.abs(exponent)).padStart(2, "0");
+      return `${text[0]}${fraction ? "." + fraction : ""}e${sign}${power}`;
+    }
+    const whole = exponent >= 0 ? text.slice(0, exponent + 1) : "0";
+    const fraction = strip(
+      exponent >= 0 ? text.slice(exponent + 1) : "0".repeat(-exponent - 1) + text);
+    return fraction ? `${whole}.${fraction}` : whole;
+  }
+
+  // Returns {domain, ticks, tick_labels} of a value lane whose largest absolute value is
+  // `peak` (>= 0, in the unit of the chart, rounded to 4 decimals): the rule that the diagram
+  // data had in Python (`_value_domain`) before it kept the units of the file. A peak of 0
+  // gives [-1, 1] with one tick at 0. A `symmetric` lane (signed values) has the domain
+  // +-1.1 * peak and the ticks -peak, 0 and peak. Another lane (a magnitude) has the domain
+  // [0, 1.1 * peak] and the ticks 0 and peak. A label has 3 significant digits (`_g3`), with
+  // the minus sign U+2212 for each hyphen (the sign of a negative tick, and of an exponent).
+  function valueDomain(peak, symmetric) {
+    if (peak === 0) return {domain: [-1, 1], ticks: [0], tick_labels: ["0"]};
+    const label = _g3(peak).replace("-", "\u2212");
+    if (symmetric) {
+      return {
+        domain: [-1.1 * peak, 1.1 * peak],
+        ticks: [-peak, 0, peak],
+        tick_labels: ["\u2212" + label, "0", label],
+      };
+    }
+    return {domain: [0, 1.1 * peak], ticks: [0, peak], tick_labels: ["0", label]};
+  }
+
+  // The unit of the chart of a value lane: the factor from the SI unit (T/m, T) to it.
+  const VALUE_UNIT_FACTOR = {"mT/m": 1e3, "\u00b5T": 1e6};
+
+  // Returns `lane`, a value lane whose values are in the units of the file (Hz/m for the unit
+  // "mT/m", Hz for "\u00b5T"), for the chart, with the gamma (Hz/T, signed) of the selected
+  // target. A lane without a boolean `symmetric` (the RF phase, the ADC gate) is returned as
+  // it is. Each value v becomes `v / g * factor` (g the divisor below, factor 1e3 for mT/m
+  // and 1e6 for \u00b5T): a `symmetric` lane is signed, so g = gamma and a negative gamma
+  // changes the sign; another lane holds magnitudes, so g = |gamma|. A `minmax` lane keeps its
+  // pairs (bin start, minimum) and (bin centre, maximum) in that order: the pair is sorted
+  // after the sign change. The lane gets the `domain`, `ticks` and `tick_labels` of
+  // `valueDomain` for its `peak` (the largest absolute value in the units of the file, from
+  // `lane_meta`) in the unit of the chart, rounded to 4 decimals, when it has a `peak`. A
+  // lane without a `peak` keeps the axis it has. The lane is not changed: the result has new
+  // `segments`.
+  function rescaleLane(lane, gamma) {
+    if (typeof lane.symmetric !== "boolean") return lane;
+    const factor = VALUE_UNIT_FACTOR[lane.unit];
+    if (factor === undefined) {
+      throw new Error(`rescaleLane: the lane "${lane.id}" has the unit "${lane.unit}"`);
+    }
+    if (!Number.isFinite(gamma) || gamma === 0) {
+      throw new Error(`rescaleLane: gamma must be finite and not 0, not ${gamma}`);
+    }
+    const divisor = lane.symmetric ? gamma : Math.abs(gamma);
+    const convert = v => v / divisor * factor;
+    const segments = lane.segments.map(segment => {
+      if (!lane.minmax) return segment.map(([t, v]) => [t, convert(v)]);
+      const out = [];
+      for (let i = 0; i + 1 < segment.length; i += 2) {
+        const a = convert(segment[i][1]), b = convert(segment[i + 1][1]);
+        out.push([segment[i][0], Math.min(a, b)], [segment[i + 1][0], Math.max(a, b)]);
+      }
+      return out;
+    });
+    const out = {...lane, segments};
+    if (lane.peak !== undefined) {
+      const peak = _round4(lane.peak / Math.abs(gamma) * factor);
+      Object.assign(out, valueDomain(peak, lane.symmetric));
+    }
+    return out;
+  }
+
   // Returns the value of `lane` at `t`. For a gate lane, that is "on" when t is in one of
   // its `windows` and "off" when it is not. For another lane, that is the value in the
   // first of its `segments` that covers t, linear between the two points that bracket t,
@@ -413,8 +528,8 @@ const ChartMath = (() => {
     return segments;
   }
 
-  return {fmt, sig3, segTree, minMaxSegments, niceTicks, valueAt, minMaxAt, tooltipRows,
-    visiblePoints, clampView, zoomView, panView, dragView, laneGroupMap, visibleLanes,
-    normalizeBand, markSpans, colorRamp, colorIndex, nearestIndex};
+  return {fmt, sig3, valueDomain, rescaleLane, segTree, minMaxSegments, niceTicks, valueAt,
+    minMaxAt, tooltipRows, visiblePoints, clampView, zoomView, panView, dragView,
+    laneGroupMap, visibleLanes, normalizeBand, markSpans, colorRamp, colorIndex, nearestIndex};
 })();
 if (typeof module !== "undefined") module.exports = ChartMath;

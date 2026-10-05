@@ -38,10 +38,8 @@ Tolerances, each with its reason (also see the module-level constants below):
 3. **Float rounding of the same arithmetic** (`_rel_tol_close`, `_rel_scalar`: relative
    1e-12 of the largest value of the array, or of the value itself for a scalar): the
    signal (`sigRe`, `sigIm` against `signal_hz`), the interval gradients (`grad_hz_per_m`;
-   JavaScript multiplies the diagram table's mT/m by 42576 Hz/m per mT/m where Python
-   divides pypulseq's Hz/m by the proton gamma (42.576e6 Hz/T) and multiplies by 1e3, so the
-   round trip differs from Python's direct value by a relative 2e-16 or so -- far inside the 1e-12
-   bound, as the measured differences below confirm), `direction`,
+   the diagram table keeps pypulseq's Hz/m, which JavaScript reads as they are, so the
+   two differ only by the rounding of the interval arithmetic), `direction`,
    `select_gradient_hz_per_m`, `slice_centre_m`, `flip_deg`, `peak_b1_ut`,
    `energy_ut2_ms`, a spec's `lo`/`hi` away from the spectrum-FWHM cases of rule 4, the
    grids, the combined `factor`, the line's `u`, and the maps' axes.

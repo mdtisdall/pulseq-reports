@@ -4,7 +4,8 @@ The values come only from the RF amplitudes in the sequence, so they do not
 depend on the scanner, the transmit coil or the patient. They are not SAR: the
 scanner computes SAR in W/kg itself. With `periodic=True` (the default), the
 sequence is taken as one period that repeats, for example one TR. With
-`periodic=False`, the sequence plays one time only.
+`periodic=False`, the sequence plays one time only. B1 is the amplitude in Hz divided by the
+magnitude of a gamma (Hz/T) that the caller gives: the gamma of a target, or of the sequence.
 
 The RF samples of each unique RF event are computed one time (`seq_index.rf_events`),
 and the pulses in play order come from the sequence index, so the time and the memory
@@ -23,7 +24,7 @@ import pypulseq as pp
 from pulseq_analysis.seq_index import rf_events, sequence_index
 from pulseq_analysis.seq_utils import hold_samples
 
-from .units import PROTON_GAMMA, hz_to_ut
+from .units import hz_to_ut
 
 B1RMS_WINDOW_S = 10.0  # averaging window (s) for the highest B1+rms
 
@@ -66,16 +67,16 @@ class _PulseTrain:
         return int(self.event.size)
 
 
-def _pulse_train(seq: pp.Sequence) -> tuple[_PulseTrain, float]:
-    """The pulse train of `seq`, and the duration of `seq` (s): the sum of the block
-    durations in play order, as the block starts are summed."""
+def _pulse_train(seq: pp.Sequence, gamma: float) -> tuple[_PulseTrain, float]:
+    """The pulse train of `seq` with B1 for `gamma` (Hz/T), and the duration of `seq` (s):
+    the sum of the block durations in play order, as the block starts are summed."""
     index = sequence_index(seq)
     # The file's raster ([DEFINITIONS]): `Sequence.read` does not change `seq.system`.
     raster = seq.rf_raster_time
     ev_n, ev_dt, ev_delay, ev_total, ev_peak, cums = [], [], [], [], [], []
     for _, rf in rf_events(seq, index):
         signal, dt = hold_samples(rf, raster)
-        b1_ut = hz_to_ut(np.abs(signal), PROTON_GAMMA)
+        b1_ut = hz_to_ut(np.abs(signal), gamma)
         energy = b1_ut**2 * dt
         cum = np.concatenate([[0.0], np.cumsum(energy)])
         ev_n.append(b1_ut.size)
@@ -272,10 +273,16 @@ def _exposure(train: _PulseTrain, duration: float, window_s: float, periodic: bo
 
 
 def rf_exposure(
-    seq: pp.Sequence, *, periodic: bool = True, b1rms_window_s: float = B1RMS_WINDOW_S
+    seq: pp.Sequence,
+    gamma: float,
+    *,
+    periodic: bool = True,
+    b1rms_window_s: float = B1RMS_WINDOW_S,
 ) -> RfExposure:
-    """Peak B1, ∫B1² dt and B1+rms of `seq`. With `periodic=True` (parity with vb-pulseq),
-    `seq` is treated as one period that repeats. With `periodic=False`, `seq` plays once;
-    see `_windowed_energy` for how that changes the highest-window search."""
-    train, duration = _pulse_train(seq)
+    """Peak B1, ∫B1² dt and B1+rms of `seq`, with B1 in µT for `gamma` (Hz/T; the
+    magnitude is used, so a negative gamma gives the values of its magnitude). With
+    `periodic=True` (parity with vb-pulseq), `seq` is treated as one period that repeats.
+    With `periodic=False`, `seq` plays once; see `_windowed_energy` for how that changes the
+    highest-window search."""
+    train, duration = _pulse_train(seq, gamma)
     return _exposure(train, duration, b1rms_window_s, periodic)
