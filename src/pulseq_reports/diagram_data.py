@@ -15,9 +15,10 @@ and O(unique events), not O(the file's points).
 import numpy as np
 import pypulseq as pp
 from pulseq_analysis.seq_index import adc_events, grad_events, rf_events, sequence_index
-from pulseq_analysis.seq_utils import GAMMA, gradient_offsets
+from pulseq_analysis.seq_utils import gradient_offsets
 
 from .markup import lanes_json
+from .units import PROTON_GAMMA
 from .waveforms import _AXES, _lanes, _rf_offsets
 
 CHECKPOINT_BLOCKS = 1024
@@ -124,7 +125,7 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
         grad_delay.append(float(delay))
         grad_n.append(offsets.size)
         grad_offset_at.append(grad_offset_pool.add(offsets))
-        grad_at.append(grad_value_pool.add(amp / GAMMA * 1e3))
+        grad_at.append(grad_value_pool.add(amp / PROTON_GAMMA * 1e3))
 
     adc_delay: list[float] = []
     adc_length: list[float] = []

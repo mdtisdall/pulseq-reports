@@ -17,6 +17,7 @@ from pulseq_reports import options
 from pulseq_reports.markup import html_table
 from pulseq_reports.page import Card, card_asset
 from pulseq_reports.registry import CardSpec, ReportContext
+from pulseq_reports.units import gamma_magnitude
 
 PUBLISHES = ("goto",)
 
@@ -33,13 +34,17 @@ def _pns_data(seq: pp.Sequence, *, gradient_asc: str | Path) -> dict:
     the stimulation limit and in ms. The card's body is written from it; it is not the
     card's own data (`_goto_data`)."""
     p = pns_prediction(seq, gradient_asc=gradient_asc)
+    # The prediction gives Hz/T (the fraction of the limit times |gamma|).
+    g = gamma_magnitude(seq.system.gamma)
     out = {
         "reason": p.reason,
         "hardware": p.hardware,
         "asc_file": p.asc_file,
-        "peak_percent": round(100 * p.peak, 2),
+        "peak_percent": round(100 * (p.peak_hz_per_t / g), 2),
         "peak_time_ms": round(p.peak_time_s * 1e3, 4) if p.peak_time_s is not None else None,
-        "axis_peaks_percent": {axis: round(100 * v, 2) for axis, v in p.axis_peaks.items()},
+        "axis_peaks_percent": {
+            axis: round(100 * (v / g), 2) for axis, v in p.axis_peaks_hz_per_t.items()
+        },
     }
     return out
 

@@ -21,7 +21,9 @@ from dataclasses import dataclass
 import numpy as np
 import pypulseq as pp
 from pulseq_analysis.seq_index import rf_events, sequence_index
-from pulseq_analysis.seq_utils import GAMMA, hold_samples
+from pulseq_analysis.seq_utils import hold_samples
+
+from .units import PROTON_GAMMA, hz_to_ut
 
 B1RMS_WINDOW_S = 10.0  # averaging window (s) for the highest B1+rms
 
@@ -73,7 +75,7 @@ def _pulse_train(seq: pp.Sequence) -> tuple[_PulseTrain, float]:
     ev_n, ev_dt, ev_delay, ev_total, ev_peak, cums = [], [], [], [], [], []
     for _, rf in rf_events(seq, index):
         signal, dt = hold_samples(rf, raster)
-        b1_ut = np.abs(signal) / GAMMA * 1e6
+        b1_ut = hz_to_ut(np.abs(signal), PROTON_GAMMA)
         energy = b1_ut**2 * dt
         cum = np.concatenate([[0.0], np.cumsum(energy)])
         ev_n.append(b1_ut.size)

@@ -4,15 +4,14 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from oracles import rf_exposure as oracle
-from pulseq_analysis import seq_utils
-from synthetic import SYSTEM, empty_sequence, gre_sequence, spin_echo_sequence
+from synthetic import GAMMA_1H, SYSTEM, empty_sequence, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import rf_exposure
 
 
 def _b1_ut(flip_rad: float, duration_s: float) -> float:
     """The constant B1 (µT) of a block pulse with this flip angle and duration."""
-    return (flip_rad / (2 * math.pi)) / duration_s / seq_utils.GAMMA * 1e6
+    return (flip_rad / (2 * math.pi)) / duration_s / GAMMA_1H * 1e6
 
 
 # B1 (µT) of a 1 ms 90° block pulse, and its ∫B1² dt (µT²·s).

@@ -2269,8 +2269,8 @@ percent and ms.
 
 **How:** The test computes `pns.pns_prediction` and `_pns_data` with the test `.asc` file for the
 synthetic spin echo sequence and checks `peak_percent`, `peak_time_ms` and each axis of
-`axis_peaks_percent` against the prediction's `peak`, `peak_time_s` and `axis_peaks`
-(scaled and converted), within the rounding the card applies.
+`axis_peaks_percent` against the prediction's `peak_hz_per_t`, `peak_time_s` and
+`axis_peaks_hz_per_t` (divided by |gamma| and converted), within the rounding the card applies.
 
 **Assumptions:** None.
 
@@ -2389,14 +2389,15 @@ one table for each `TimeWindow`
 (with the extra RMS column), the block and the time of each peak and max slew with
 its "Show" button, and the limits in the note.
 Every expected numeric cell is computed by hand from the trapezoid the test
-builds. The tests read the card's
+builds; the tests that read `gradient_limits` convert its Hz/m, Hz/m/s values with `GAMMA_1H`
+as the card does. The tests read the card's
 tables with Python's `html.parser` (`_CardParser`): the text of each cell, without a
 button's own text, and the attributes of each button. `LIMITS` is the limits of the
 test system (`SYSTEM.max_grad` and `SYSTEM.max_slew`); the card does not take limits
 from the sequence's system, so the tests that look at the percent columns give it.
 
 Since phase 4 of `docs/plans/cards-at-scale.md`, a window's "RMS over whole file" column comes
-from the one `gradient_limits` call's own `whole_rms_mt_per_m`, not a second call with
+from the one `gradient_limits` call's own `whole_rms_hz_per_m`, not a second call with
 `window=None`.
 
 #### `test_table_has_axis_rows_and_percents`
@@ -2920,13 +2921,13 @@ diagram card for the synthetic spin echo sequence with that `pns_lane` and check
 
 #### `test_pns_grad_scale_for_a_sequence_with_another_gyromagnetic_ratio`
 
-**Checks:** `gradScale = seq_utils.GAMMA / seq.system.gamma` (decision 14): not 1.0 for
+**Checks:** `gradScale = GAMMA_1H / seq.system.gamma` (decision 14): not 1.0 for
 a sequence built with a non-proton gyromagnetic ratio.
 
 **How:** The test builds a one-block x-trapezoid sequence on a system with
 `gamma=11.262e6` (sodium, the same value the golden test of task 4.5 uses), builds a
 diagram card with `pns_lane=True` and a test gradient `.asc` file, and checks the `"pns"` entry's `gradScale` equals
-`seq_utils.GAMMA / seq.system.gamma` and is not 1.0.
+`GAMMA_1H / seq.system.gamma` (`GAMMA_1H = 42.576e6` of `tests/synthetic.py`) and is not 1.0.
 
 **Assumptions:** None.
 
@@ -2944,12 +2945,14 @@ with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks tha
 #### `test_pns_levels_decode_back_to_pns_levels_for_exactly`
 
 **Checks:** The `"levels"` key of the `"pns"` entry, decoded, equals
-`pns.pns_levels_for(seq, gradient_asc=...)`'s own `level_min`/`level_max` exactly.
+`pns.pns_levels_for(seq, gradient_asc=...)`'s own `level_min_hz_per_t`/`level_max_hz_per_t`,
+divided by |gamma|, exactly.
 
 **How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic spin echo
 sequence, decodes the `"pns"` entry's `"levels"` with `pulseq_analysis.series.decode_array` for each array, and
 compares the two arrays' dtype (`float32`) and values (`numpy.array_equal`) against
-`pns.pns_levels_for(seq, gradient_asc=...).level_min`/`level_max` of the same file.
+`pns.pns_levels_for(seq, gradient_asc=...).level_min_hz_per_t`/`level_max_hz_per_t` of the same
+file, divided by |gamma|.
 
 **Assumptions:**
 
@@ -3950,7 +3953,7 @@ elsewhere.
 **Checks:** `view.gradHzPerValue` and the exported constant
 `SeqLanes.GRAD_HZ_PER_VALUE` both equal `42.576e6 * 1e-3`, the inverse of the
 factor `diagram_data.diagram_tables` uses to store gradient values in mT/m
-(`Hz/m / seq_utils.GAMMA * 1e3`, with `GAMMA = 42.576e6` Hz/T).
+(`Hz/m / PROTON_GAMMA * 1e3`, with `PROTON_GAMMA = 42.576e6` Hz/T).
 
 **How:** The test builds the hand model and checks
 `view.gradHzPerValue === 42.576e6 * 1e-3` and
@@ -4566,9 +4569,11 @@ itself runs (its own docstring, items 1 to 3), built again independently in this
 file, in a single call instead of `pns_levels`'s chunks: `GradientSampler.block_samples`
 of gx, gy and gz for the whole file, divided by `seq.system.gamma`, through pypulseq's
 `_safe_gwf_to_pns_chunk` (one chunk, `state=None`, example hardware), scaled by 0.01
-and combined as `sqrt(x^2 + y^2 + z^2)`. The pinned fork's chunk function is exact for
-any chunk size (lean on pypulseq, decision 6: not tested here), so the test also asserts
-`pns_levels(seq).peak == totals.max()` exactly, as a check that this file's one-call
+and combined as `sqrt(x^2 + y^2 + z^2)`. The pinned fork's chunk function does not depend
+on the chunk size (lean on pypulseq, decision 6: not tested here). `pulseq_analysis` divides
+by gamma after the SAFE model, and the reference before it, so the test is not exact: it
+also asserts `pns_levels(seq).peak_hz_per_t / abs(gamma) == totals.max()` to a relative
+1e-14, as a check that this file's one-call
 reference really is `pns_levels`'s own computation, not a second implementation of
 PNS.
 
@@ -4599,12 +4604,14 @@ would show on all three axes.
 
 For each sequence: `_run_golden` builds the diagram tables and `pns_levels(seq)`,
 takes the `pns` object of plan section 4.4 from `cards.diagram._pns_entry(seq, levels)`
-(with `gradScale = seq_utils.GAMMA / seq.system.gamma`, and `levels` encoded with
+(with `gradScale = GAMMA_1H / seq.system.gamma`, and `levels` encoded with
 `pulseq_analysis.series.encode_array` for each array, as float32), writes them, and runs
 `golden_pns_lanes.js`. The JS sample times are checked against `(k + 0.5) * dt` with
 exact array equality; the JS totals against the Python reference with
-`max(|diff|) <= 1e-12 * peak`; each stored bin's `level_min`/`max` against the min/max
-of the JS samples in that bin, with the same tolerance; and the pyramid level by
+`max(|diff|) <= 1e-12 * peak`; each stored bin's `level_min_hz_per_t`/`level_max_hz_per_t`,
+divided by |gamma|, against the min/max of the JS samples in that bin, with the same
+tolerance plus one float32 spacing of the stored value (the division rounds the float32
+level); and the pyramid level by
 level, with exact equality, against the level below it.
 
 **Assumptions:**
@@ -7735,5 +7742,37 @@ the other targets do not change.
 
 **How:** Three profiles, the second with the sodium gamma; the test compares the colors and
 the `supported` values.
+
+**Assumptions:** None.
+
+### 2.41 Units (`test_units.py`)
+
+`test_units.py` tests `units.py`: the proton gamma and the conversions from the units of a `.seq`
+file (Hz/m, Hz/m/s, Hz) to tesla units.
+
+#### `test_the_proton_gamma_is_the_default_gamma_of_pypulseq`
+
+**Checks:** `GAMMA_1H` of `tests/synthetic.py` and `units.PROTON_GAMMA` equal `pp.Opts().gamma`.
+
+**How:** Two equalities.
+
+**Assumptions:** The tests use `GAMMA_1H`, not `units.PROTON_GAMMA` (decision D17), so this
+test is the one link between them.
+
+#### `test_a_negative_gamma_gives_the_value_of_its_magnitude_for_a_number`
+
+**Checks:** For each conversion function, a negative gamma gives exactly the value of the positive
+gamma, for a float.
+
+**How:** Each of `hz_per_m_to_mt_per_m`, `hz_per_m_per_s_to_t_per_m_per_s` and `hz_to_ut` is called
+with 1234.5 and `-GAMMA_1H`, and with `GAMMA_1H`.
+
+**Assumptions:** None.
+
+#### `test_a_negative_gamma_gives_the_value_of_its_magnitude_for_an_array`
+
+**Checks:** The same as the test for a number, for a numpy array.
+
+**How:** The three functions with an array of three values; `numpy.array_equal` of the two results.
 
 **Assumptions:** None.

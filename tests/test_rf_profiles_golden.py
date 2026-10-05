@@ -39,8 +39,8 @@ Tolerances, each with its reason (also see the module-level constants below):
    1e-12 of the largest value of the array, or of the value itself for a scalar): the
    signal (`sigRe`, `sigIm` against `signal_hz`), the interval gradients (`grad_hz_per_m`;
    JavaScript multiplies the diagram table's mT/m by 42576 Hz/m per mT/m where Python
-   divides pypulseq's Hz/m by `seq_utils.GAMMA` and multiplies by 1e3, so the round trip
-   differs from Python's direct value by a relative 2e-16 or so -- far inside the 1e-12
+   divides pypulseq's Hz/m by the proton gamma (42.576e6 Hz/T) and multiplies by 1e3, so the
+   round trip differs from Python's direct value by a relative 2e-16 or so -- far inside the 1e-12
    bound, as the measured differences below confirm), `direction`,
    `select_gradient_hz_per_m`, `slice_centre_m`, `flip_deg`, `peak_b1_ut`,
    `energy_ut2_ms`, a spec's `lo`/`hi` away from the spectrum-FWHM cases of rule 4, the

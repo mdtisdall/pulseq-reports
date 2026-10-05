@@ -16,9 +16,10 @@ from dataclasses import dataclass
 import numpy as np
 import pypulseq as pp
 from pulseq_analysis.seq_index import block_cache_off, sequence_index
-from pulseq_analysis.seq_utils import GAMMA, gradient_points
+from pulseq_analysis.seq_utils import gradient_points
 
 from .markup import Lane, _points, fmt, lanes_json
+from .units import PROTON_GAMMA, hz_to_ut
 
 _AXES = ("gx", "gy", "gz")
 
@@ -89,7 +90,7 @@ def _rf_offsets(rf) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarr
     is `mag` above 1% of its peak."""
     rt = np.asarray(rf.t, dtype=float)
     signal = np.asarray(rf.signal, dtype=complex)
-    mag = np.abs(signal) / GAMMA * 1e6
+    mag = hz_to_ut(np.abs(signal), PROTON_GAMMA)
     phase = np.angle(signal * np.exp(1j * (rf.phase_offset + 2 * np.pi * rf.freq_offset * rt)))
     mag_offsets = np.concatenate([[0.0], rt, [rt[-1]]])
     mag_padded = np.concatenate([[0.0], mag, [0.0]])
@@ -118,7 +119,7 @@ def _block_events(block_id: int, t: float, duration: float, block) -> _BlockEven
         g = getattr(block, axis, None)
         if g is not None:
             gt, amp = gradient_points(g, t)
-            grads[axis] = (gt, amp / GAMMA * 1e3)
+            grads[axis] = (gt, amp / PROTON_GAMMA * 1e3)
             events.append(f"G{axis[1]} {g.type}")
 
     adc_window = None

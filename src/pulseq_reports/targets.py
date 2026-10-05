@@ -3,7 +3,7 @@ with its color on the page and whether the cards can use it.
 
 A report has at most `MAX_TARGETS` targets, with distinct names. Target `k` (from 1) has the
 color token `target-k` of `assets/report.css`, in the order that the caller gives. A target
-is supported when its gamma is the proton gamma (`GAMMA`), or when it gives no gamma:
+is supported when its gamma is the proton gamma (`PROTON_GAMMA`), or when it gives no gamma:
 pulseq-reports changes Hz into T only with the proton gamma. A card leaves out a target that
 is not supported, with its `reason` in a note. The check summary still shows its results.
 """
@@ -11,8 +11,9 @@ is not supported, with its `reason` in a note. The check summary still shows its
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pulseq_analysis.seq_utils import GAMMA
 from pulseq_checks import TargetProfile
+
+from .units import PROTON_GAMMA
 
 MAX_TARGETS = 6
 
@@ -53,10 +54,10 @@ def report_targets(profiles: Sequence[TargetProfile]) -> tuple[ReportTarget, ...
 
 def _report_target(profile: TargetProfile, color: str) -> ReportTarget:
     gamma = (profile.opts or {}).get("gamma")
-    if gamma is not None and gamma != GAMMA:
+    if gamma is not None and gamma != PROTON_GAMMA:
         reason = (
             f"the target gives the gamma {gamma:g} Hz/T, and pulseq-reports supports only the "
-            f"proton gamma ({GAMMA:g} Hz/T)"
+            f"proton gamma ({PROTON_GAMMA:g} Hz/T)"
         )
         return ReportTarget(profile, color, supported=False, reason=reason)
     return ReportTarget(profile, color, supported=True, reason=None)

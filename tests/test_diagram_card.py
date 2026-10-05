@@ -2,9 +2,8 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from pulseq_analysis.pns import pns_levels_for
-from pulseq_analysis.seq_utils import GAMMA
 from pulseq_analysis.series import decode_array
-from synthetic import empty_sequence, gre_sequence, spin_echo_sequence
+from synthetic import GAMMA_1H, empty_sequence, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import page
 from pulseq_reports.cards.diagram import diagram_card
@@ -15,7 +14,7 @@ from pulseq_reports.waveforms import TimeWindow, duration_s, first_adc_window, f
 
 def _sodium_gradient_sequence() -> pp.Sequence:
     """A one-block x trapezoid on a system with the gyromagnetic ratio of sodium
-    (11.262e6 Hz/T), so `gradScale = seq_utils.GAMMA / seq.system.gamma` (decision 14
+    (11.262e6 Hz/T), so `gradScale = the proton gamma (42.576e6) / seq.system.gamma` (decision 14
     of `docs/plans/diagram-lanes.md`) is not 1.0."""
     system = pp.Opts(
         max_grad=28,
@@ -213,13 +212,13 @@ def test_pns_lane_that_is_not_a_bool_raises_type_error(pns_lane):
 
 
 def test_pns_grad_scale_for_a_sequence_with_another_gyromagnetic_ratio(write_gradient_asc):
-    """`gradScale = seq_utils.GAMMA / seq.system.gamma` (decision 14): not 1.0 for a
+    """`gradScale = the proton gamma (42.576e6) / seq.system.gamma` (decision 14): not 1.0 for a
     sequence built with a non-proton gyromagnetic ratio (here sodium, 11.262e6 Hz/T, as
     in the golden test of task 4.5)."""
     seq = _sodium_gradient_sequence()
     card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
     file_entry = card.data["file"]
-    assert file_entry["pns"]["gradScale"] == pytest.approx(GAMMA / seq.system.gamma)
+    assert file_entry["pns"]["gradScale"] == pytest.approx(GAMMA_1H / seq.system.gamma)
     assert file_entry["pns"]["gradScale"] != 1.0
 
 
@@ -231,9 +230,10 @@ def test_pns_without_gradients_adds_no_pns_key(write_gradient_asc):
 
 
 def test_pns_levels_decode_back_to_pns_levels_for_exactly(write_gradient_asc):
-    """The `"levels"` key of the `"pns"` entry, decoded, equals the `level_min`/
-    `level_max` of `pns.pns_levels_for(seq, gradient_asc=...)` exactly (the same values, encoded and
-    decoded with `pulseq_analysis.series.encode_array`/`decode_array`)."""
+    """The `"levels"` key of the `"pns"` entry, decoded, equals the `level_min_hz_per_t`/
+    `level_max_hz_per_t` of `pns.pns_levels_for(seq, gradient_asc=...)`, divided by |gamma|,
+    exactly (the same values, encoded and decoded with
+    `pulseq_analysis.series.encode_array`/`decode_array`)."""
     seq = spin_echo_sequence()
     path = write_gradient_asc()
     card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
@@ -243,8 +243,9 @@ def test_pns_levels_decode_back_to_pns_levels_for_exactly(write_gradient_asc):
     levels = pns_levels_for(seq, gradient_asc=path)
     assert decoded["min"].dtype == np.float32
     assert decoded["max"].dtype == np.float32
-    assert np.array_equal(decoded["min"], levels.level_min)
-    assert np.array_equal(decoded["max"], levels.level_max)
+    g = abs(seq.system.gamma)
+    assert np.array_equal(decoded["min"], levels.level_min_hz_per_t / g)
+    assert np.array_equal(decoded["max"], levels.level_max_hz_per_t / g)
 
 
 # ---- lane groups (docs/plans/diagram-lanes.md, section 4.5, item 3): the

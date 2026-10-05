@@ -10,8 +10,8 @@ dependencies = [
     "pypulseq>=1.5.0.post1",
     "numpy",
     "scipy",
-    "pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc3",
-    "pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc2",
+    "pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc5",
+    "pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc5",
 ]
 
 [project.scripts]

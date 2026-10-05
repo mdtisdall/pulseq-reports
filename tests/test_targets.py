@@ -1,7 +1,7 @@
 import dataclasses
 
 import pytest
-from pulseq_analysis.seq_utils import GAMMA
+from synthetic import GAMMA_1H
 
 from pulseq_reports.targets import MAX_TARGETS, ReportTarget, report_targets
 
@@ -54,7 +54,7 @@ def test_a_gamma_that_is_not_the_proton_gamma_is_not_supported(make_profile):
 
 
 def test_the_proton_gamma_and_no_gamma_are_supported(make_profile):
-    proton = make_profile("proton", f"gamma = {GAMMA!r}")
+    proton = make_profile("proton", f"gamma = {GAMMA_1H!r}")
     no_gamma = make_profile("no-gamma", "max_grad = 30")
     no_opts = make_profile("no-opts")
     assert no_opts.opts is None or "gamma" not in no_opts.opts

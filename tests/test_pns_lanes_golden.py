@@ -36,9 +36,9 @@ more than `3 * PnsLanes.GROUP_BLOCKS` (192) blocks, so the golden test crosses m
 would show on all three, not just one.
 
 The gamma case needs `PnsLanes.decode` to read `pns.gradScale`: the diagram tables
-always hold gradients in mT/m under the fixed proton `seq_utils.GAMMA`
-(`diagram_data.diagram_tables`), so a sequence of another nucleus needs `gradScale =
-GAMMA / seq.system.gamma` to recover T/m (plan section 4.4, decision 14).
+always hold gradients in mT/m under the fixed proton gamma (`GAMMA_1H` of `synthetic.py`)
+(`diagram_data.diagram_tables`), so a sequence of another nucleus needs
+`gradScale = GAMMA_1H / seq.system.gamma` to recover T/m (plan section 4.4, decision 14).
 """
 
 import json
@@ -185,25 +185,34 @@ def test_pns_lanes_exact_view_and_levels_match_the_python_pipeline(builder, tmp_
     diagram tables and `pns` object, give the same whole-file PNS total, at the same
     sample times, as the Python `pns_levels` pipeline (`_python_reference_totals`),
     within a relative 1e-12 of the peak (plan section 3.5, item 1); the stored level
-    (`pns_levels`'s `level_min`/`level_max`) bounds every one of those JS exact
-    samples in its own bin; and each level of the decoded pyramid (`PnsLanes.levels`)
-    is exactly the minimum/maximum of the 4 bins of the level below it.
+    (`pns_levels`'s `level_min_hz_per_t`/`level_max_hz_per_t`, divided by |gamma|) bounds
+    every one of those JS exact samples in its own bin; and each level of the decoded
+    pyramid (`PnsLanes.levels`) is exactly the minimum/maximum of the 4 bins of the level
+    below it.
     """
     seq = builder()
     ref_totals = _python_reference_totals(seq)
 
     output, levels = _run_golden(seq, tmp_path)
 
-    assert levels.peak == ref_totals.max(), (
-        "pns_levels's chunked peak does not exactly equal the one-call reference's "
-        "max: the fork's chunk function should be exact for any chunk size"
+    # pulseq-analysis gives Hz/T: the fraction times |gamma|. Divided by |gamma| it is the fraction
+    # of the reference. The reference divides the gradient by gamma BEFORE the SAFE model, and
+    # pulseq-analysis divides AFTER it, so the two peaks can differ by a few float64 roundings:
+    # they are equal to a relative 1e-14 (measured: 1e-15 holds), not exactly.
+    g = abs(seq.system.gamma)
+    peak_fraction = levels.peak_hz_per_t / g
+    level_min = levels.level_min_hz_per_t / g
+    level_max = levels.level_max_hz_per_t / g
+    assert peak_fraction == pytest.approx(ref_totals.max(), rel=1e-14, abs=0), (
+        "pns_levels's chunked peak does not equal the one-call reference's max to a relative "
+        "1e-14: the fork's chunk function should not depend on the chunk size"
     )
     assert output["onRaster"] is True, "sequence is not on the gradient raster"
     assert output["numSamples"] == levels.num_samples == ref_totals.shape[0]
 
     dt = levels.dt_s
     num_samples = levels.num_samples
-    peak = levels.peak or 1.0  # an all-zero file's tolerance would else be zero itself
+    peak = peak_fraction or 1.0  # an all-zero file's tolerance would else be zero itself
 
     t = np.asarray(output["t"], dtype=np.float64)
     total = np.asarray(output["total"], dtype=np.float64)
@@ -230,17 +239,21 @@ def test_pns_lanes_exact_view_and_levels_match_the_python_pipeline(builder, tmp_
     # filter versus the JavaScript block maps -- so they can differ by that much).
     bin_samples = levels.bin_samples
     slack = 1e-12 * peak
-    for i in range(len(levels.level_min)):
+    for i in range(len(level_min)):
         s0 = i * bin_samples
         s1 = min(s0 + bin_samples, num_samples)
         segment = total[s0:s1]
         js_min = float(segment.min())
         js_max = float(segment.max())
-        assert float(levels.level_min[i]) <= js_min + slack, (
-            f"bin {i}: stored level_min {levels.level_min[i]!r} > JS min {js_min!r} + slack"
+        # `level_min_hz_per_t` is float32 and bounds its bin in Hz/T. Divided by |gamma|
+        # (float32 / float, rounded to the nearest float32) it can pass the bound by half a
+        # float32 spacing, so each comparison also allows one float32 spacing of the stored
+        # value.
+        assert float(level_min[i]) <= js_min + slack + float(np.spacing(level_min[i])), (
+            f"bin {i}: stored level_min {level_min[i]!r} > JS min {js_min!r} + slack"
         )
-        assert float(levels.level_max[i]) >= js_max - slack, (
-            f"bin {i}: stored level_max {levels.level_max[i]!r} < JS max {js_max!r} - slack"
+        assert float(level_max[i]) >= js_max - slack - float(np.spacing(level_max[i])), (
+            f"bin {i}: stored level_max {level_max[i]!r} < JS max {js_max!r} - slack"
         )
 
     # The pyramid: level L + 1 is exactly the minimum/maximum of up to 4 bins of
