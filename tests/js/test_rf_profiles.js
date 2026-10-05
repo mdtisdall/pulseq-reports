@@ -11,12 +11,11 @@ const R = require(
 // `RfProfiles` reads a sequence view (the methods of `SeqLanes.sequenceView`) and the
 // file data of the card (`RfProfiles.fileData` over the columns of
 // `cards.rf_profile.rf_table`). The tests build both by hand: `newSeq` collects RF rows,
-// gradient events (mT/m, as the diagram tables keep them), ADC events and blocks, and
+// gradient events (Hz/m, as the diagram tables keep them), ADC events and blocks, and
 // `build` returns {view, file}. The pulses and gradients follow the Python tests
 // (tests/test_rf_profiles.py): a 1 ms sinc of 200 samples at 5 µs from 100 µs, on a
 // trapezoid whose flat top holds the whole RF.
 
-const HZ_PER_VALUE = 42576; // SeqLanes.GRAD_HZ_PER_VALUE: mT/m of the tables to Hz/m
 const W = 5e-3; // m, the SliceThickness definition
 const SINC_N = 200;
 const SINC_DT = 5e-6;
@@ -26,14 +25,8 @@ const CRUSHER = 4 / W; // 1/m: four cycles across W
 const GX = 250 / 640e-6; // Hz/m: the readout amplitude
 const TO_CENTRE = GX * (100e-6 / 2 + 320e-6); // 1/m: readout moment to the ADC centre
 
-// The amplitude (Hz/m) that the module reads back from a value in mT/m.
-function seen(hzPerM) {
-  return (hzPerM / HZ_PER_VALUE) * HZ_PER_VALUE;
-}
-
 function trap(amp, rise, flat, fall = rise, delay = 0) {
-  const v = amp / HZ_PER_VALUE;
-  return {delay, offsets: [0, rise, rise + flat, rise + flat + fall], values: [0, v, v, 0]};
+  return {delay, offsets: [0, rise, rise + flat, rise + flat + fall], values: [0, amp, amp, 0]};
 }
 
 function hardShape(flip, n, dt) {
@@ -106,7 +99,6 @@ function fakeView(blocks, grads, adcs, rows) {
     },
     gradEvent: k => ({delayS: grads[k - 1].delay, offsetsS: Float64Array.from(grads[k - 1].offsets),
       values: Float64Array.from(grads[k - 1].values)}),
-    gradHzPerValue: HZ_PER_VALUE,
     adcEvent: k => ({delayS: adcs[k - 1].delay, lengthS: adcs[k - 1].length}),
     rfDelayS: k => rows[k - 1].delay,
   });
@@ -162,7 +154,7 @@ function newSeq({thickness = W, fov = null} = {}) {
     build() {
       const first = blocks.findIndex(b => b.rf);
       const entry = {labeled: true, slice_thickness_m: thickness, fov_m: fov,
-        b0_t: 3, gamma_hz_per_t: 42.576e6, first_rf_block: first < 0 ? null : first};
+        b0_t: 3, gamma_hz_per_t: 42576000, first_rf_block: first < 0 ? null : first};
       return {view: fakeView(blocks, grads, adcs, rows), file: R.fileData(entry, rfTables(rows))};
     },
   };
@@ -211,8 +203,8 @@ function turning({fov = null, thickness = W} = {}) {
     const t = (k + 0.5) * 10e-6;
     const env = A * Math.sin((Math.PI * t) / T);
     offsets.push(t);
-    vx.push((env * Math.cos((2 * Math.PI * t) / T)) / HZ_PER_VALUE);
-    vy.push((env * Math.sin((2 * Math.PI * t) / T)) / HZ_PER_VALUE);
+    vx.push(env * Math.cos((2 * Math.PI * t) / T));
+    vy.push(env * Math.sin((2 * Math.PI * t) / T));
   }
   offsets.push(T); vx.push(0); vy.push(0);
   const row = seq.rf({use: "excitation", delay: RF_DELAY, dt: SINC_DT, re: hardShape(Math.PI / 6, 160, SINC_DT)});
@@ -401,7 +393,7 @@ test("test_interval_values_of_a_trapezoid_equal_the_hand_means", () => {
     gz: seq.grad(trap(amp, rise, flat))});
   const {view, file} = seq.build();
   const pulse = R.blockPulse(view, file, 0);
-  const A = seen(amp);
+  const A = amp;
   const value = k => pulse.grad[3 * k + 2];
   const interval = k => [60e-6 + k * dt, 60e-6 + (k + 1) * dt];
   const rampUp = t => (A * t) / rise;
@@ -431,7 +423,7 @@ test("test_gradient_kinds_none_one_oblique_and_changing", () => {
   seq.pulse("excitation", Math.PI / 2);
   seq.pulse("excitation", Math.PI / 2, {scale: {gx: 0.6, gy: 0.8}});
   const {view, file} = seq.build();
-  const G = seen(SINC_BW / W);
+  const G = SINC_BW / W;
 
   // No gradient: kind "none", nothing else.
   const none = R.blockPulse(view, file, 0);
@@ -476,7 +468,7 @@ test("test_views_for_each_kind", () => {
   const withW = R.blockPulse(view, file, 0);
   assert.deepEqual(withW.notes, []);
   const c = withW.sliceCentreM;
-  assertClose(c, 800 / seen(SINC_BW / W), 1e-12 * c);
+  assertClose(c, 800 / (SINC_BW / W), 1e-12 * c);
   assert.equal(c, 800 / withW.selectGradientHzPerM);
   assert.deepEqual(R.viewSpec(withW).spec.axes, [{kind: "z", lo: c - 2 * W, hi: c + 2 * W, n: 401}]);
 
@@ -994,7 +986,7 @@ test("test_file_data_checks_the_rf_table", () => {
   // another length; the pools may have another length than the columns.
   const {file} = spinEcho("gy");
   const entry = {labeled: true, slice_thickness_m: null, fov_m: [0.2, 0.2, 0.01],
-    b0_t: 3, gamma_hz_per_t: 42.576e6, first_rf_block: 0};
+    b0_t: 3, gamma_hz_per_t: 42576000, first_rf_block: 0};
   const data = R.fileData(entry, file.rf);
   assert.deepEqual([data.sliceThicknessM, data.fovM, data.firstRfBlock], [null, [0.2, 0.2, 0.01], 0]);
   assert.ok(Object.isFrozen(data));

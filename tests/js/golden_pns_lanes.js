@@ -2,7 +2,7 @@
 // tests/test_pns_lanes_golden.py (the Python half) writes a JSON file with one
 // sequence's encoded diagram tables and one entry of the `file.pns` list of the diagram
 // data (docs/plans/pulseq-checks-implementation.md, section 4.7); this script decodes
-// both, builds a `PnsLanes` model (with `SeqLanes.GRAD_HZ_PER_VALUE`), asks `exactView`
+// both, builds a `PnsLanes` model, asks `exactView`
 // for the whole file (forced to the "samples" kind by a bin count far larger than the
 // sample count, so every sample comes back, never a minimum/maximum reduction), and
 // writes the sample times, the totals as percent of the threshold of the entry
@@ -106,7 +106,7 @@ function main() {
     },
   };
 
-  const model = PnsLanes.decode(tables, pns, SeqLanes.GRAD_HZ_PER_VALUE);
+  const model = PnsLanes.decode(tables, pns);
 
   const numSamples = model.numSamples;
   // A range and a bin count that together force exactView's "samples" kind

@@ -11,6 +11,12 @@
 // its point count. `minMaxLanes` gives the minimum/maximum view (section
 // 4.4, item 2), from the group tree of section 4.5 that `decode` builds, and
 // `lanesFor` chooses between the two views for each render (item 3).
+//
+// The tables keep the units of the file: the gradient values are in Hz/m and the RF
+// magnitude in Hz, with no gamma, so the value lanes of every function here are in those
+// units, and the metadata of a value lane has its `peak` and `symmetric`, not a domain.
+// The card changes the lanes into mT/m and µT with the gamma that the viewer selects
+// (`ChartMath.rescaleLane`).
 
 // In Node, `require` chart_math.js and make it available as the bare global `ChartMath`,
 // as the browser already has it: page.py loads chart_math.js in its own <script> element
@@ -27,14 +33,6 @@ const SeqLanes = (() => {
   // not walk the blocks. It reads whole groups from a tree instead, and
   // touches single blocks only in the two groups that a bin's edges cut.
   const GROUP_BLOCKS = 64;
-
-  // The factor from the diagram's gradient values (mT/m, computed by
-  // diagram_data.diagram_tables as Hz/m / seq_utils.GAMMA * 1e3, with the
-  // proton gamma GAMMA = 42.576e6 Hz/T) back to Hz/m: GAMMA * 1e-3, which is
-  // 42576 (docs/plans/rf-profiles.md, section 4.1). The integer literal is
-  // exact; a value converted back differs from pypulseq's Hz/m only by the
-  // rounding of the division in Python.
-  const GRAD_HZ_PER_VALUE = 42576;
 
   // The table names of section 4.2. `decode` accepts only these (and
   // requires all of them), so that a page with data for a later format
@@ -366,7 +364,7 @@ const SeqLanes = (() => {
   // uses only this object: never `model` or `model.tables` directly, so it
   // never depends on how a model is built or laid out. `gradEvent` hands out
   // subarray views straight over the gradient pools (no copy): a caller must
-  // not change `offsetsS` or `values`.
+  // not change `offsetsS` or `values` (Hz/m).
   function sequenceView(model) {
     const tb = model.tables;
     return Object.freeze({
@@ -399,7 +397,6 @@ const SeqLanes = (() => {
           values: tb.grad_value.subarray(at, at + n),
         };
       },
-      gradHzPerValue: GRAD_HZ_PER_VALUE,
       adcEvent(k) {
         _checkEventIndex(k, tb.adc_delay.length, "ADC");
         const idx = k - 1;
@@ -1157,6 +1154,6 @@ const SeqLanes = (() => {
   }
 
   return {decode, blockStart, blockAt, exactLanes, minMaxLanes, lanesFor, pointsIn,
-    sequenceView, EXACT_POINT_LIMIT, GRAD_HZ_PER_VALUE};
+    sequenceView, EXACT_POINT_LIMIT};
 })();
 if (typeof module !== "undefined") module.exports = SeqLanes;

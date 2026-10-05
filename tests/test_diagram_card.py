@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pypulseq as pp
 import pytest
 from pulseq_analysis.series import decode_array
 from pulseq_checks import read_profile, run_checks
@@ -41,15 +42,15 @@ def _pns_card(seq, profiles, tmp_path, **kwargs):
     )
 
 
-def test_data_has_format_3_with_file_and_window_keys():
+def test_data_has_format_4_with_file_and_window_keys():
     seq = spin_echo_sequence()
     card = diagram_card(seq, [first_adc_window(seq), full_window(seq)])
     data = card.data
 
     assert set(data) == {"format", "file", "windows"}
-    assert data["format"] == 3
+    assert data["format"] == 4
     file_entry = data["file"]
-    assert set(file_entry) == {"duration_s", "num_blocks", "lanes", "tables"}
+    assert set(file_entry) == {"duration_s", "num_blocks", "lanes", "gamma", "tables"}
     assert file_entry["lanes"] == lane_meta(seq)
     assert file_entry["duration_s"] == duration_s(seq)
     assert file_entry["num_blocks"] == len(seq.block_events)
@@ -59,6 +60,74 @@ def test_data_has_format_3_with_file_and_window_keys():
     assert len(data["windows"]) == 2
     for window in data["windows"]:
         assert set(window) == {"label", "view_ms"}
+
+
+def _units_of_the_file(seq):
+    """The peak of the RF magnitude (Hz) and the peaks of the gradient axes (Hz/m) of `seq`,
+    from pypulseq's events."""
+    rf_peak = 0.0
+    grad_peak = {"gx": 0.0, "gy": 0.0, "gz": 0.0}
+    for block_id in seq.block_events:
+        block = seq.get_block(block_id)
+        if block.rf is not None:
+            rf_peak = max(rf_peak, float(np.max(np.abs(block.rf.signal))))
+        for axis, peak in grad_peak.items():
+            event = getattr(block, axis)
+            if event is not None:
+                values = event.waveform if event.type == "grad" else [event.amplitude]
+                grad_peak[axis] = max(peak, float(np.max(np.abs(values))))
+    return rf_peak, grad_peak
+
+
+def test_the_tables_and_the_lane_peaks_are_in_the_units_of_the_file():
+    seq = spin_echo_sequence()
+    card = diagram_card(seq, [full_window(seq)])
+    file_entry = card.data["file"]
+    rf_peak, grad_peak = _units_of_the_file(seq)
+
+    tables = {name: decode_array(d) for name, d in file_entry["tables"].items()}
+    assert np.max(tables["rf_mag"]) == pytest.approx(rf_peak, rel=1e-12)
+    assert np.max(np.abs(tables["grad_value"])) == pytest.approx(max(grad_peak.values()), rel=1e-12)
+    peaks = {lane["id"]: lane["peak"] for lane in file_entry["lanes"] if "peak" in lane}
+    assert peaks == {
+        "rf_mag": pytest.approx(rf_peak, rel=1e-12),
+        **{axis: pytest.approx(peak, rel=1e-12) for axis, peak in grad_peak.items()},
+    }
+
+
+def test_without_targets_the_gamma_is_the_gamma_of_the_sequence():
+    seq = spin_echo_sequence()
+    card = diagram_card(seq, [full_window(seq)])
+    assert card.data["file"]["gamma"] == [{"gamma": seq.system.gamma, "names": []}]
+    assert "data-gamma-choice" not in card.body_html
+
+    other = pp.Sequence(pp.Opts(gamma=-11.777e6))
+    other.add_block(pp.make_delay(1e-3))
+    card = diagram_card(other, [full_window(other)])
+    assert card.data["file"]["gamma"] == [{"gamma": -11.777e6, "names": []}]
+
+
+def test_the_gamma_entries_are_the_signed_gammas_of_the_targets_and_the_tables_do_not_change():
+    seq = spin_echo_sequence()
+    windows = [full_window(seq)]
+    plain = diagram_card(seq, windows)
+
+    same = diagram_card(seq, windows, targets=report_targets([A, B]))
+    (entry,) = same.data["file"]["gamma"]
+    assert entry == {"gamma": A.make_opts().gamma, "names": [A.name, B.name]}
+    assert "data-gamma-choice" not in same.body_html
+    assert same.script == "diagram"
+
+    card = diagram_card(seq, windows, targets=report_targets([C, A, B]))
+    negative, positive = card.data["file"]["gamma"]
+    assert negative == {"gamma": C.make_opts().gamma, "names": [C.name]}
+    assert negative["gamma"] < 0
+    assert positive == {"gamma": A.make_opts().gamma, "names": [A.name, B.name]}
+    assert card.body_html.count("data-gamma-choice=") == 2
+    assert card.script == "diagram"
+    # The gradient values and the RF magnitude stay in Hz/m and Hz for every gamma.
+    assert card.data["file"]["tables"] == plain.data["file"]["tables"]
+    assert card.data["file"]["lanes"] == plain.data["file"]["lanes"]
 
 
 def test_tables_decode_to_diagram_tables():

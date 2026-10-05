@@ -33,9 +33,8 @@
 // holds `n_i = round(duration_i / dt)` gradient-raster samples, at the local
 // times `(j + 0.5) * dt` from the block start. The gradient of one axis in a
 // block is the event's points at `grad_delay + grad_offset` (s, from the
-// block start), with values `grad_value * gradHzPerValue` (Hz/m;
-// `SeqLanes.GRAD_HZ_PER_VALUE` changes the mT/m of the tables back into Hz/m), linear
-// between points, 0 before the first point and after
+// block start), with values `grad_value` (Hz/m: the tables keep the units of the file),
+// linear between points, 0 before the first point and after
 // the last, 0 for a block with no event on the axis. This
 // agrees with pypulseq for a sequence that pypulseq accepts: pypulseq's own
 // `get_gradients` draws a line across the gap between two events (0 to the
@@ -71,16 +70,13 @@ const PnsLanes = (() => {
   // event): the samples g[j] (Hz/m) of one gradient event, for a
   // block of `n` samples starting where the event's own delay/offset times
   // are measured from (the block start). Linear interpolation between the
-  // event's points (delay + offset[p], value[p] * scale), 0
-  // before the first point and after the last. `scale` is `gradHzPerValue`
-  // (the factor from the mT/m of the tables to Hz/m), passed in as a plain
-  // argument (a local, not an object
-  // property read inside the loop). Sample times and point times are both
+  // event's points (delay + offset[p], value[p]), 0
+  // before the first point and after the last. Sample times and point times are both
   // non-decreasing, so one sequential merge (not a binary search per
   // sample) computes all n samples in O(n + point count). Reads only
   // grad_delay, grad_n, grad_offset_at, grad_at, grad_offset, grad_value
   // (the tables this module needs).
-  function _eventSamples(tables, dt, eventIdx, n, scale) {
+  function _eventSamples(tables, dt, eventIdx, n) {
     const idx = eventIdx - 1;
     const delay = tables.grad_delay[idx];
     const nPts = tables.grad_n[idx];
@@ -97,12 +93,12 @@ const PnsLanes = (() => {
       const t0 = delay + offset[offAt + p];
       if (t < t0) { g[j] = 0; continue; }
       if (p + 1 >= nPts) {
-        g[j] = t <= t0 ? value[valAt + p] * scale : 0;
+        g[j] = t <= t0 ? value[valAt + p] : 0;
         continue;
       }
       const t1 = delay + offset[offAt + p + 1];
-      const v0 = value[valAt + p] * scale;
-      const v1 = value[valAt + p + 1] * scale;
+      const v0 = value[valAt + p];
+      const v1 = value[valAt + p + 1];
       // The `while` above stops with t0 <= t < t1, so t1 > t0.
       g[j] = v0 + (v1 - v0) / (t1 - t0) * (t - t0);
     }
@@ -147,7 +143,7 @@ const PnsLanes = (() => {
     const cache = model._eventCache;
     let entry = cache.get(key);
     if (entry !== undefined) return entry;
-    const g = _eventSamples(model.tables, model.dt, eventIdx, n, model.gradHzPerValue);
+    const g = _eventSamples(model.tables, model.dt, eventIdx, n);
     const h = _zeroStateResponse(model, axis, g, n);
     entry = { g, h };
     cache.set(key, entry);
@@ -220,18 +216,13 @@ const PnsLanes = (() => {
   // rule). `pns`: one entry of the diagram data's `file.pns`, with
   // its levels already decoded by the caller: {dtS, binSamples, threshold, hw: {x, y,
   // z: {tau1, tau2, tau3, a1, a2, a3, stim_limit, g_scale}}, levels: {min,
-  // max}}. The levels and `threshold` are in Hz/T. `gradHzPerValue` is the factor from
-  // the gradient values of the tables to Hz/m (`SeqLanes.GRAD_HZ_PER_VALUE`): every
-  // gradient sample is multiplied by it (`_eventSamples`) before the SAFE model, which
-  // then gives totals in Hz/T, as pulseq-analysis does. Throws when `threshold` is not
-  // a number above 0, or `gradHzPerValue` is not a finite number.
-  function decode(tables, pns, gradHzPerValue) {
+  // max}}. The levels and `threshold` are in Hz/T. The gradient values of the tables are
+  // in Hz/m, and the SAFE model runs on them (`_eventSamples`) and gives totals in Hz/T, as
+  // pulseq-analysis does. Throws when `threshold` is not a number above 0.
+  function decode(tables, pns) {
     const dt = pns.dtS;
     if (!(pns.threshold > 0) || !Number.isFinite(pns.threshold)) {
       throw new Error(`PnsLanes.decode: threshold must be a number above 0, not ${pns.threshold}`);
-    }
-    if (!Number.isFinite(gradHzPerValue)) {
-      throw new Error(`PnsLanes.decode: gradHzPerValue must be a number, not ${gradHzPerValue}`);
     }
     const numBlocks = tables.duration_index.length;
     const numGradEvents = tables.grad_n.length;
@@ -265,7 +256,6 @@ const PnsLanes = (() => {
     const model = {
       numBlocks,
       dt,
-      gradHzPerValue,
       threshold: pns.threshold,
       groupBlocks: GROUP_BLOCKS,
       numGradEvents,

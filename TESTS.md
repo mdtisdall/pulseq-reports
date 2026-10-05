@@ -699,7 +699,10 @@ picks the points of one line segment that the chart must actually draw for
 the current view, `clampView` moves and, if needed, widens a view so it fits
 inside a chart's extent, `zoomView` zooms a view by a factor about an
 anchor, `panView` shifts a view by a fixed amount, and `dragView` turns the
-two ends of a drag into a view. `laneGroupMap` turns a `laneChart` `groups`
+two ends of a drag into a view. `valueDomain` gives the domain, ticks and tick labels of a value
+lane of the diagram for a peak, and `rescaleLane` changes such a lane from the units of the file
+(Hz/m, Hz) into the units of the chart (mT/m, µT) for the gamma of the selected target
+(`docs/plans/pulseq-checks-implementation.md`, section 4.7b). `laneGroupMap` turns a `laneChart` `groups`
 option into a Map from lane id to group id, and `visibleLanes` filters a
 list of lanes down to those of a visible group (`lane_chart.js`'s
 lane-group support, `docs/plans/diagram-lanes.md` section 4.5 item 3). `colorRamp` builds an n-color ramp linear between a list of
@@ -1542,6 +1545,91 @@ checks the result is 0.
 
 **Assumptions:** None beyond the file's assumptions.
 
+#### `test_value_domain_is_the_rule_of_the_python_value_lane`
+
+**Checks:** `valueDomain(peak, symmetric)` gives the domain, the ticks and the tick labels that
+`waveforms._value_domain(peak, symmetric)` gave when Python calculated them (before the diagram
+data kept the units of the file): a peak of 0 gives `[-1, 1]` with one tick; a symmetric lane
+gives `±1.1 * peak` with the ticks `-peak`, 0 and `peak`; another lane gives `[0, 1.1 * peak]`
+with the ticks 0 and `peak`. A label has 3 significant digits as Python's `f"{v:.3g}"` writes
+them: a tie goes to the even digit (12.25 gives "12.2", 1.125 gives "1.12"), an exponent
+("1.23e+03", "1e+03") appears from 1e3 and below 1e-4, and every hyphen, also the one of an
+exponent, is U+2212.
+
+**How:** A table of 16 rows (peaks from 1.234e-5 to 1234.5, both values of `symmetric`), each
+row the printed result of the Python function of the version before this change, compared with
+`assert.deepEqual`.
+
+**Assumptions:** The rows are copied from a run of that Python function, not derived again; they
+cover the cases where `toPrecision` of JavaScript differs from `.3g` of Python.
+
+#### `test_rescale_lane_gives_the_values_and_the_axis_of_the_gamma`
+
+**Checks:** `rescaleLane(lane, gamma)` of a gradient lane in Hz/m (unit "mT/m", `symmetric`)
+gives each value as `v / gamma * 1e3`, and the `domain`, `ticks` and `tick_labels` of
+`valueDomain` for its `peak` in mT/m: 1064400 Hz/m is 25 mT/m for the proton gamma, and a gamma
+of half the size doubles the values and the axis. The lane that was given is not changed.
+
+**How:** A hand-made lane with four points and `peak` 1064400. The segments are compared with
+the same arithmetic, the axis with `valueDomain(25, true)` and `valueDomain(50, true)`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_rescale_lane_with_a_negative_gamma_changes_the_sign_of_a_signed_lane_only`
+
+**Checks:** For a negative gamma, the values of a signed (`symmetric`) gradient lane are the
+negatives of those for its magnitude, with the same domain, ticks and labels (the peak is a
+magnitude). The RF magnitude lane (unit "µT", values in Hz) and a magnitude of the gradient
+(`symmetric: false`, unit "mT/m", with an axis of its own and no `peak`) are equal for a gamma
+and its negative, and the second keeps its own axis.
+
+**How:** `rescaleLane` of a gradient lane, an RF lane and a magnitude lane with `GAMMA_1H` and
+`-GAMMA_1H`. The zero values are compared after `+ 0`, which turns -0 into 0.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_rescale_lane_keeps_the_minimum_before_the_maximum_of_a_minmax_lane`
+
+**Checks:** In a `minmax` lane, a pair is (bin start, minimum) and (bin centre, maximum). For a
+negative gamma the minimum becomes the maximum, so `rescaleLane` sorts each pair again: the
+result of the negative gamma has the negative of the maximum first.
+
+**How:** A lane with two pairs; the result for `-GAMMA_1H` is compared with the result for
+`GAMMA_1H` (swapped and negated), and each pair is checked to be in order.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_rescale_lane_returns_a_lane_without_symmetric_as_it_is`
+
+**Checks:** A lane without a boolean `symmetric` (the RF phase, the ADC gate) is returned as
+the same object, for any gamma.
+
+**How:** `rescaleLane` of a phase lane and a gate lane, compared with `assert.equal`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_rescale_lane_refuses_a_gamma_that_is_0_or_not_finite_and_an_unknown_unit`
+
+**Checks:** `rescaleLane` throws for a gamma of 0, NaN, Infinity or undefined (with "gamma" in
+the message), and for a unit that is not "mT/m" or "µT".
+
+**How:** `assert.throws` with a pattern for each bad value.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_rescale_lane_rounds_the_peak_to_4_decimals_with_the_tie_to_the_even_digit`
+
+**Checks:** The peak in the unit of the chart is rounded to 4 decimals as Python's `round`
+rounds (as the peak of a lane was rounded when Python calculated the domain): 0.03125 mT/m gives
+the ticks ±0.0312, where `toFixed(4)` would give 0.0313.
+
+**How:** A lane with a peak of 1 Hz/m and a gamma of 32000 Hz/T, which is exactly 0.03125 mT/m;
+the segment value is checked to be exactly 0.03125, and the ticks and the domain to be those of
+0.0312.
+
+**Assumptions:** The division and the multiplication of this peak are exact in floating point
+(the test checks the value of the segment).
+
 ---
 
 ### 2.5 Timing card (`test_timing_card.py`)
@@ -1746,6 +1834,26 @@ and B1+rms, and a window whose real length is the full 10 s window.
 
 **Assumptions:** None.
 
+#### `test_a_negative_gamma_gives_the_values_of_its_magnitude`
+
+**Checks:** `rf_exposure(seq, -gamma)` equals `rf_exposure(seq, gamma)`, field by field: the
+peak B1, the energy and the B1+rms use the magnitude of the gamma.
+
+**How:** A two-pulse train; the two `RfExposure` objects are compared with `==`.
+
+**Assumptions:** None.
+
+#### `test_the_values_follow_the_magnitude_of_the_gamma`
+
+**Checks:** B1 is the amplitude in Hz divided by the magnitude of the gamma: a gamma of half the
+size (and negative) doubles the peak B1, the B1+rms and the highest-window B1+rms, and gives 4
+times the energy.
+
+**How:** A two-pulse train; `rf_exposure` with `GAMMA_1H` and with `-GAMMA_1H / 2`, compared with
+`pytest.approx` at a relative 1e-12.
+
+**Assumptions:** None.
+
 #### `test_periodic_false_does_not_wrap`
 
 **Checks:** With `periodic=False`, the highest-window search does not wrap
@@ -1897,15 +2005,18 @@ over the train's duration), within a relative 1e-12.
 gives `rf_exposure.rf_exposure` as a JSON-ready dict, in ms and µT, plus the
 highest window's real length and whether the sequence is periodic.
 `rf_exposure_card` builds the "RF exposure" `Card`: for one sequence, the
-body is `_rf_exposure_html(_rf_exposure_data(seq))`, a six-row table and its
-note. The card takes one sequence.
+body is a six-row table and its note, for the magnitude of each gamma of
+`units.gamma_entries(targets, seq, signed=False)` (one table for each entry, and the control of
+the gamma with the card script `gamma-select` when there are two or more entries). The card
+takes one sequence.
 
 The tests use `tests/synthetic.py`'s `spin_echo_sequence` and
 `empty_sequence`.
 
 **Assumptions for the whole file:**
 
-- The card has no chart: its `data` and `script` are both `None`.
+- The card has no chart: its `data` is `None`, and its `script` is `None` unless the card has
+  the gamma control.
 
 #### `test_rf_exposure_data_for_spin_echo`
 
@@ -1946,6 +2057,29 @@ and the rows "RF pulses", "Peak B1 (µT)", "∫B1² dt over the sequence
 accepts the card.
 
 **Assumptions:** None.
+
+#### `test_a_negative_gamma_gives_the_table_of_its_magnitude`
+
+**Checks:** Two targets with the gamma of the sequence and its negative are one entry (the
+magnitude), so the card is the card without targets: the same body, no control, no card script.
+
+**How:** `rf_exposure_card` with `report_targets` of two profiles (`gamma = GAMMA_1H` and
+`-GAMMA_1H`), compared with the card of the same sequence without targets.
+
+**Assumptions:** None.
+
+#### `test_targets_with_other_magnitudes_of_gamma_give_one_table_for_each`
+
+**Checks:** Targets with two magnitudes of gamma (the default, a negative 11.777 MHz/T and the
+default again) give two tables, in the order of the first target of each magnitude, in
+`data-gamma-entry` blocks (the second `hidden`), two control buttons and the card script
+`gamma-select`; each table has the peak B1 of the refocusing pulse for its magnitude.
+
+**How:** The card for three profiles; the position of the two blocks in `body_html` is read, and
+the cell of the peak B1 of each block is compared with the value that the test calculates from
+the flip angle, the duration and the gamma.
+
+**Assumptions:** The peak B1 shows in the table as `f"{peak:.2f} (block ...)"`.
 
 #### `test_rf_exposure_card_without_rf`
 
@@ -2728,7 +2862,7 @@ ADC window.
 **How:** The test builds `synthetic.spin_echo_sequence()` once (a module
 fixture, `spin_echo`) and calls `file_lanes` on it. For Gx and Gy, it checks
 that the lane is not empty and that no value is above the system's
-`max_grad` converted to mT/m. It checks that there is one ADC window whose
+`max_grad` in Hz/m (the lanes are in the units of the file, with a tolerance of 1 Hz/m). It checks that there is one ADC window whose
 length matches `NUM_SAMPLES * DWELL` in ms, that the RF phase lane has two
 segments, and that `first_adc_window`'s end is after the ADC window's end.
 
@@ -2737,6 +2871,19 @@ segments, and that `first_adc_window`'s end is after the ADC window's end.
 - The synthetic spin echo sequence's block pulses have no slice-select
   gradient, so Gz has no events (unlike vb-pulseq's own spin echo, which
   used slice-selective pulses and so had Gz events too).
+
+#### `test_value_lanes_are_in_the_units_of_the_file_with_a_peak_and_no_axis`
+
+**Checks:** The value lanes (`rf_mag`, `gx`, `gy`, `gz`) of `file_lanes` have the `peak` (the
+largest absolute value of the lane in Hz for the RF magnitude and Hz/m for a gradient, from
+pypulseq's events) and `symmetric` (False for the RF magnitude, True for a gradient), and none of
+`domain`, `ticks` and `tick_labels`: the browser calculates them for the selected gamma.
+
+**How:** On the synthetic spin echo sequence, the peaks are calculated from the amplitudes of
+`seq.get_block` (the RF signal and the gradient amplitude) and compared with `pytest.approx` at
+a relative 1e-12; the keys of each lane are checked.
+
+**Assumptions:** The gradients of the sequence are trapezoids, so the peak is the amplitude.
 
 #### `test_block_table`
 
@@ -2883,17 +3030,19 @@ unlimited rows with the same `total`.
 sequence as `data["file"]` (its compressed block and event tables,
 `diagram_data`, plus `lane_meta`), and one entry in `data["windows"]` for each
 caller-given time window, with one button for each window in the given order
-(section 4.1 of `docs/plans/diagram-event-table.md`; the data format is 3 since
-phase 7 of `docs/plans/pulseq-checks-implementation.md`, which made `file.pns` a list). There is no lane set and no point
+(section 4.1 of `docs/plans/diagram-event-table.md`; the data format is 4 since
+phase 7b of `docs/plans/pulseq-checks-implementation.md`: the tables keep the units of the file
+(Hz/m and Hz), `file.lanes` give the `peak` of a value lane and no axis, and `file.gamma` lists
+the signed gammas of the targets; phase 7 made `file.pns` a list). There is no lane set and no point
 budget any more: every view is drawn in the browser from the tables (phase
 4's job is done there, not in Python). The last test is adapted from
 vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`.
 
-#### `test_data_has_format_3_with_file_and_window_keys`
+#### `test_data_has_format_4_with_file_and_window_keys`
 
 **Checks:** `diagram_card`'s data has the keys `format`, `file` and `windows`,
-with `format == 3`; the `file` entry has the keys `duration_s`, `num_blocks`,
-`lanes` and `tables` (no `name`, and no `pns` without PNS data), a `lanes` equal to
+with `format == 4`; the `file` entry has the keys `duration_s`, `num_blocks`,
+`lanes`, `gamma` and `tables` (no `name`, and no `pns` without PNS data), a `lanes` equal to
 `lane_meta(seq)`, a
 `duration_s` and `num_blocks` equal to `waveforms.duration_s(seq)` and
 `len(seq.block_events)`, and each table entry has the keys `dtype`, `length`
@@ -2905,6 +3054,40 @@ and `data`; there is one window entry for each given window, with the keys
 the key sets and values of `card.data`, of its `file` and of its windows
 directly against `diagram_data.lane_meta`, `waveforms.duration_s` and
 `seq.block_events`.
+
+**Assumptions:** None.
+
+#### `test_the_tables_and_the_lane_peaks_are_in_the_units_of_the_file`
+
+**Checks:** The largest RF magnitude in the tables is the peak of the RF signal in Hz, the
+largest gradient value is the largest gradient amplitude in Hz/m (pypulseq's events, no
+division by a gamma), and the `peak` of each value lane of `file.lanes` is that peak.
+
+**How:** On the synthetic spin echo sequence, the peaks come from the events of
+`seq.get_block`; the decoded `rf_mag` and `grad_value` tables and the `peak` of each lane are
+compared with `pytest.approx` at a relative 1e-12.
+
+**Assumptions:** None.
+
+#### `test_without_targets_the_gamma_is_the_gamma_of_the_sequence`
+
+**Checks:** Without targets, `file.gamma` is one entry with `seq.system.gamma` and no names
+(also for a negative gamma of the sequence), and the card has no gamma control.
+
+**How:** The card for a synthetic spin echo sequence and for a sequence with `Opts(gamma=-11.777e6)`.
+
+**Assumptions:** None.
+
+#### `test_the_gamma_entries_are_the_signed_gammas_of_the_targets_and_the_tables_do_not_change`
+
+**Checks:** Two targets with one gamma are one entry in `file.gamma` with both names and no
+control. Targets with a negative gamma and the default gamma are two signed entries in the order
+of the first target of each, with two control buttons; the card script stays `diagram`, and the
+tables and the lanes are the same as the card without targets (the units of the file do not
+depend on the gamma).
+
+**How:** `diagram_card` with `report_targets` of the example profiles (`example_c` has the
+gamma -11.777 MHz/T); the entries are compared with the gammas of `make_opts()`.
 
 **Assumptions:** None.
 
@@ -4065,24 +4248,6 @@ or `seed` parameters; only the per-block columns (`duration_index`, `rf`,
 directly from `buildRandomModel`'s source in this file, not documented
 elsewhere.
 
-#### `test_sequence_view_grad_hz_per_value`
-
-**Checks:** `view.gradHzPerValue` and the exported constant
-`SeqLanes.GRAD_HZ_PER_VALUE` both equal `42.576e6 * 1e-3`, the inverse of the
-factor `diagram_data.diagram_tables` uses to store gradient values in mT/m
-(`Hz/m / PROTON_GAMMA * 1e3`, with `PROTON_GAMMA = 42.576e6` Hz/T).
-
-**How:** The test builds the hand model and checks
-`view.gradHzPerValue === 42.576e6 * 1e-3` and
-`SeqLanes.GRAD_HZ_PER_VALUE === 42.576e6 * 1e-3` with `assert.equal`.
-
-**Assumptions:** The factor `42.576e6 * 1e-3` is taken from `seq_utils.GAMMA`
-and from `diagram_data.diagram_tables`'s `amp / GAMMA * 1e3` (read in this
-task's context, not re-derived from a Python run); the test pins
-`GRAD_HZ_PER_VALUE` to that same arithmetic expression, so a future change to
-either side that breaks the relationship fails this test rather than only
-showing up as a scale error in a chart.
-
 #### `test_sequence_view_adc_event_and_rf_delay`
 
 **Checks:** `view.adcEvent(k)` returns
@@ -4275,8 +4440,8 @@ non-empty `rotation_library` and calls the card inside `pytest.raises`.
 `pns_lanes.js` computes the PNS lane of the sequence diagram in the browser, with
 no DOM and no network (`docs/plans/diagram-lanes.md`, phase 3): `PnsLanes.decode`
 builds a model from the diagram tables, one entry of the `file.pns` list of the diagram data
-(the SAFE parameters, the raster, the stored level in Hz/T and the `threshold` of a target) and
-the factor `gradHzPerValue` from the gradient values of the tables to Hz/m;
+(the SAFE parameters, the raster, the stored level in Hz/T and the `threshold` of a target); the
+gradient values of the tables are in Hz/m;
 `exactView` gives the exact PNS of a short time range with the block maps of
 the prototype (`prototypes/pns_lanes/pns_lanes.js` in the tag
 `archive/pns-lanes-prototype`) (a scan with a checkpoint every `GROUP_BLOCKS`
@@ -4287,8 +4452,8 @@ minimum/maximum view; `percent`, `laneMeta`, `runMarks`, `overlay`, `peaksText` 
 `statusText` are the pure helpers the diagram card script (`assets/cards/diagram.js`) uses to
 build the PNS lane of all the targets (one line for each, the runs as marks) and its
 status-line text (task 4.3 of the diagram lanes plan, and phase 7 of
-`docs/plans/pulseq-checks-implementation.md`). The model runs on gradient samples in Hz/m
-(`grad_value * gradHzPerValue`), so its totals are in Hz/T, and the lane values are
+`docs/plans/pulseq-checks-implementation.md`). The model runs on the gradient samples in Hz/m
+(`grad_value`), so its totals are in Hz/T, and the lane values are
 `percent(v, threshold)`.
 
 The tests load `pns_lanes.js` directly, with Node's `require`, from
@@ -4303,8 +4468,8 @@ empty/no-gradient tables of the last two tests). The hardware numbers
 (`hwSet`/`HW`) are pypulseq's own `safe_example_hw()` values, copied from the
 table of the README in the tag `archive/pns-lanes-prototype`
 (`prototypes/pns_lanes/README.md`), not read from pypulseq. The test file has its own
-`HZ_PER_VALUE` (42576, the value of `SeqLanes.GRAD_HZ_PER_VALUE`) and a `THRESHOLD` of
-42576000 Hz/T for its models.
+`HZ_PER_MT` (42576 Hz/m for 1 mT/m of the proton gamma: the hand-made events are written in
+mT/m and put in the tables in Hz/m) and a `THRESHOLD` of 42576000 Hz/T for its models.
 
 Two independent references stand in for a Python or pypulseq comparison:
 `bruteForceTotals` re-derives the whole model (the gradient of each axis, the
@@ -4551,27 +4716,23 @@ span already longer than `EXACT_MAX_S` is checked only for not throwing and
 
 **Assumptions:** None beyond the file's assumptions.
 
-#### `test_grad_hz_per_value_multiplies_every_gradient_sample`
+#### `test_totals_double_with_the_gradient_values`
 
-**Checks:** `PnsLanes.decode` multiplies every gradient sample by `gradHzPerValue`
-(`grad_value * gradHzPerValue`, in Hz/m) before the SAFE model: a model decoded with the factor
-`2 * F` agrees, within 1e-12 of the peak, with a model of the same tables with every
-`grad_value` doubled and the factor `F`.
+**Checks:** The model is linear in the gradient: the whole-file totals of the tables with every
+`grad_value` doubled agree, within 1e-12 of the peak, with twice the totals of the tables.
 
 **How:** Builds a 60-block pseudo-random model (`buildPnsTables(60, 29,
-{durationOptionsDt: [15, 25], noEventProb: 0.3})`), decodes it once with the factor `2 * F`
-and once, from a copy of the tables with every `grad_value` doubled, with `F`, and compares
-the two whole-file totals (`collectPlainRecursion`) with `assertWithinPeakTol` at `1e-12` (the
-two take different code paths to the same number: one scale multiply per sample against a
-pre-doubled input table, so the comparison uses the 1e-12 tolerance, not bit-exactness). It
-also checks that the peak is above 0.
+{durationOptionsDt: [15, 25], noEventProb: 0.3})`), decodes it and a copy with every
+`grad_value` doubled, collects the whole-file totals (`collectPlainRecursion`) of both, and
+compares the second with twice the first with `assertWithinPeakTol` at `1e-12`. It also checks
+that the peak is above 0.
 
 **Assumptions:** None beyond the file's assumptions.
 
 #### `test_totals_are_in_hz_per_t_of_the_samples_in_hz_per_m`
 
 **Checks:** The totals of the model are in Hz/T: they equal the brute force of the test file,
-which reads the tables with the factor `HZ_PER_VALUE` to Hz/m and divides by no gamma, and they
+which reads the tables as they are (Hz/m) and divides by no gamma, and they
 are far above 1 (the size of a fraction of the limit) for these gradients.
 
 **How:** Builds a 40-block model, collects the plain recursion and the brute force, compares
@@ -4580,11 +4741,10 @@ above 1000.
 
 **Assumptions:** None beyond the file's assumptions.
 
-#### `test_decode_refuses_a_threshold_and_a_factor_that_are_not_numbers_above_zero`
+#### `test_decode_refuses_a_threshold_that_is_not_a_number_above_zero`
 
 **Checks:** `PnsLanes.decode` throws, with the name of the argument in the message, for a
-`threshold` of 0, -1, NaN, Infinity or undefined, and for a `gradHzPerValue` of NaN, Infinity or
-undefined.
+`threshold` of 0, -1, NaN, Infinity or undefined.
 
 **How:** Decodes a 5-block model with each bad value and expects the error with
 `assert.throws` and a pattern.
@@ -4764,7 +4924,7 @@ against a Python reference. `_run_golden` runs the checks of one target on one s
 (`run_checks`, the analysis `pns.safe.levels`), builds the real diagram card with the target
 and the matrix, writes its tables and the first entry of `file.pns` to a JSON file, runs
 `tests/js/golden_pns_lanes.js` with Node on it, and reads back the JSON result:
-`PnsLanes.decode` (with `SeqLanes.GRAD_HZ_PER_VALUE`), one `exactView` call for the whole file
+`PnsLanes.decode`, one `exactView` call for the whole file
 (forced to the "samples" kind by a bin count far larger than the sample count, so every
 sample comes back, never a minimum/maximum reduction), its totals as percent
 (`PnsLanes.percent` with the threshold of the entry), and the decoded pyramid
@@ -4831,8 +4991,8 @@ it.
   `onRaster` is `true` as a guard, not as its own coverage goal (off-raster PNS is
   `pulseq-analysis`'s concern, per `docs/plans/diagram-lanes.md` section 4.1, item
   3).
-- The diagram tables have the gradient values in mT/m of the proton gamma, and
-  `SeqLanes.GRAD_HZ_PER_VALUE` changes them back to Hz/m (phase 7b removes both).
+- The diagram tables have the gradient values in Hz/m, as the Python pipeline reads them, so the
+  model needs no factor.
 
 ### 2.27 |G| lane (`test_g_lanes.js`)
 
@@ -6289,8 +6449,7 @@ check each rule on small hand-made cases, without Python.
 The tests load `rf_profiles.js` directly with Node's `require`, and use `node:test` and
 `node:assert/strict`, with no browser or DOM. Each test builds its sequence with the
 helper `newSeq`: RF rows (the columns of `cards.rf_profile._rf_table`, made by
-`rfTables`), gradient events in mT/m (as the diagram tables keep them, read back with
-`gradHzPerValue` 42576), ADC events and blocks. `build` returns a fake sequence view
+`rfTables`), gradient events in Hz/m (as the diagram tables keep them), ADC events and blocks. `build` returns a fake sequence view
 (`fakeView`: the methods of `SeqLanes.sequenceView` over those arrays) and the file
 data of `RfProfiles.fileData`. Equal events share one dense index, as pypulseq's
 libraries share one id. The pulses follow `tests/test_rf_profiles.py`: a 1 ms
@@ -6382,8 +6541,8 @@ raster fall inside hold intervals), on a trapezoid of 2e5 Hz/m with 100 µs ramp
 within a relative 1e-12 (the rounding of the interval ends); interval 80 (flat top)
 exactly, and all intervals after the end and all x and y values are 0.
 
-**Assumptions:** The amplitude the module reads is the table value in mT/m times 42576;
-the test uses that value for the hand means.
+**Assumptions:** The amplitude the module reads is the table value in Hz/m; the test uses
+that value for the hand means.
 
 #### `test_gradient_kinds_none_one_oblique_and_changing`
 
@@ -6680,8 +6839,7 @@ section 3.5, item 2 of the plan and the reason each value can differ at all:
 - **Float rounding of the same arithmetic** (relative 1e-12 of the largest
   value of the array, or of the scalar itself): the signal (`sigRe`,
   `sigIm` against `signal_hz`), the interval gradients (JavaScript
-  multiplies the diagram table's mT/m by 42576 Hz/m per mT/m where Python
-  divides pypulseq's Hz/m by `seq_utils.GAMMA` and multiplies by 1e3),
+  reads the diagram table's Hz/m as it is, as Python reads pypulseq's Hz/m),
   `direction`, `select_gradient_hz_per_m`, `slice_centre_m`, `flip_deg`,
   `peak_b1_ut`, `energy_ut2_ms`, a spec's `lo`/`hi` away from the
   spectrum-FWHM cases below, the grids, the combined `factor`, the line's
@@ -7343,7 +7501,8 @@ builder, with the same default as the option (decision 17 of the plan); and the 
 
 **Checks:** `build_cards` with targets makes the same cards (equal `Card` objects, not only
 the same ids) as `build_cards` without targets, but for the cards that use the targets
-(`_USE_TARGETS`: `gradient-limits`, `gradient-spectrum` and `pns`), which are built in both
+(`_USE_TARGETS`: `diagram`, `gradient-limits`, `gradient-spectrum`, `pns` and
+`rf-exposure`), which are built in both
 cases.
 
 **How:** `build_cards` for the spin echo sequence with all the cards, twice without targets
@@ -8001,12 +8160,12 @@ file (Hz/m, Hz/m/s, Hz) to tesla units.
 
 #### `test_the_proton_gamma_is_the_default_gamma_of_pypulseq`
 
-**Checks:** `GAMMA_1H` of `tests/synthetic.py` and `units.PROTON_GAMMA` equal `pp.Opts().gamma`.
+**Checks:** `GAMMA_1H` of `tests/synthetic.py` equals `pp.Opts().gamma`.
 
-**How:** Two equalities.
+**How:** One equality.
 
-**Assumptions:** The tests use `GAMMA_1H`, not `units.PROTON_GAMMA` (decision D17), so this
-test is the one link between them.
+**Assumptions:** The tests use `GAMMA_1H` (decision D17) and the library has no proton constant
+since phase 7b, so this test is the one link between the tests and pypulseq.
 
 #### `test_a_negative_gamma_gives_the_value_of_its_magnitude_for_a_number`
 

@@ -1186,16 +1186,6 @@ test("test_sequence_view_grad_event_offsets_shared_across_events", () => {
   assert.deepEqual(Array.from(e3.values), [0, 9, 9, 0]);
 });
 
-test("test_sequence_view_grad_hz_per_value", () => {
-  // The diagram tables store gradient values as Hz/m / GAMMA * 1e3
-  // (seq_utils.GAMMA = 42.576e6 Hz/T, mT/m). The inverse factor is exactly
-  // GAMMA * 1e-3.
-  const {model} = buildHandModel();
-  const view = SeqLanes.sequenceView(model);
-  assert.equal(view.gradHzPerValue, 42.576e6 * 1e-3);
-  assert.equal(SeqLanes.GRAD_HZ_PER_VALUE, 42.576e6 * 1e-3);
-});
-
 test("test_sequence_view_adc_event_and_rf_delay", () => {
   const {model} = buildHandModel();
   const view = SeqLanes.sequenceView(model);

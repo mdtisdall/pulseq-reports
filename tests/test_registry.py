@@ -335,7 +335,7 @@ def test_a_report_without_targets_has_no_targets_and_no_check_results(seen):
 
 # The library cards that use the targets: their cards change with targets. A phase that makes
 # a card use the targets adds its name.
-_USE_TARGETS = {"gradient-limits", "gradient-spectrum", "pns"}
+_USE_TARGETS = {"diagram", "gradient-limits", "gradient-spectrum", "pns", "rf-exposure"}
 
 
 def test_targets_do_not_change_the_cards_that_are_built(plugin, make_profile):

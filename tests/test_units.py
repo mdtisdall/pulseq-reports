@@ -15,7 +15,6 @@ _CONVERSIONS = [
 
 def test_the_proton_gamma_is_the_default_gamma_of_pypulseq():
     assert pp.Opts().gamma == GAMMA_1H
-    assert units.PROTON_GAMMA == GAMMA_1H
 
 
 @pytest.mark.parametrize("convert", _CONVERSIONS)

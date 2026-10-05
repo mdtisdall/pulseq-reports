@@ -6,7 +6,9 @@ The card sends the compressed block and event tables of the sequence
 browser (`assets/cards/diagram.js`, `assets/seq_lanes.js`) decodes them and draws the
 exact waveform when a view has few enough points, or the minimum and the maximum of
 each lane in each of the plot's time bins otherwise, so the card works for a file of up
-to 10^7 blocks (`docs/plans/diagram-event-table.md`).
+to 10^7 blocks (`docs/plans/diagram-event-table.md`). The tables keep the units of the file
+(Hz/m and Hz, with no gamma): the browser shows mT/m and µT with the gamma of the selected
+entry of `file.gamma` (decision P36 of `docs/plans/pulseq-checks.md`).
 
 With `pns_lane`, a sequence that has a gradient event also gets a `"pns"` key in
 the card's `"file"` entry (`docs/plans/pulseq-checks-implementation.md`, section 4.7): a
@@ -31,10 +33,11 @@ from pulseq_checks import ResultMatrix
 
 from .. import options
 from ..diagram_data import diagram_tables, lane_meta
-from ..markup import zoom_controls
+from ..markup import gamma_select_html, zoom_controls
 from ..page import Card, card_asset
 from ..registry import CardSpec, ReportContext
 from ..targets import ReportTarget
+from ..units import GammaEntry, gamma_entries
 from ..waveforms import TimeWindow, _check_windows, duration_s
 from .pns import pns_series
 
@@ -115,28 +118,37 @@ def _validate(seq: pp.Sequence, windows: Sequence[TimeWindow]) -> None:
     _check_windows(seq, windows)
 
 
-def _diagram_data(seq: pp.Sequence, windows: Sequence[TimeWindow], pns: list[dict]) -> dict:
+def _diagram_data(
+    seq: pp.Sequence,
+    windows: Sequence[TimeWindow],
+    pns: list[dict],
+    entries: Sequence[GammaEntry],
+) -> dict:
     """The card data (section 4.1 of `docs/plans/diagram-event-table.md`, plus the
-    `"pns"` key of section 4.7 of `docs/plans/pulseq-checks-implementation.md`):
-    `{"format": 3, "file": {...}, "windows": [...]}`.
+    `"pns"` key of section 4.7 and the `"gamma"` key of section 4.7b of
+    `docs/plans/pulseq-checks-implementation.md`):
+    `{"format": 4, "file": {...}, "windows": [...]}`.
 
-    `file` has `duration_s`, `num_blocks`, `lanes` (`lane_meta`) and `tables`
-    (`encode_array` of each table of `diagram_tables(seq)`). `diagram_tables(seq)` is built once and
-    passed to `lane_meta` so it is not built twice. When `pns` (the list of `_pns_entry`) is
-    not empty, `file` also gets it as the `"pns"` key. `windows` has one entry for each of
-    `windows`: `label` and `view_ms`.
+    `file` has `duration_s`, `num_blocks`, `lanes` (`lane_meta`: the peak of a value lane in
+    Hz/m or Hz, with no domain), `gamma` and `tables` (`encode_array` of each table of
+    `diagram_tables(seq)`: gradient values in Hz/m, RF magnitude in Hz). `diagram_tables(seq)`
+    is built once and passed to `lane_meta` so it is not built twice. `gamma` is the list of
+    `entries` (`units.gamma_entries` with `signed=True`) as `{"gamma": Hz/T, "names": [...]}`.
+    When `pns` (the list of `_pns_entry`) is not empty, `file` also gets it as the `"pns"`
+    key. `windows` has one entry for each of `windows`: `label` and `view_ms`.
     """
     tables = diagram_tables(seq)
     file = {
         "duration_s": duration_s(seq),
         "num_blocks": len(seq.block_events),
         "lanes": lane_meta(seq, tables=tables),
+        "gamma": [{"gamma": entry.gamma, "names": list(entry.names)} for entry in entries],
         "tables": {name: encode_array(array) for name, array in tables.items()},
     }
     if pns:
         file["pns"] = pns
     out_windows = [{"label": w.label, "view_ms": [_ms(w.start_s), _ms(w.end_s)]} for w in windows]
-    return {"format": 3, "file": file, "windows": out_windows}
+    return {"format": 4, "file": file, "windows": out_windows}
 
 
 def diagram_card(
@@ -166,6 +178,13 @@ def diagram_card(
     has no `"pns"` key, and the explanation paragraph says why; for a target that has no
     entry while another has one, it names the target and the reason (escaped).
 
+    The gradient lanes show mT/m with the signed gamma, and the RF magnitude lane shows µT with
+    the magnitude of the gamma, of one entry of `units.gamma_entries(targets, seq,
+    signed=True)`, which the card sends as `file.gamma`. With more than one entry (targets
+    with different gamma), the card has the control of `markup.gamma_select_html` after the
+    lane-group buttons, and the script rescales the lanes when the entry changes. Without
+    `targets`, the entry is `seq.system.gamma`. The RF phase does not change.
+
     A group-controls container (`{card_id}-groups`) sits above the chart, after the
     window buttons: the card script (`assets/cards/diagram.js`) fills it with one
     toggle button for each lane group (RF, ADC, Gradients, and PNS when the card has
@@ -193,7 +212,8 @@ def diagram_card(
     _validate(seq, windows)
     refuse_rotations(seq)
     pns, pns_missing = _pns_entries(targets, check_results) if pns_lane else ([], None)
-    data = _diagram_data(seq, windows, pns)
+    entries = gamma_entries(targets, seq, signed=True)
+    data = _diagram_data(seq, windows, pns, entries)
     has_pns = "pns" in data["file"]
     buttons = "".join(
         f'<button type="button" data-window="{i}" aria-pressed="{str(i == 0).lower()}">'
@@ -219,10 +239,15 @@ def diagram_card(
             pns_note += f" No PNS for: {pns_missing}."
     elif pns_missing is not None:
         pns_note = f" There is no PNS lane: {pns_missing}."
+    control = gamma_select_html(entries, card_id)
+    gamma_control = control + "\n" if control else ""
     body = (
         f'<div class="controls" role="group" aria-label="Time window">{buttons}</div>\n'
         f'<div class="controls" role="group" aria-label="Lanes" id="{card_id}-groups">'
-        "</div>\n" + zoom_controls(svg_id) + f'\n<div class="chart" id="{card_id}-chart">\n'
+        "</div>\n"
+        + gamma_control
+        + zoom_controls(svg_id)
+        + f'\n<div class="chart" id="{card_id}-chart">\n'
         f'<svg id="{svg_id}" tabindex="0" role="img"\n'
         f'  aria-label="Sequence diagram: RF magnitude and phase, ADC, {lanes_after_adc} '
         'against time"></svg>\n'

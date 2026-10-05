@@ -7,10 +7,20 @@
 // start. The "pns" key of the card's file entry is a list with one entry for each target
 // that has a PNS result (docs/plans/pulseq-checks-implementation.md, section 4.7): each
 // entry gets its stored-level tables and its run tables decoded and a PnsLanes.decode
-// model built from them (with SeqLanes.GRAD_HZ_PER_VALUE, the factor from the gradient
-// values of the tables to Hz/m), next to the SeqLanes model. The PNS lane is one lane
+// model built from them (on the gradient values of the tables, which are in Hz/m), next to
+// the SeqLanes model. The PNS lane is one lane
 // for all the targets, with one line for each (PnsLanes.overlay) in the color of the
 // target, and the runs of every target at or above the limit as marks in its color.
+//
+// The tables keep the units of the file: the gradient values are in Hz/m and the RF
+// magnitude in Hz (data format 4, cards/diagram.py), so the lanes of SeqLanes and GLanes are
+// in those units too. The chart shows mT/m and µT with the gamma of the selected entry of
+// `file.gamma` (the entry 0 at start): `ChartMath.rescaleLane` turns a lane into the units
+// and the domain of the chart on every render, with the signed gamma for the gradient lanes
+// and its magnitude for the RF magnitude and |G| lanes. The control of
+// markup.gamma_select_html (present with more than one entry) changes the gamma and
+// renders again with the same view, the cursor and the anchor. The RF phase, the ADC gate
+// and the PNS lane do not depend on the gamma.
 //
 // The chart's `lanesFor` hook (lane_chart.js) asks SeqLanes.lanesFor for the six
 // waveform lanes of the current view on every render (the exact waveform when the view
@@ -53,11 +63,14 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // The version of the card's own data (cards/diagram.py `_diagram_data`). A page with
   // data of a later version (for example a rotation table) fails loudly instead of
   // drawing wrong waveforms with an old script.
-  if (data.format !== 3) {
+  if (data.format !== 4) {
     throw new Error(
-      `diagram card: unsupported data format ${data.format} (only format 3 is known)`
+      `diagram card: unsupported data format ${data.format} (only format 4 is known)`
     );
   }
+  // The gamma (Hz/T, signed) of the lanes that the chart shows: the entry 0 of `file.gamma`
+  // until the control changes it (`PulseqReport.gammaSelect`, below).
+  let gamma = file.gamma[0].gamma;
   // The version of the tables that `SeqLanes.decode` reads: not the card's data version.
   const TABLE_FORMAT = 1;
 
@@ -89,14 +102,14 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // `file.pns` list, the PnsLanes model of each entry, the lane object without lines
   // (PnsLanes.laneMeta(file.pns)) and the marks of the runs of every entry
   // (PnsLanes.runMarks), built once here so a render never rebuilds them, `g` the |G|
-  // lane's own `{model, laneMeta,
+  // lane's own `{model,
   // error}` (`buildGLane`, defined near the chart below), built lazily by `lanesFor`
   // the first time a render needs it: `g` starts null here, unlike `pns`, because
   // GLanes.decode needs no data beyond the diagram tables already decoded below, so
   // there is nothing to fetch in parallel with them, and building it costs a pass
   // over the blocks that a render with the Gradients group hidden should not
   // pay for. Once built, `g` stays in the model even when `GLanes.decode` failed
-  // (`model` and `laneMeta` null, `error` the caught exception), so a later render
+  // (`model` null, `error` the caught exception), so a later render
   // does not try again: the |G| lane is left out, and the status line says why.
   // Decodes every one of the diagram tables, and, when the file entry has PNS data, the
   // two stored-level tables and the two run tables of each entry, all in parallel; the
@@ -132,7 +145,7 @@ PulseqReport.registerCard("diagram", async (section, data) => {
         models: pnsEntries.map((entry, k) => {
           const [levelMin, levelMax] = pnsTables[k];
           const pnsData = { ...entry, levels: { min: levelMin, max: levelMax } };
-          return PnsLanes.decode(tables, pnsData, SeqLanes.GRAD_HZ_PER_VALUE);
+          return PnsLanes.decode(tables, pnsData);
         }),
         laneMeta: PnsLanes.laneMeta(pnsEntries),
         marks: pnsEntries.flatMap((entry, k) => {
@@ -224,25 +237,33 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     });
   }
 
-  // The |G| lane's `{model, laneMeta, error}` (plan section 4.3 of
+  // The |G| lane's `{model, error}` (plan section 4.3 of
   // docs/plans/review-bugs.md, B3). `GLanes.decode` can throw (for example a sequence
   // with very many gradient events, or no memory); this is the one place that calls it,
   // so catching it here covers every path that can reach a `GLanes` failure: the
   // initial render inside `laneChart` below, a window button (`showWindow`), and a
   // window shown through the `goto` message (`gotoBlock`, which calls `showWindow`
   // too) -- all three run through `lanesFor` below. On success, `error` is null. On
-  // failure, `model` and `laneMeta` are null (so the caller below appends no |G| lane)
+  // failure, `model` is null (so the caller below appends no |G| lane)
   // and `error` is the caught exception (so the status line can say why); logged once
   // here with `console.error`, not on every render, because the caller keeps the
   // returned object in `current.g` and never calls this again.
   function buildGLane(seqModel) {
     try {
-      const model = GLanes.decode(seqModel);
-      return { model, laneMeta: GLanes.laneMeta(model), error: null };
+      return { model: GLanes.decode(seqModel), error: null };
     } catch (error) {
       console.error(`diagram card "${section.id}": the |G| lane is not drawn:`, error);
-      return { model: null, laneMeta: null, error };
+      return { model: null, error };
     }
+  }
+
+  // The |G| lane object without its lines, for the selected gamma. The model is in Hz/m, so
+  // `GLanes.laneMeta` gets the peak in mT/m (a magnitude: |gamma|) to make the domain, the
+  // ticks and the labels of the chart (it reads only `wholeFileMax`). `symmetric: false`
+  // makes `ChartMath.rescaleLane` change the lines with |gamma|.
+  function gLaneMeta(gModel) {
+    const peak = gModel.wholeFileMax / Math.abs(gamma) * 1e3;
+    return { ...GLanes.laneMeta({ wholeFileMax: peak }), symmetric: false };
   }
 
   // The narrowest view of the chart, in ms (`minSpan` below); `gotoRange` keeps it too.
@@ -258,15 +279,14 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     groupControls,
     lanesFor: (view, bins, visibleGroupIds) => {
       const r = SeqLanes.lanesFor(current.seq, view, bins);
-      let lanes = r.lanes;
+      let lanes = r.lanes.map(lane => ChartMath.rescaleLane(lane, gamma));
       let gError = null;
       if (visibleGroupIds.has("gradients")) {
         if (!current.g) current.g = buildGLane(current.seq);
         gError = current.g.error;
         if (current.g.model) {
-          lanes = lanes.concat(
-            [GLanes.lanesFor(current.g.model, current.g.laneMeta, view, bins)]
-          );
+          const gLane = GLanes.lanesFor(current.g.model, gLaneMeta(current.g.model), view, bins);
+          lanes = lanes.concat([ChartMath.rescaleLane(gLane, gamma)]);
         }
       }
       let pnsResults = null;
@@ -302,6 +322,15 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // window is itself a `view` a later subscriber should learn (plan section 4.1), so it
   // is published explicitly here.
   publishView(windows[0].view_ms);
+
+  // The gamma control (present with more than one entry of `file.gamma`): a click makes the
+  // lanes render again with the gamma of the pressed entry, in the same view
+  // (`chart.refresh`). The cursor and the anchor stay, and the tooltip is made again with
+  // the new values.
+  PulseqReport.gammaSelect(section, (index, selected) => {
+    gamma = selected;
+    chart.refresh();
+  });
 
   // Shows window `i`: the same steps a window button always ran inline, before `goto`
   // (plan section 4.1) needed them too.

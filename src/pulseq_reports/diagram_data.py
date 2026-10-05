@@ -7,9 +7,13 @@ RF, gradient and ADC event is expanded one time only, by `seq_index.rf_events`,
 off (never once for each block). The offsets and values it stores are exactly those of
 `waveforms._block_events`. The callers encode each table with
 `pulseq_analysis.series.encode_array`, the gzip+base64 wire form of one array.
-`lane_meta` gives the lane titles, colors, domains, ticks and tick labels of
+`lane_meta` gives the lane titles, colors, peaks and the other fixed fields of
 `file_lanes`, computed from the tables instead of the expanded points, so it costs O(N)
 and O(unique events), not O(the file's points).
+
+The tables keep the units of the file: the gradient values in Hz/m and the RF magnitude
+in Hz, with no gamma. The browser changes them into mT/m and µT with the gamma of the
+target that the card selects (`assets/cards/diagram.js`).
 """
 
 import numpy as np
@@ -18,7 +22,6 @@ from pulseq_analysis.seq_index import adc_events, grad_events, rf_events, sequen
 from pulseq_analysis.seq_utils import gradient_offsets
 
 from .markup import lanes_json
-from .units import PROTON_GAMMA
 from .waveforms import _AXES, _lanes, _rf_offsets
 
 CHECKPOINT_BLOCKS = 1024
@@ -125,7 +128,7 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
         grad_delay.append(float(delay))
         grad_n.append(offsets.size)
         grad_offset_at.append(grad_offset_pool.add(offsets))
-        grad_at.append(grad_value_pool.add(amp / PROTON_GAMMA * 1e3))
+        grad_at.append(grad_value_pool.add(amp))
 
     adc_delay: list[float] = []
     adc_length: list[float] = []
@@ -166,18 +169,16 @@ def diagram_tables(seq: pp.Sequence) -> dict[str, np.ndarray]:
     }
 
 
-def _rounded_peak(values: np.ndarray, digits: int = 4) -> float:
-    """The largest absolute value of `values`, rounded as `markup._points` rounds a lane
-    value (`round(float(v), digits)`). Python's `round` is monotonic and odd, so this
-    equals the largest absolute value of the rounded values."""
+def _peak(values: np.ndarray) -> float:
+    """The largest absolute value of `values` (0.0 for no value)."""
     if values.size == 0:
         return 0.0
-    return round(float(np.max(np.abs(values))), digits)
+    return float(np.max(np.abs(values)))
 
 
 def _grad_event_peaks(tables: dict[str, np.ndarray]) -> np.ndarray:
-    """The rounded peak (`_rounded_peak`) of each unique gradient event's own value
-    array, in dense-index order."""
+    """The peak (`_peak`) of each unique gradient event's own value array, in dense-index
+    order."""
     n_events = tables["grad_n"].size
     peaks = np.empty(n_events, dtype=np.float64)
     pool = tables["grad_value"]
@@ -186,20 +187,20 @@ def _grad_event_peaks(tables: dict[str, np.ndarray]) -> np.ndarray:
     for k in range(n_events):
         start = int(at[k])
         length = int(lengths[k])
-        peaks[k] = _rounded_peak(pool[start : start + length])
+        peaks[k] = _peak(pool[start : start + length])
     return peaks
 
 
 def lane_meta(seq: pp.Sequence, *, tables: dict[str, np.ndarray] | None = None) -> list[dict]:
     """`waveforms.file_lanes(seq)` without the `segments` and `windows` keys: the six
-    lane titles, colors, domains, ticks and tick labels, in `file_lanes` order.
+    lane titles, colors, units, peaks (Hz/m or Hz) and the other fixed fields, in
+    `file_lanes` order.
 
     Does not call `file_lanes`: that builds every point of the file, which costs too
     much memory at 10^7 blocks. It builds the lanes with `waveforms._lanes`, as
     `file_lanes` does, from empty segments and windows. Each lane's peak comes from the
-    per-event values of `diagram_tables`, rounded as `markup._points` rounds them,
-    because `file_lanes` takes its peak from the rounded points. `empty` comes from the
-    event counts.
+    per-event values of `diagram_tables`, the largest absolute value in the units of the
+    file. `empty` comes from the event counts.
 
     Pass `tables` (the result of `diagram_tables(seq)`) when the caller already has
     them, so that a caller that wants both the tables and the lanes of one file builds
@@ -213,7 +214,7 @@ def lane_meta(seq: pp.Sequence, *, tables: dict[str, np.ndarray] | None = None) 
         "rf_phase": has_rf,
         "adc": tables["adc_delay"].size > 0,
     }
-    peaks = {"rf_mag": _rounded_peak(tables["rf_mag"])}
+    peaks = {"rf_mag": _peak(tables["rf_mag"])}
 
     event_peaks = _grad_event_peaks(tables)
     for axis in _AXES:

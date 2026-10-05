@@ -1,5 +1,6 @@
 // The |G| lane of the sequence diagram (docs/plans/diagram-lanes.md, phase 5):
-// |G| = sqrt(gx^2 + gy^2 + gz^2) (mT/m, the table units), computed in the browser from
+// |G| = sqrt(gx^2 + gy^2 + gz^2) (in the table units, Hz/m since the diagram data format 4;
+// the diagram card rescales the lane with the gamma), computed in the browser from
 // the diagram tables, with no DOM and no network. A pure module, like
 // src/pulseq_reports/assets/seq_lanes.js and pns_lanes.js: one global `GLanes`,
 // `module.exports = GLanes` in Node.
@@ -103,7 +104,7 @@ const GLanes = (() => {
 
   // ---- Event geometry ---------------------------------------------------------
 
-  // The breakpoint times (s, relative to the block start) and values (mT/m) of one
+  // The breakpoint times (s, relative to the block start) and values (the table units, Hz/m) of one
   // dense gradient event id `k` (1-based; the caller never passes 0). The event's own
   // delay is folded into the times (`start + delay + offset`, section 4.3 of
   // docs/plans/diagram-event-table.md; `minMax`/`_exactBlockGRange` add the block
@@ -129,7 +130,7 @@ const GLanes = (() => {
     return g;
   }
 
-  // The value (mT/m) of axis event `k` (0 = no event on this axis) at time `t` (s,
+  // The value (the table units, Hz/m) of axis event `k` (0 = no event on this axis) at time `t` (s,
   // relative to the block start): 0 when `k === 0`, the event has no point, or `t` is
   // strictly before the event's first point or strictly after its last (the model of
   // the module doc: "0 outside the event", not flat at the boundary value -- a real
@@ -215,7 +216,7 @@ const GLanes = (() => {
   // The per-(triple, block duration) cached geometry: the union breakpoint times
   // (`_tripleTimes`, padded to the whole block), the quadratic coefficients (A, B, C,
   // in tau in [0, 1] of each piece) of |G|^2 on each of the `times.length - 1`
-  // pieces, and the whole block's own minimum and maximum |G| (mT/m; the minimum and
+  // pieces, and the whole block's own minimum and maximum |G| (the table units, Hz/m; the minimum and
   // the maximum over every piece's own [0, 1] range, which -- because the pieces now
   // cover [0, dur] whole, not just the union of the events' own spans -- always
   // includes any stretch of the block where every axis reads 0).
@@ -440,7 +441,7 @@ const GLanes = (() => {
 
   // ---- minMax ---------------------------------------------------------------------
 
-  // The exact minimum and the exact maximum |G| (mT/m) in each of `bins` equal bins
+  // The exact minimum and the exact maximum |G| (the table units, Hz/m) in each of `bins` equal bins
   // of `[t0, t1]` (s), with the same bin edges `seq_lanes.js`'s `minMaxLanes` uses for
   // the same view. A bin with no block overlapping it at all (only possible when the
   // view reaches outside `[0, seqModel.durationS)`: blocks tile the whole file with
@@ -494,7 +495,7 @@ const GLanes = (() => {
   // filters are not local to one block).
   //
   // `meta` is the lane object without "segments" (`laneMeta`, built once by the card
-  // script). Values in the lane are mT/m (the table units); times are ms.
+  // script). Values in the lane are in the table units (Hz/m); times are ms.
   function lanesFor(model, meta, viewMs, bins) {
     const t0 = viewMs[0] / 1000, t1 = viewMs[1] / 1000;
     const view = minMax(model, t0, t1, bins);
@@ -510,7 +511,8 @@ const GLanes = (() => {
   // "mT/m", a color token of report.css that is not one of gx/gy/gz ("ink": a solid,
   // neutral color for a combined trace, distinct from the PNS lane's own "ink-2" so
   // the two are never the same color when both are visible at once), "line", the
-  // domain/ticks/tick_labels of the whole-file peak (`model.wholeFileMax`): the domain
+  // domain/ticks/tick_labels of the whole-file peak (`wholeFileMax`, which the diagram card
+  // gives in mT/m for the selected |gamma|): the domain
   // `[0, 1.1 * peak]` and the ticks at 0 and the peak are the style of the RF |B1|
   // lane (`_value_domain(..., symmetric=False)` in `waveforms.py`), while the gx, gy
   // and gz lanes are symmetric about 0. Unlike the RF |B1| lane, a peak of 0 still

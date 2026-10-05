@@ -45,7 +45,8 @@ const PulseqReport = (() => {
   // and its result is drawn instead of `lanes`; without `groups`, it must always return the
   // same number of lanes. `lanes` is then never drawn: without `groups`, it only sets the SVG
   // height (so it must have as many lanes as a `lanesFor` result); with `groups`, each render
-  // sets the height. `setLanes` then has no effect. Without `lanesFor`, `lanes` is drawn as
+  // sets the height. `setLanes` then has no effect on what is drawn (`refresh` renders again,
+  // calling `lanesFor`). Without `lanesFor`, `lanes` is drawn as
   // given to `laneChart` or to `setLanes`.
   // A lane may have `series`, a list of {label, color, segments} (`segments` as in a line
   // lane). When `lane.series` is an array, even an empty one, the lane draws the segments of
@@ -78,8 +79,9 @@ const PulseqReport = (() => {
   // `onAnchor(x)`, when given, is called whenever the anchor (the zoom marker that a
   // click or the arrow keys set) changes, with null when it is cleared (Escape, a
   // drag-zoom, a reset or `setView`). Both default to a no-op.
-  // Returns {setView, setLanes, setAnchor}: setView changes the view without calling
-  // onViewChange. setAnchor(x) sets the anchor (or clears it with null), draws it and
+  // Returns {setView, setLanes, setAnchor, refresh}: setView changes the view without calling
+  // onViewChange. refresh() renders again in the same view (with `lanesFor`, it calls it
+  // again: for example after the gamma of the card changes). setAnchor(x) sets the anchor (or clears it with null), draws it and
   // calls onAnchor.
   function laneChart({svg, chart, tip, lanes, lanesFor, groups, groupControls,
                       xDomain, extent = xDomain,
@@ -503,6 +505,10 @@ const PulseqReport = (() => {
       // Replace the lanes with the same number of lanes, for example on another scale.
       setLanes(newLanes) {
         lanes = newLanes;
+        render();
+      },
+      // Renders again in the same view, with the cursor and the anchor.
+      refresh() {
         render();
       },
       // Sets the anchor (or clears it with null), draws it and calls onAnchor.

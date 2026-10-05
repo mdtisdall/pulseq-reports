@@ -11,9 +11,6 @@ The gamma of a target is the gamma of its `Opts` (`target_gamma`), as in pulseq-
 Without targets, a card uses `seq.system.gamma`. A gamma that is 0 or not finite is an error
 (`check_gamma`). `gamma_entries` gives the entries of the control that selects the gamma of
 a card (decision P36 of `docs/plans/pulseq-checks.md`).
-
-`PROTON_GAMMA` is the proton gamma of the cards that do not use the gamma of the targets yet
-(phases 5 and 7b of the plan remove its last uses).
 """
 
 import math
@@ -26,8 +23,6 @@ from pulseq_checks import TargetProfile
 
 if TYPE_CHECKING:
     from .targets import ReportTarget
-
-PROTON_GAMMA = 42.576e6  # Hz/T, the default gamma of pypulseq (`pp.Opts`)
 
 
 @dataclass(frozen=True)

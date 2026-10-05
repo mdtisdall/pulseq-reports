@@ -10,6 +10,7 @@ what the file's own rasters give.
 import numpy as np
 import pypulseq as pp
 import pytest
+from synthetic import GAMMA_1H
 
 from pulseq_reports import rf_exposure
 from pulseq_reports import rf_profiles as rp
@@ -80,4 +81,4 @@ def test_rf_exposure_does_not_depend_on_the_reader_opts(seq_file):
     assert default.system.grad_raster_time != FILE_SYSTEM.grad_raster_time
     assert default.system.rf_raster_time != FILE_SYSTEM.rf_raster_time
 
-    assert rf_exposure.rf_exposure(default) == rf_exposure.rf_exposure(own)
+    assert rf_exposure.rf_exposure(default, GAMMA_1H) == rf_exposure.rf_exposure(own, GAMMA_1H)
