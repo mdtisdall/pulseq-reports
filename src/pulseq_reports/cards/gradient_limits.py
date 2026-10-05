@@ -170,8 +170,7 @@ def _percent_heading(target: ReportTarget) -> str:
     """The heading of a percent column: the swatch of the color of `target` (as
     `markup.target_legend_html` writes one) and its name, escaped."""
     swatch = (
-        f'<span class="swatch" style="background: var(--{target.color})" '
-        f'aria-hidden="true"></span>'
+        f'<span class="swatch" style="background: var(--{target.color})" aria-hidden="true"></span>'
     )
     return f"{swatch}% of limit ({html.escape(target.profile.name)})"
 
