@@ -291,16 +291,44 @@ The escaped name is in the legend, and `<b>` is not.
 
 **Assumptions:** None.
 
-#### `test_target_legend_gives_an_unsupported_target_its_reason`
+#### `test_target_legend_lists_a_target_with_another_gamma_like_any_other`
 
-**Checks:** An unsupported target is in the legend, and its reason, HTML-escaped, is in its
-item; the reason is not in the item of a supported target.
+**Checks:** A target with a gamma that is not the proton gamma is in the legend as the others
+are: its item has its color and its name, and nothing else.
 
-**How:** One supported and one unsupported profile (sodium gamma), with the reason of the
-second replaced by a text with `<`, `&`, `>` and `"`. The test splits the legend at `<li>`.
-It does not check the words around the reason.
+**How:** Two profiles, the second with the sodium gamma. The test splits the legend at `<li>`
+and checks the color token and the text after the swatch of each item.
 
-**Assumptions:** The legend shows `reason` of the target as it is (escaped).
+**Assumptions:** None.
+
+#### `test_gamma_select_is_empty_for_fewer_than_two_entries`
+
+**Checks:** `gamma_select_html` gives `""` for no entry and for one entry.
+
+**How:** A list of zero and a list of one `GammaEntry`.
+
+**Assumptions:** None.
+
+#### `test_gamma_select_has_a_button_for_each_entry_in_order`
+
+**Checks:** For two entries, the control has two buttons in the order of the entries, with
+`data-gamma-choice` "0" and "1", `data-gamma` equal to the gamma of each entry (also a negative
+one), and `aria-pressed` "true" for the first and "false" for the second. The label of a
+button has the names of its entry.
+
+**How:** Two entries (`42.576e6` with two names, `-11.777e6` with the name `<x>`), parsed with
+`html.parser`.
+
+**Assumptions:** None.
+
+#### `test_gamma_select_escapes_the_names_and_the_card_id`
+
+**Checks:** The names of the entries and the card id are HTML-escaped.
+
+**How:** An entry with the name `<b>&` and the card id `a"<i>`; `<b>` and `<i>` are not in the
+output, and the escaped name is.
+
+**Assumptions:** None.
 
 ### 2.3 The report page (`test_page.py`)
 
@@ -7150,10 +7178,10 @@ this test changes.
 
 **Checks:** The context of a card has `targets` as a tuple of `ReportTarget`, in the order of
 the profiles that the caller gave, with the colors `target-1` and `target-2` and the
-`supported` value of each; `check_results` is None when the caller gives none.
+`gamma` of each; `check_results` is None when the caller gives none.
 
 **How:** The recording spec; two profiles read from TOML files, the second with the sodium
-gamma.
+gamma (the first has no gamma, so the default of pypulseq).
 
 **Assumptions:** None.
 
@@ -7167,11 +7195,20 @@ the names of two profiles, in the same order.
 
 **Assumptions:** None.
 
-#### `test_a_sequence_with_another_gamma_raises`
+#### `test_a_sequence_with_another_gamma_is_accepted`
 
-**Checks:** `build_cards` raises `ValueError` when `seq.system.gamma` is not the proton gamma.
+**Checks:** `build_cards` accepts a `Sequence` built with the sodium gamma (11.262e6) and with a
+negative gamma (-11.777e6), and builds the card.
 
-**How:** `pp.Sequence(pp.Opts(gamma=11.262e6))` (the sodium gamma), without blocks.
+**How:** `pp.Sequence(pp.Opts(gamma=...))`, without blocks, with the plugin card only.
+
+**Assumptions:** None.
+
+#### `test_a_sequence_with_a_gamma_that_is_0_or_nan_raises`
+
+**Checks:** `build_cards` raises `ValueError` when `seq.system.gamma` is 0 or NaN.
+
+**How:** `pp.Sequence(pp.Opts(gamma=...))` for 0 and for `nan`; pypulseq builds both.
 
 **Assumptions:** The check of the gamma happens before any card is built, so the empty
 sequence does not matter.
@@ -7715,33 +7752,38 @@ when other profiles are between them.
 
 **Assumptions:** None.
 
-#### `test_a_gamma_that_is_not_the_proton_gamma_is_not_supported`
+#### `test_a_negative_gamma_is_valid_and_kept_signed`
 
-**Checks:** A profile whose `opts` gives the gamma of sodium is not supported, and its
-`reason` is not None.
+**Checks:** A profile with a negative gamma gives a target whose `gamma` is that negative value.
 
-**How:** A profile with `gamma = 11.262e6` in `[opts]`. The test does not check the text of
-the reason.
+**How:** A profile with `gamma = -11.777e6` in `[opts]`.
 
 **Assumptions:** None.
 
-#### `test_the_proton_gamma_and_no_gamma_are_supported`
+#### `test_a_profile_with_no_gamma_gets_the_default_gamma_of_pypulseq`
 
-**Checks:** A profile with the proton gamma (`GAMMA`), a profile with `opts` that give no
-gamma, and a profile with no `opts` are supported, and their `reason` is None.
+**Checks:** A profile with `opts` that give no gamma, and a profile with no `opts`, have the
+`gamma` of `pp.Opts()`.
 
-**How:** Three profiles; the test also checks that the third has no gamma.
+**How:** Two profiles; the test compares with `pp.Opts().gamma`.
 
-**Assumptions:** `read_profile` gives `opts` None, or without `gamma`, for a profile that
-gives none.
+**Assumptions:** None.
 
-#### `test_an_unsupported_target_does_not_change_the_colors_of_the_others`
+#### `test_a_gamma_that_is_0_or_not_finite_raises`
 
-**Checks:** A target that is not supported keeps its place and its color, and the colors of
-the other targets do not change.
+**Checks:** A profile with a gamma of 0, `inf` or `nan` makes `report_targets` raise
+`ValueError` with the name of the profile, also when another profile is valid.
 
-**How:** Three profiles, the second with the sodium gamma; the test compares the colors and
-the `supported` values.
+**How:** One profile with `gamma = 0`, `inf` or `nan` (parametrized), and a valid one.
+
+**Assumptions:** None.
+
+#### `test_the_example_profile_with_a_negative_gamma_is_read`
+
+**Checks:** `tests/profiles/example_c.toml` is read, and its target has the gamma `-11.777e6`
+(129Xe) and the other `opts` of the example profile (B0 3.0).
+
+**How:** `read_profile` of the file, then `report_targets`.
 
 **Assumptions:** None.
 
@@ -7774,5 +7816,33 @@ with 1234.5 and `-GAMMA_1H`, and with `GAMMA_1H`.
 **Checks:** The same as the test for a number, for a numpy array.
 
 **How:** The three functions with an array of three values; `numpy.array_equal` of the two results.
+
+**Assumptions:** None.
+
+#### `test_gamma_entries_with_signed_gammas_give_one_entry_for_each_sign`
+
+**Checks:** For two targets with gamma and -gamma, `gamma_entries` with `signed=True` gives two
+entries, each with its own signed gamma and name; with `signed=False` it gives one entry with the
+magnitude and both names, in order.
+
+**How:** Two profiles with `GAMMA_1H` and `-GAMMA_1H`, and an empty `Sequence`.
+
+**Assumptions:** None.
+
+#### `test_gamma_entries_share_an_entry_for_targets_with_one_gamma`
+
+**Checks:** Targets with one gamma share an entry, with their names in order; the entries are in
+the order of the first target of each gamma.
+
+**How:** Three profiles: sodium, the default gamma, sodium.
+
+**Assumptions:** None.
+
+#### `test_gamma_entries_without_targets_give_the_gamma_of_the_sequence`
+
+**Checks:** Without targets, `gamma_entries` gives one entry with `seq.system.gamma` (signed, or
+its magnitude for `signed=False`) and no names.
+
+**How:** A `Sequence` with `gamma=-11.777e6`.
 
 **Assumptions:** None.

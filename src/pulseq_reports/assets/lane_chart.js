@@ -746,8 +746,30 @@ const PulseqReport = (() => {
     return pageBus.watchSubscribers(topic, count => { button.hidden = count === 0; });
   }
 
+  // The gamma control of a card (markup.gamma_select_html, decision D19 of
+  // docs/plans/pulseq-checks-implementation.md). A click on a `[data-gamma-choice]`
+  // button of `section` presses it, shows the blocks `[data-gamma-entry]` of the
+  // section with that index (and hides the others), and calls `onChange(index, gamma)`
+  // when it is given: `gamma` is the `data-gamma` of the button, in Hz/T. A chart card
+  // rescales its lanes in `onChange`. It sends no message on the page bus: the
+  // control of a card does not change another card. A card with one gamma has no
+  // button, and the function does nothing.
+  function gammaSelect(section, onChange) {
+    const buttons = section.querySelectorAll("[data-gamma-choice]");
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        for (const b of buttons) b.setAttribute("aria-pressed", String(b === button));
+        const index = Number(button.dataset.gammaChoice);
+        for (const block of section.querySelectorAll("[data-gamma-entry]")) {
+          block.hidden = Number(block.dataset.gammaEntry) !== index;
+        }
+        if (onChange) onChange(index, Number(button.dataset.gamma));
+      });
+    }
+  }
+
   return {laneChart, registerCard, cards, el, text, decodeTable,
     createMessageBus, publish: pageBus.publish, subscribe: pageBus.subscribe,
-    watchSubscribers: pageBus.watchSubscribers, requestButton};
+    watchSubscribers: pageBus.watchSubscribers, requestButton, gammaSelect};
 })();
 if (typeof module !== "undefined") module.exports = PulseqReport;

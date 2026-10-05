@@ -1,5 +1,6 @@
 import dataclasses
 import html
+from html.parser import HTMLParser
 
 import pytest
 from pulseq_analysis.seq_index import sequence_index
@@ -7,6 +8,7 @@ from synthetic import spin_echo_sequence
 
 from pulseq_reports import markup
 from pulseq_reports.targets import report_targets
+from pulseq_reports.units import GammaEntry
 
 
 def test_zoom_controls_markup():
@@ -133,17 +135,70 @@ def test_target_legend_escapes_the_name(make_profile):
     assert "<b>" not in legend
 
 
-def test_target_legend_gives_an_unsupported_target_its_reason(make_profile):
-    profiles = [make_profile("ok"), make_profile("sodium", "gamma = 11.262e6")]
-    targets = report_targets(profiles)
-    reason = '<&> "reason"'
-    targets = (targets[0], dataclasses.replace(targets[1], reason=reason))
+def test_target_legend_lists_a_target_with_another_gamma_like_any_other(make_profile):
+    targets = report_targets([make_profile("ok"), make_profile("sodium", "gamma = 11.262e6")])
 
     legend = markup.target_legend_html(targets)
 
     first, second = legend.split("<li>")[1:]
-    assert "sodium" in second
-    assert html.escape(reason) in second
-    assert reason not in legend
-    assert "ok" in first
-    assert "reason" not in first
+    assert "var(--target-1)" in first and "var(--target-2)" in second
+    assert first.split("</span>")[1].removesuffix("</li>") == "ok"
+    assert second.split("</span>")[1].removesuffix("</ul>").removesuffix("</li>") == "sodium"
+
+
+class _ButtonParser(HTMLParser):
+    """The attributes and the text of each button of a fragment."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.buttons: list[dict[str, str | None]] = []
+        self.texts: list[str] = []
+        self._in_button = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "button":
+            self._in_button = True
+            self.buttons.append(dict(attrs))
+            self.texts.append("")
+
+    def handle_endtag(self, tag):
+        if tag == "button":
+            self._in_button = False
+
+    def handle_data(self, data):
+        if self._in_button:
+            self.texts[-1] += data
+
+
+def _buttons(fragment):
+    parser = _ButtonParser()
+    parser.feed(fragment)
+    return parser
+
+
+@pytest.mark.parametrize("count", [0, 1])
+def test_gamma_select_is_empty_for_fewer_than_two_entries(count):
+    entries = [GammaEntry(42.576e6, ("a",))][:count]
+
+    assert markup.gamma_select_html(entries, "card") == ""
+
+
+def test_gamma_select_has_a_button_for_each_entry_in_order():
+    entries = [GammaEntry(42.576e6, ("a", "b")), GammaEntry(-11.777e6, ("<x>",))]
+
+    parsed = _buttons(markup.gamma_select_html(entries, "card"))
+
+    assert [b["data-gamma-choice"] for b in parsed.buttons] == ["0", "1"]
+    assert [float(b["data-gamma"]) for b in parsed.buttons] == [42.576e6, -11.777e6]
+    assert [b["aria-pressed"] for b in parsed.buttons] == ["true", "false"]
+    assert "a, b" in parsed.texts[0]
+    assert "<x>" in parsed.texts[1]
+
+
+def test_gamma_select_escapes_the_names_and_the_card_id():
+    entries = [GammaEntry(1.0, ("<b>&",)), GammaEntry(2.0, ("ok",))]
+
+    out = markup.gamma_select_html(entries, 'a"<i>')
+
+    assert "<b>" not in out and "<i>" not in out
+    assert html.escape("<b>&") in out

@@ -13,6 +13,7 @@ import numpy as np
 from pulseq_analysis.seq_index import SequenceIndex
 
 from .targets import ReportTarget
+from .units import GammaEntry
 
 
 def _points(t_s, values, digits: int = 4) -> list[list[float]]:
@@ -103,18 +104,35 @@ def show_button_html(index: SequenceIndex, block_id: int, label: str) -> str:
 
 def target_legend_html(targets: Sequence[ReportTarget]) -> str:
     """The legend of the report's targets: a list with the name of each target (escaped),
-    in order, after a swatch of its color (`var(--target-k)`). A target that the cards do not
-    support is in the list too, with its reason (escaped) after the name. Returns `""` for no
-    targets."""
+    in order, after a swatch of its color (`var(--target-k)`). Returns `""` for no targets."""
     if not targets:
         return ""
-    items = []
-    for target in targets:
-        name = html.escape(target.profile.name)
-        if not target.supported:
-            name += f" (not shown in the cards: {html.escape(target.reason or '')})"
-        items.append(
-            f'<li><span class="swatch" style="background: var(--{target.color})" '
-            f'aria-hidden="true"></span>{name}</li>'
-        )
+    items = [
+        f'<li><span class="swatch" style="background: var(--{target.color})" '
+        f'aria-hidden="true"></span>{html.escape(target.profile.name)}</li>'
+        for target in targets
+    ]
     return f'<ul class="target-legend" aria-label="Targets">{"".join(items)}</ul>'
+
+
+def gamma_select_html(entries: Sequence[GammaEntry], card_id: str) -> str:
+    """The control that selects the gamma of a card (`units.gamma_entries`): a group of
+    buttons, one for each entry, with `data-gamma-choice` (the index of the entry),
+    `data-gamma` (its gamma, Hz/T) and `aria-pressed` (true for the first). The label of a
+    button gives the names of the targets of the entry and its gamma in MHz/T. The card
+    writes the block of entry `k` with `data-gamma-entry="k"`, and
+    `PulseqReport.gammaSelect` shows the block of the pressed button. Returns `""` for one
+    entry (or none): a card with one gamma has no control."""
+    if len(entries) < 2:
+        return ""
+    buttons = []
+    for k, entry in enumerate(entries):
+        label = f"{', '.join(entry.names)} ({entry.gamma / 1e6:.6g} MHz/T)"
+        buttons.append(
+            f'<button type="button" data-gamma-choice="{k}" data-gamma="{entry.gamma!r}" '
+            f'aria-pressed="{"true" if k == 0 else "false"}">{html.escape(label)}</button>'
+        )
+    return (
+        f'<div class="controls" id="{html.escape(card_id, quote=True)}-gamma" role="group" '
+        f'aria-label="Gamma of the target">{"".join(buttons)}</div>'
+    )
