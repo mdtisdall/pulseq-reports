@@ -11,7 +11,9 @@ memory. Run it in the devShell from the repository root:
 
 `--card`: which card to measure. `pns` is `cards.pns.pns_card` (with `--gradient-asc`), `rf` is
 `cards.rf_exposure.rf_exposure_card`, `limits` is `cards.gradient_limits.gradient_limits_card`
-(no window, and no targets, the default), `spectrum` is `cards.spectrum.spectrum_card`, `diagram` is
+(no window, and no targets, the default), `spectrum` is `cards.spectrum.spectrum_card` (with the
+matrix of `run_checks(seq, [example A], select=[], analyses=["gradient.spectrum"])`, whose time is
+`run_checks_s`; the card reads the result and calculates no spectrum), `diagram` is
 `cards.diagram.diagram_card` with the "First ADC" and "Full sequence" windows
 (`waveforms.first_adc_window`, `waveforms.full_window`), as `diagram_scale.py` uses,
 `rf-profile` is `cards.rf_profile.rf_profile_card` (`docs/plans/rf-profiles.md`; the
@@ -59,6 +61,9 @@ For each card run, it records (as JSON, and prints a one-line summary):
   after the card call (`resource.getrusage(resource.RUSAGE_SELF).ru_maxrss`, converted
   to bytes by platform, as `diagram_scale._peak_rss_bytes` does: `ru_maxrss` is bytes on
   macOS and KiB on Linux).
+- `run_checks_s`: for `--card spectrum`, the time of the `run_checks` call that calculates the
+  spectrum, before the peak RSS before the card is read (`time.perf_counter`); `null` for the
+  other cards.
 - `card_s`: the time of the card call (`time.perf_counter`).
 - `raised_peak`: whether the card call raised the peak RSS
   (`peak_rss_after_card_bytes > peak_rss_before_card_bytes`).
@@ -112,6 +117,7 @@ from pathlib import Path
 
 import numpy as np
 import pypulseq as pp
+from pulseq_checks import ResultMatrix, read_profile, run_checks
 
 from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
@@ -120,10 +126,12 @@ from pulseq_reports.cards.rf_exposure import rf_exposure_card
 from pulseq_reports.cards.rf_profile import rf_profile_card
 from pulseq_reports.cards.spectrum import spectrum_card
 from pulseq_reports.page import Card
+from pulseq_reports.targets import report_targets
 from pulseq_reports.waveforms import first_adc_window, full_window
 
 _THIS_FILE = Path(__file__).resolve()
 _DIAGRAM_SCALE_PATH = _THIS_FILE.parent / "diagram_scale.py"
+_TARGET_PATH = _THIS_FILE.parent.parent / "tests" / "profiles" / "example_a.toml"
 
 _RASTER_S = 10e-6  # --tr-s is rounded to the nearest multiple of this (grad_raster_time)
 
@@ -190,8 +198,16 @@ def _run_limits(seq: pp.Sequence) -> Card:
     return gradient_limits_card(seq)
 
 
-def _run_spectrum(seq: pp.Sequence) -> Card:
-    return spectrum_card(seq)
+def _spectrum_matrix(seq: pp.Sequence) -> ResultMatrix:
+    """The matrix of the analysis `gradient.spectrum` of `seq` for the example target A, with no
+    check: the spectrum is calculated here, not in the card."""
+    return run_checks(seq, [read_profile(_TARGET_PATH)], select=[], analyses=["gradient.spectrum"])
+
+
+def _run_spectrum(seq: pp.Sequence, matrix: ResultMatrix) -> Card:
+    return spectrum_card(
+        seq, targets=report_targets([read_profile(_TARGET_PATH)]), check_results=matrix
+    )
 
 
 def _run_diagram(seq: pp.Sequence, pns_lanes: bool, gradient_asc: Path | None) -> Card:
@@ -248,6 +264,12 @@ def run(
     seq = diagram_scale.BUILDERS[case](n_trs)
     build_s = time.perf_counter() - build_start
     build_rss_bytes = _current_rss_bytes()
+    run_checks_s = None
+    matrix = None
+    if card == "spectrum":
+        checks_start = time.perf_counter()
+        matrix = _spectrum_matrix(seq)
+        run_checks_s = time.perf_counter() - checks_start
     peak_rss_before_card_bytes = diagram_scale._peak_rss_bytes()
 
     card_start = time.perf_counter()
@@ -255,6 +277,8 @@ def run(
         built = _run_diagram(seq, pns_lanes, gradient_asc)
     elif card == "pns":
         built = _run_pns(seq, gradient_asc)
+    elif card == "spectrum":
+        built = _run_spectrum(seq, matrix)
     else:
         built = CARD_RUNNERS[card](seq)
     card_s = time.perf_counter() - card_start
@@ -275,6 +299,7 @@ def run(
         "build_s": build_s,
         "build_rss_bytes": build_rss_bytes,
         "peak_rss_before_card_bytes": peak_rss_before_card_bytes,
+        "run_checks_s": run_checks_s,
         "card_s": card_s,
         "peak_rss_after_card_bytes": peak_rss_after_card_bytes,
         "raised_peak": raised_peak,
@@ -292,10 +317,12 @@ def run(
     json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     result["json_path"] = str(json_path)
 
+    checks_str = "" if run_checks_s is None else f" run_checks_s={run_checks_s:.2f}"
     added_rss_str = "n/a" if added_rss_bytes is None else f"{added_rss_bytes / 1e6:.1f} MB"
     print(
         f"{card}: case={case} blocks={effective_blocks} tr_s={result['tr_s']:.6g} "
-        f"duration_s={result['duration_s']:.6g} build_s={build_s:.2f} card_s={card_s:.2f} "
+        f"duration_s={result['duration_s']:.6g} build_s={build_s:.2f}{checks_str} "
+        f"card_s={card_s:.2f} "
         f"build_rss={build_rss_bytes / 1e6:.1f} MB raised_peak={raised_peak} "
         f"added_rss={added_rss_str}"
     )

@@ -11,7 +11,7 @@ import numpy as np
 import pypulseq as pp
 import pytest
 
-from pulseq_reports import grad_spectrum, rf_exposure
+from pulseq_reports import rf_exposure
 from pulseq_reports import rf_profiles as rp
 from pulseq_reports.cards.rf_profile import _rf_table
 
@@ -72,22 +72,12 @@ def test_rf_samples_use_the_file_rf_raster(seq_file):
     assert pulse.signal_hz.size == 250
 
 
-def test_rf_exposure_and_spectrum_do_not_depend_on_the_reader_opts(seq_file):
-    """`rf_exposure` and `gradient_spectrum` of the file read with `pp.Sequence()` equal
-    those of the file read with its own `Opts`, exactly: both use the file's rasters."""
+def test_rf_exposure_does_not_depend_on_the_reader_opts(seq_file):
+    """`rf_exposure` of the file read with `pp.Sequence()` equals that of the file read with
+    its own `Opts`, exactly: both use the file's rasters."""
     default = _read(seq_file)
     own = _read(seq_file, FILE_SYSTEM)
     assert default.system.grad_raster_time != FILE_SYSTEM.grad_raster_time
     assert default.system.rf_raster_time != FILE_SYSTEM.rf_raster_time
 
     assert rf_exposure.rf_exposure(default) == rf_exposure.rf_exposure(own)
-
-    a = grad_spectrum.gradient_spectrum(default)
-    b = grad_spectrum.gradient_spectrum(own)
-    assert a.reason is None and b.reason is None
-    assert a.band_peaks == b.band_peaks
-    np.testing.assert_array_equal(a.frequency_hz, b.frequency_hz)
-    np.testing.assert_array_equal(a.rss, b.rss)
-    assert a.axes.keys() == b.axes.keys()
-    for axis in a.axes:
-        np.testing.assert_array_equal(a.axes[axis], b.axes[axis])

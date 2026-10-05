@@ -1958,264 +1958,213 @@ is in a rendered page.
 
 **Assumptions:** None.
 
-### 2.9 Gradient spectrum (`test_grad_spectrum.py`)
-
-The spectrum is calculated as in pypulseq: 50 ms Hann windows with 50 %
-overlap, the magnitude spectrum of each window, and the maximum over windows.
-Here the gradients are sampled to the end of the sequence, with half a window
-of zeros added at each end. The RSS spectrum is the root-sum-of-squares of the
-three axes in each window, then the maximum over windows. A resonance is a
-(frequency, bandwidth) pair in Hz, and the default is no resonance. The tests
-that need bands use `RESONANCES` of the test file: 590 Hz with a bandwidth of
-100 Hz (540–640 Hz) and 1140 Hz with a bandwidth of 220 Hz (1030–1250 Hz). The
-gradients are sampled through the raster sampler
-(`sampling.GradientSampler`, phase 2 of `docs/plans/cards-at-scale.md`),
-in chunks of `CHUNK_WINDOWS` windows, so the memory does not grow with the
-sequence length.
-`tests/oracles/grad_spectrum.py` is the module before that phase, sampling
-through `Sequence.get_gradients()` instead; the tests compare this module's
-spectra with it.
-
-Several tests use a 1 mT/m sine on x, on the synthetic system. On a frequency
-bin, a Hann window gives an amplitude spectral density of
-(A/2) × Σw / √(fs × Σw²). With 5000 samples at 100 kHz, that is the expected
-peak for A = 1 mT/m.
-
-**Assumptions for the whole file:**
-
-- The resonance bands of `RESONANCES` are values that the test file chooses,
-  not read from a scanner's `.asc` file.
-- The test sine frequencies (300 Hz and 600 Hz) are exactly on frequency bins,
-  and each window holds a whole number of cycles. So there is no scalloping
-  loss, and the peak is the full value.
-- The tests do not compare the result with vb-pulseq. Parity with vb-pulseq
-  (rtol 1e-12, several chunk sizes) was checked outside CI when this module
-  moved from vb-pulseq.
-
-#### `test_spin_echo_spectrum`
-
-**Checks:** For the synthetic spin echo and the two bands of `RESONANCES`, the spectrum runs
-from 0 to 2 kHz, the x and y axes have a non-zero spectrum, the RSS is at least each axis at
-every frequency, and the largest RSS value in each band is inside that band.
-
-**How:** The test calculates the spectrum of the synthetic spin echo with `resonances=RESONANCES`. It
-checks that there is no reason, that the frequencies start at 0 and end at
-2 kHz, and that there are x, y and z spectra. The x and y spectra must have a
-maximum above 0 (the synthetic spin echo has no z gradient). Each axis
-spectrum must have the same length as the frequencies, and the RSS must be at
-least that axis at every frequency. There must be a band peak for each
-resonance, in the order given, at a frequency inside the band (the resonance's
-frequency less and plus half its bandwidth), with a value relative to the
-overall peak from 0 to 1.
-
-**Assumptions:**
-
-- The relative value can be 1 when the largest RSS value is inside a band.
-  The test does not check the size of the value in a band.
-
-#### `test_sine_in_the_first_band`
-
-**Checks:** With the bands of `RESONANCES`, a 600 Hz sine gives an RSS peak at 600 Hz with the
-expected amplitude, the first band holds the overall peak, and less than 5 % leaks into
-the second band.
-
-**How:** The test makes a 0.5 s, 1 mT/m, 600 Hz sine on x. The RSS peak must
-be at 600 Hz, with a value within 1 % of the expected peak. The first band's
-relative value must be 1. The second band's must be less than 0.05.
-
-**Assumptions:**
-
-- The windows that hold the abrupt start and end of the sine leak about 1 %
-  into the second band.
-
-#### `test_sine_outside_the_bands`
-
-**Checks:** With the bands of `RESONANCES`, a 300 Hz sine puts less than 5 % of the peak in each band.
-
-**How:** The test makes a 300 Hz sine and checks that both band values
-relative to the peak are less than 0.05.
-
-**Assumptions:**
-
-- The abrupt start and end of the sine leak about 2 % into the bands.
-
-#### `test_without_resonances_there_are_no_band_peaks`
-
-**Checks:** Without `resonances` (the default), the spectrum has no resonance and no band peak.
-
-**How:** The test calculates the spectrum of the synthetic spin echo without `resonances`
-and checks that there is no reason, that `resonances` is `()` and that `band_peaks` is `()`.
-
-**Assumptions:** None.
-
-#### `test_short_sequence_is_padded_to_one_window`
-
-**Checks:** A sequence shorter than one window still has a spectrum, with its
-peak at the sine frequency.
-
-**How:** The test makes a 20 ms, 600 Hz sine. There must be no reason, and the
-RSS peak must be within 20 Hz of 600 Hz.
-
-**Assumptions:**
-
-- A 20 ms sine has a wide spectral peak, so the tolerance is wider than one
-  frequency bin.
-
-#### `test_gradients_at_the_end_are_not_attenuated`
-
-**Checks:** A sine at the end of the sequence has its full amplitude in the
-spectrum.
-
-**How:** The test makes a sequence with 440 ms of no gradient and then 60 ms
-of a 600 Hz sine, so the last sample is at the end of the sequence. The RSS
-peak must be within 2 % of the expected peak.
-
-**Assumptions:**
-
-- The sine is 60 ms long, so at least one 50 ms window is fully inside it and
-  the full amplitude is expected. The test fails if the gradient samples near
-  the end of the sequence are lost, or are only at the edge of a window.
-
-#### `test_no_gradients`
-
-**Checks:** A sequence without gradients has no spectrum, with the reason
-"no gradients", and no band values.
-
-**How:** The test makes a sequence with only a block pulse and checks the
-reason and the band values.
-
-**Assumptions:** None.
-
-#### `test_chunks_give_the_same_spectrum_as_one_chunk`
-
-**Checks:** The spectrum does not depend on the chunk size.
-
-**How:** The test makes a synthetic GRE sequence of 30 TRs of 20 ms (600 ms,
-25 windows). It calculates the spectrum, with the bands of `RESONANCES`, with `CHUNK_WINDOWS` set to 1,000,000
-(one chunk) and to 4 (7 chunks, the last one shorter). The frequencies must be
-equal, and each axis spectrum and the RSS must agree with a relative tolerance
-of 1e-12. The band peaks must be at the same frequencies.
-
-**Assumptions:**
-
-- The results are not always bit-for-bit equal, because scipy computes the
-  FFTs of a different number of windows in each call. The tolerance allows for
-  that rounding.
-
-#### `test_matches_oracle_on_synthetic_sequences`
-
-**Checks:** Phase 5 of `docs/plans/cards-at-scale.md` moved
-`gradient_spectrum` from `Sequence.get_gradients()` to the raster sampler
-(`sampling.GradientSampler`). This test checks that the axis spectra, the RSS
-spectrum and the band peaks still agree with the oracle
-(`tests/oracles/grad_spectrum.py`, the module before that change), on the
-synthetic spin echo, GRE, arbitrary-gradient, empty and 600 Hz sine
-sequences.
-
-**How:** For each sequence, the test calculates the spectrum with this
-module and with the oracle, both with the bands of `RESONANCES`. The reasons must be equal. When there is a
-spectrum, the frequencies must be equal, the axis spectra and the RSS must
-agree within a relative 1e-12 or an absolute 1e-12 times the array's own
-peak, and the band peaks must agree on their resonance, their peak value,
-their frequency and their relative value within the same tolerance.
-
-**Assumptions:**
-
-- The sampler builds the waveform from each block's own corner points and
-  `numpy.interp`, a different order of float operations than
-  `Sequence.get_gradients()`'s one whole-axis `PPoly`, so the values are not
-  always bit-for-bit equal (section 3.5, item 2 of
-  `docs/plans/cards-at-scale.md`).
-- The long sequences of task 5.3 are in
-  `test_matches_oracle_on_long_sequences`, with a tolerance that grows with
-  the duration.
-
-#### `test_matches_oracle_on_long_sequences`
-
-**Checks:** The same comparison with the oracle as
-`test_matches_oracle_on_synthetic_sequences`, on the builders of
-`scripts/diagram_scale.py` (`build_repeating` and `build_worst`) at 10^4
-blocks (task 5.3 of `docs/plans/cards-at-scale.md`).
-
-**How:** The test imports `scripts/diagram_scale.py` by path, through
-`synthetic.load_diagram_scale`, builds each sequence with `10^4 / TR_BLOCKS`
-TRs, and compares this module's spectrum with the oracle's (both with the
-bands of `RESONANCES`), as the test above does, with the tolerance `1e-12 * max(1, duration in s)` instead of 1e-12.
-
-**Assumptions:**
-
-- The user chose this tolerance on 2026-09-28. Both implementations place each
-  gradient corner at an absolute time with float rounding, in a different
-  order of additions: the sampler adds `(block start + delay) + offset`, and
-  `Sequence.get_gradients()` adds the segment durations one at a time. The
-  rounding of an absolute time grows with the time, and a gradient ramp turns
-  it into a value difference. Measured: 2.5e-12 of the peak at 10^4 repeating
-  blocks (12 s), 3.6e-12 at 10^5 blocks. Neither value is more correct.
-
 ### 2.10 Gradient spectrum card (`test_spectrum_card.py`)
 
-`test_spectrum_card.py` tests `cards/spectrum.py`. `_spectrum_data` turns the
-gradient spectrum of one sequence (`grad_spectrum.gradient_spectrum`) into
-JSON-ready data, in Hz and mT/m/√Hz. `spectrum_card` builds the
-"Gradient spectrum" `Card`: for one sequence, the body is
-`_spectrum_html(data, card_id)` — the Linear/dB chart controls and the chart
-itself, or a note that there is no spectrum. The card has no resonance bands:
-its `data` has empty `resonances` and `bands`. `data` is always the JSON-ready
-spectrum dict and `script` is always `"spectrum"`.
+`test_spectrum_card.py` tests `cards/spectrum.py`. `spectrum_card(seq, *, targets,
+check_results, card_id)` builds the "Gradient spectrum" `Card` from the analysis
+`gradient.spectrum` of the result matrix: it calls no spectrum function (`pulseq-analysis`
+tests the calculation). The card reads the series `gradient_spectrum` of each target whose
+result is done (the arrays `value`, `x`, `y` and `z` in Hz/m/√Hz, and the frequency
+`coord_start + k * coord_step`), and draws it in mT/m/√Hz with the \|γ\| of the target. The
+targets with the same \|γ\| and equal arrays are one group, and each group is one line in
+each lane (several groups: the `series` of the lanes). `data` is the JSON-ready dict
+(`reason`, `max_frequency_hz`, `db_floor`, `lanes`, `resonances`) and `script` is always
+`"spectrum"`.
 
-The tests use `tests/synthetic.py`'s `spin_echo_sequence` and
-`empty_sequence`.
+The tests use `tests/synthetic.py`'s `spin_echo_sequence` and `empty_sequence`, the target
+profiles of `tests/profiles` and of the `make_profile` fixture, and `ResultMatrix` objects
+that the file makes by hand, with a `gradient_spectrum` series of five frequencies (0 to
+2000 Hz) in which `x` is 1 to 5 mT/m/√Hz for the proton gamma. Two tests run
+`pulseq_checks.run_checks` for one target.
 
-#### `test_spectrum_data_for_spin_echo`
+#### `test_without_a_chart_the_data_has_a_reason_and_no_lanes`
 
-**Checks:** For the synthetic spin echo sequence and the two resonances of `RESONANCES`
-(given to `gradient_spectrum`), the spectrum data has the two resonances, lanes for Gx, Gy,
-Gz and RSS with one shared value range from 0 Hz to the maximum frequency, and the two bands.
+**Checks:** With no target, with no matrix, with a matrix that has no `gradient.spectrum`
+result, with a result "not evaluated", with a result "error" and with a result "done" with
+no series (no gradient event), `data["reason"]` is set and the card has no lanes, no maximum
+frequency, no chart element and no scale button, and its `script` is still `"spectrum"`.
 
-**How:** The test makes the spectrum data from `gradient_spectrum(seq, resonances=RESONANCES)`.
-It checks that there is no reason, and that the resonances are 590 Hz (100 Hz wide) and
-1140 Hz (220 Hz wide). The lanes must be Gx, Gy, Gz and RSS. Each lane must have the unit
-mT/m/√Hz, the same value range as the RSS lane, and one segment from 0 Hz to the
-maximum frequency. The bands must be 540–640 Hz and 1030–1250 Hz.
+**How:** Six parametrized cases, each with the card for the spin echo sequence and one
+target of the `make_profile` fixture.
 
-**Assumptions:**
+**Assumptions:** None.
 
-- One value range for all lanes makes the axes comparable. The RSS is the
-  largest, so its range holds the others.
+#### `test_a_result_that_is_not_done_gives_its_reason_in_the_body_escaped`
+
+**Checks:** The note of the body has the reason of each analysis result that is not "done",
+and the markup of a reason is escaped.
+
+**How:** Two targets with an "error" result whose reason has `<b>` and `&`, and a "not
+evaluated" result. The test checks the escaped reason and the other reason in the text of the
+muted paragraphs, and that `<b>` is not in the body.
+
+**Assumptions:** None.
+
+#### `test_a_not_done_target_is_named_next_to_a_target_that_is_drawn`
+
+**Checks:** When one target has a spectrum and another has an "error" result, the card
+draws the four lanes of the first and its notes name the second with its reason.
+
+**How:** Two targets, one "done" with a series and one "error". The test checks that `reason`
+is None, the lane IDs, and a muted paragraph with the name and the reason of the second.
+
+**Assumptions:** None.
+
+#### `test_one_target_gives_four_lanes_of_the_series_in_mt_per_m`
+
+**Checks:** One target gives the lanes Gx, Gy, Gz and RSS with their axis colors (RSS
+"ink-2"), the unit mT/m/√Hz, no `series` key, the frequencies of the series, the values of
+the series times 1e3 / \|γ\|, and a domain of 0 to 1.1 times the largest RSS value, with the
+ticks 0 and that value. `max_frequency_hz` is the one of the series.
+
+**How:** One target with the proton gamma and a hand-made series. The values are compared
+within a relative 1e-3 (the card keeps four significant digits).
+
+**Assumptions:** None.
+
+#### `test_the_frequency_of_a_sample_follows_coord_start_and_coord_step`
+
+**Checks:** The frequency of sample `k` is `coord_start + k * coord_step`.
+
+**How:** A series with `coord_start` 10 Hz and `coord_step` 25 Hz; the test compares the
+frequencies of the first lane with 10, 35, 60, 85 and 110 Hz.
+
+**Assumptions:** None.
+
+#### `test_targets_with_the_same_spectrum_and_gamma_are_one_group`
+
+**Checks:** Two targets with the same \|γ\| and equal series give the same lanes as one target,
+with no `series` key.
+
+**How:** The test compares the `lanes` of the card of two targets with those of the card of
+one target.
+
+**Assumptions:** None.
+
+#### `test_a_negative_gamma_is_in_the_group_of_its_magnitude`
+
+**Checks:** Targets with γ and −γ are one group: no lane has `series`, and the last RSS value
+is the series value times 1e3 / \|γ\|.
+
+**How:** Two targets with the gamma 42.576e6 and −42.576e6 Hz/T and equal series.
+
+**Assumptions:** None.
+
+#### `test_targets_with_different_magnitudes_give_a_series_each_in_their_colors`
+
+**Checks:** Two targets with different \|γ\| and equal arrays give each lane two `series`
+(and no segments in the lane itself), in the colors `target-1` and `target-2`, labeled with
+the names of their targets. The values of series `k` are the array times 1e3 / \|γ\| of group
+`k`, and every lane has the domain and ticks of 1.1 times the largest RSS value of both.
+
+**How:** Targets with the gamma 42.576e6 and 21.288e6 Hz/T, and the same series.
+
+**Assumptions:** None.
+
+#### `test_targets_with_one_gamma_and_different_spectra_give_a_series_each`
+
+**Checks:** Three targets with one \|γ\|, of which the first and the third have equal series and
+the second has twice the values, give two series: the first labeled with the names of the
+first and the third target, the second with the name of the second, and the values of the
+second are twice those of the first.
+
+**How:** The test compares the labels, the colors and the ratio of the values.
+
+**Assumptions:** None.
+
+#### `test_the_window_and_the_frequency_come_from_the_series`
+
+**Checks:** `max_frequency_hz` of the data is `meta["max_frequency_hz"]` of the series, and
+the explanation has the window `meta["window_s"]` in ms and that frequency, not the constants
+of the method.
+
+**How:** A series with a window of 20 ms and a maximum frequency of 1000 Hz. The test checks
+that the explanation paragraph has "20 ms" and "1000 Hz", and not "50 ms" or "2000 Hz".
+
+**Assumptions:** None.
+
+#### `test_each_target_with_resonances_has_its_bands_in_its_color`
+
+**Checks:** `data["resonances"]` has, for each resonance of each target in the order of the
+targets, `lo` and `hi` (frequency minus and plus half the bandwidth), the color of the target
+and its name. A target without resonances gives none. The data has no `bands` key.
+
+**How:** Targets example A, a profile without resonances, and example B.
+
+**Assumptions:** The resonances of the example profiles are those of the files (700 Hz and
+1300 Hz, 120 Hz and 200 Hz wide, for A; 800 Hz and 1500 Hz, 80 Hz and 250 Hz wide, for B).
+
+#### `test_the_bands_are_in_the_data_without_a_chart`
+
+**Checks:** A card with a target and no matrix has no chart, and its data still has the
+bands of the target.
+
+**How:** Example A with no matrix.
+
+**Assumptions:** None.
+
+#### `test_a_target_without_resonances_is_named_in_a_note`
+
+**Checks:** A target without resonances is named in a muted paragraph, and a target with
+resonances is not.
+
+**How:** Example A and a profile named "Plain target" without `[acoustic]`; the test searches
+the text of the `<p class="muted">` elements.
+
+**Assumptions:** None.
+
+#### `test_each_target_has_a_check_line_with_its_state_and_value`
+
+**Checks:** The body has a line for each target, with the swatch of its color, its name, and
+the result of the check `acoustic.resonance-energy` of that target: the state, the value and
+the limit with the unit for "pass" and "fail", the reason (escaped) for "not evaluated". A
+target that has no result of that check (only the result of another check) has its line with
+no state and no value. The body has no table.
+
+**How:** Four targets with a "pass" result (12.3 %, limit 30 %), a "fail" result (45.6 %), a
+"not evaluated" result whose reason has `<band>`, and no result of the check.
+
+**Assumptions:** None.
+
+#### `test_the_check_line_does_not_depend_on_the_chart`
+
+**Checks:** A card with no chart (an analysis "error" and a result with no gradient) still has
+the check line of each target.
+
+**How:** Two targets, one with a "pass" result of the check, one with none.
+
+**Assumptions:** None.
+
+#### `test_a_card_from_a_real_run_has_the_spectrum_and_the_check_result`
+
+**Checks:** For the matrix of a real `run_checks` of example A, with the check and the
+analysis, the card made by `build_cards` has the RSS lane equal to the series times
+1e3 / \|γ\|, the frequency step of the series, `max_frequency_hz` of the series, and the state
+and value of the result of the check in the line of the target.
+
+**How:** `run_checks(spin_echo_sequence(), [A], select=["acoustic.resonance-energy"],
+analyses=["gradient.spectrum"])`, then `build_cards(cards=["gradient-spectrum"], targets=...,
+check_results=...)`.
+
+**Assumptions:** None.
+
+#### `test_a_real_run_for_a_sequence_without_gradients_has_no_chart`
+
+**Checks:** For a sequence with only a delay block, the result of the analysis is "done" with
+no series, and the card has the reason "no gradients", no lanes and no chart element.
+
+**How:** `run_checks(empty_sequence(), [A], select=[], analyses=["gradient.spectrum"])`.
+
+**Assumptions:** None.
 
 #### `test_report_has_gradient_spectrum_card`
 
 **Checks:** The rendered page has the gradient spectrum card with the chart, the Linear and dB
 buttons with Linear selected, and the −80 dB note.
 
-**How:** The test builds the card for the spin echo sequence, renders the page,
-cuts out the text from the card's id to the end of the result, and checks
-for the title, the diagram element, the
-two scale buttons with their pressed states, and "drawn at −80 dB".
-
-**Assumptions:** None.
-
-#### `test_report_without_gradients_has_no_spectrum_chart`
-
-**Checks:** For a sequence without gradients, the card's body is the "No
-gradient spectrum" note, on its own and inside a rendered page, and the page
-has no spectrum diagram element.
-
-**How:** The test builds the card for the synthetic sequence with only a
-delay block, checks that the body equals the note "No gradient spectrum: no
-gradients." exactly, and that the note is in a rendered page with no
-`gradient-spectrum-diagram` id.
-
-**Assumptions:** None.
-
-#### `test_the_card_has_no_bands`
-
-**Checks:** The card has no bands: its data has no resonance and no band, and its body has
-no table.
-
-**How:** The test builds the card for the synthetic spin echo sequence and checks that
-`data["reason"]` is None, that `data["resonances"]` and `data["bands"]` are `[]`, and that
-the body has no `<table`.
+**How:** The test builds the card for one target with a hand-made series, renders the page,
+cuts out the text from the card's id to the end of the result, and checks for the title, the
+diagram element, the two scale buttons with their pressed states, and "drawn at −80 dB".
 
 **Assumptions:** None.
 
@@ -7228,7 +7177,8 @@ a second card that subscribes to `goto`: a request topic has at most one card th
 #### `test_the_options_of_each_spec_are_the_keywords_of_its_builder`
 
 **Checks:** For each of the nine library cards, each keyword-only parameter of its builder is
-an option that its spec declares, except `card_id`, `targets` and (for the blocks and gradient limits
+an option that its spec declares, except `card_id`, `targets` and `check_results` (the targets
+and the matrix of the report) and (for the blocks and gradient limits
 cards) `windows`; each option that the spec declares is a keyword-only parameter of the
 builder, with the same default as the option (decision 17 of the plan); and the default
 `card_id` is the spec's name.
@@ -7254,7 +7204,7 @@ builder, with the same default as the option (decision 17 of the plan); and the 
 
 **Checks:** `build_cards` with targets makes the same cards (equal `Card` objects, not only
 the same ids) as `build_cards` without targets, but for the cards that use the targets
-(`_USE_TARGETS`: `gradient-limits`), which are built in both cases.
+(`_USE_TARGETS`: `gradient-limits` and `gradient-spectrum`), which are built in both cases.
 
 **How:** `build_cards` for the spin echo sequence with all the cards, twice without targets
 and once with two target profiles. The test checks that the second build without targets
@@ -7549,10 +7499,11 @@ test reads the arguments of `build_cards`.
 #### `test_the_analyses_of_the_run_follow_the_selected_cards`
 
 **Checks:** `run_checks` gets `analyses=("pns.safe.levels",)` when the `pns` card is selected
-and when the `diagram` card is selected with `--pns-lane`, and `()` with only `timing` and with
-`diagram` without `--pns-lane`.
+and when the `diagram` card is selected with `--pns-lane`, `("gradient.spectrum",)` when the
+`gradient-spectrum` card is selected, both (in that order) when the `gradient-spectrum` and
+`pns` cards are selected, and `()` with only `timing` and with `diagram` without `--pns-lane`.
 
-**How:** Four parametrized runs with `fake_checks` and `--target A`.
+**How:** Six parametrized runs with `fake_checks` and `--target A`.
 
 **Assumptions:** The status of each run is 0 with the fake matrix.
 
@@ -7754,25 +7705,21 @@ the sample count of `block_pulse(seq, 0)`. The durations are compared within
 
 **Assumptions:** None.
 
-#### `test_rf_exposure_and_spectrum_do_not_depend_on_the_reader_opts`
+#### `test_rf_exposure_does_not_depend_on_the_reader_opts`
 
-**Checks:** `rf_exposure.rf_exposure` and `grad_spectrum.gradient_spectrum`
-of the file read with `pp.Sequence()` are exactly equal to those of the same
-file read with `pp.Sequence(<the file's Opts>)`.
+**Checks:** `rf_exposure.rf_exposure` of the file read with `pp.Sequence()` is
+exactly equal to that of the same file read with `pp.Sequence(<the file's Opts>)`.
 
 **How:** The test checks that the two reads have different
-`seq.system` rasters, then compares the two `RfExposure` results with `==`,
-and the two spectra's band peaks with `==` and their frequency, RSS and
-per-axis arrays with `assert_array_equal`.
+`seq.system` rasters, then compares the two `RfExposure` results with `==`.
 
 **Assumptions:**
 
-- Before the fix, the differences were small (RF energy at float rounding,
-  the spectrum at about 1e-5 relative), so only an exact comparison finds
-  them. An exact comparison holds because both reads give the same
-  `seq.grad_raster_time`, `seq.rf_raster_time` and events, and the analyses
-  read no other value from `seq.system` that the two `Opts` give
-  differently, except `gamma` and `B0`, which are the same in both.
+- Before the fix, the differences were small (RF energy at float rounding), so
+  only an exact comparison finds them. An exact comparison holds because both
+  reads give the same `seq.grad_raster_time`, `seq.rf_raster_time` and events,
+  and the analysis reads no other value from `seq.system` that the two `Opts`
+  give differently, except `gamma` and `B0`, which are the same in both.
 
 ### 2.40 Report targets (`test_targets.py`)
 

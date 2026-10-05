@@ -447,10 +447,19 @@ def test_two_files_run_the_checks_once_for_each_file(seq_file, tmp_path, fake_ch
     [
         (["--cards", "pns,timing"], ("pns.safe.levels",)),
         (["--cards", "diagram", "--pns-lane"], ("pns.safe.levels",)),
+        (["--cards", "gradient-spectrum,timing"], ("gradient.spectrum",)),
+        (["--cards", "gradient-spectrum,pns"], ("gradient.spectrum", "pns.safe.levels")),
         (["--cards", "timing"], ()),
         (["--cards", "diagram"], ()),
     ],
-    ids=["pns-card", "diagram-with-pns-lane", "timing-only", "diagram-without-pns-lane"],
+    ids=[
+        "pns-card",
+        "diagram-with-pns-lane",
+        "spectrum-card",
+        "spectrum-and-pns-cards",
+        "timing-only",
+        "diagram-without-pns-lane",
+    ],
 )
 def test_the_analyses_of_the_run_follow_the_selected_cards(
     seq_file, tmp_path, fake_checks, flags, analyses
