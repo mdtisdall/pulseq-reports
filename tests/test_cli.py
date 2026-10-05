@@ -6,7 +6,6 @@ import pypulseq as pp
 import pytest
 from plugin_card import SPEC
 from pulseq_checks import (
-    HardwareLimits,
     ResultMatrix,
     RunError,
     read_check_config,
@@ -15,7 +14,7 @@ from pulseq_checks import (
 )
 from synthetic import gre_sequence, spin_echo_sequence
 
-from pulseq_reports import __version__, cli, options, registry
+from pulseq_reports import __version__, cli, registry
 from pulseq_reports.page import render_page
 from pulseq_reports.registry import build_cards, discover
 
@@ -51,11 +50,10 @@ def _page(path, cards=None, **values):
 def test_the_page_of_the_command_line_equals_the_page_of_build_cards(seq_file, tmp_path):
     out = tmp_path / "out.html"
 
-    status = cli.main([str(seq_file), "-o", str(out), "--max-grad", "30", "--max-slew", "200"])
+    status = cli.main([str(seq_file), "-o", str(out), "--max-rows", "7"])
 
     assert status == 0
-    expected = _page(seq_file, limits=HardwareLimits(30.0, 200.0, options.COMMAND_LINE_LABEL))
-    assert out.read_text(encoding="utf-8") == expected
+    assert out.read_text(encoding="utf-8") == _page(seq_file, max_rows=7)
 
 
 def test_the_default_output_is_the_stem_in_the_current_directory(seq_file, tmp_path, monkeypatch):
@@ -66,31 +64,6 @@ def test_the_default_output_is_the_stem_in_the_current_directory(seq_file, tmp_p
     assert cli.main([str(seq_file), "--cards", FAST]) == 0
 
     assert (work / "se.html").is_file()
-
-
-def test_max_grad_and_max_slew_reach_the_gradient_limits_card(seq_file, tmp_path, capsys):
-    out = tmp_path / "out.html"
-
-    assert cli.main([str(seq_file), "-o", str(out), "--cards", "gradient-limits"]) == 0
-    assert capsys.readouterr().err == ""
-    assert out.read_text(encoding="utf-8") == _page(seq_file, ["gradient-limits"])
-
-    args = ["--cards", "gradient-limits", "--max-grad", "33.25", "--max-slew", "211.5"]
-    assert cli.main([str(seq_file), "-o", str(out), *args]) == 0
-    assert capsys.readouterr().err == ""
-    limits = HardwareLimits(33.25, 211.5, options.COMMAND_LINE_LABEL)
-    assert out.read_text(encoding="utf-8") == _page(seq_file, ["gradient-limits"], limits=limits)
-    assert out.read_text(encoding="utf-8") != _page(seq_file, ["gradient-limits"])
-
-
-@pytest.mark.parametrize("flag", ["--max-grad", "--max-slew"])
-def test_one_of_max_grad_and_max_slew_alone_exits_1(seq_file, tmp_path, capsys, flag):
-    out = tmp_path / "out.html"
-
-    assert cli.main([str(seq_file), "-o", str(out), flag, "30"]) == 1
-
-    assert "--max-grad" in capsys.readouterr().err
-    assert not out.exists()
 
 
 def test_two_files_give_two_pages_in_the_output_directory(seq_file, tmp_path):
@@ -254,26 +227,14 @@ def test_each_option_of_the_discovered_specs_has_its_flag_in_the_parser(capsys, 
                     assert "--no-" + flag.name[2:] in help_text
 
 
-CONFIG_FLAGS = [
-    "--max-grad", "30", "--max-slew", "200", "--max-rows", "5",
-]  # fmt: skip
+CONFIG_FLAGS = ["--max-rows", "5"]
 CONFIG_VALUES = {
-    "limits": {
-        "max_grad_mt_per_m": 30,
-        "max_slew_t_per_m_per_s": 200,
-        "label": options.COMMAND_LINE_LABEL,
-    },
     "max_rows": 5,
     "cards": ["gradient-limits", "blocks", "gradient-spectrum"],
 }
 CONFIG_TOML = """
 cards = ["gradient-limits", "blocks", "gradient-spectrum"]
 max_rows = 5
-
-[limits]
-max_grad_mt_per_m = 30
-max_slew_t_per_m_per_s = 200
-label = "command line"
 """
 
 
@@ -304,7 +265,7 @@ def test_a_flag_overrides_the_config_file(seq_file, tmp_path):
         cli.main([str(seq_file), "-o", str(out), "--config", str(config), "--max-rows", "3"]) == 0
     )
     assert cli.main([str(seq_file), "-o", str(tmp_path / "f.html"), "--cards", FAST,
-                     *CONFIG_FLAGS[:-2], "--max-rows", "3"]) == 0  # fmt: skip
+                     "--max-rows", "3"]) == 0  # fmt: skip
 
     assert out.read_text(encoding="utf-8") == (tmp_path / "f.html").read_text(encoding="utf-8")
 

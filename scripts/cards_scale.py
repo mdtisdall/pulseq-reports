@@ -11,7 +11,7 @@ memory. Run it in the devShell from the repository root:
 
 `--card`: which card to measure. `pns` is `cards.pns.pns_card` (with `--gradient-asc`), `rf` is
 `cards.rf_exposure.rf_exposure_card`, `limits` is `cards.gradient_limits.gradient_limits_card`
-(no window, and no limits, the default), `spectrum` is `cards.spectrum.spectrum_card`, `diagram` is
+(no window, and no targets, the default), `spectrum` is `cards.spectrum.spectrum_card`, `diagram` is
 `cards.diagram.diagram_card` with the "First ADC" and "Full sequence" windows
 (`waveforms.first_adc_window`, `waveforms.full_window`), as `diagram_scale.py` uses,
 `rf-profile` is `cards.rf_profile.rf_profile_card` (`docs/plans/rf-profiles.md`; the

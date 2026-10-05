@@ -81,7 +81,8 @@ button[aria-pressed="true"] { background: var(--ink); color: var(--surface); bor
    after a swatch of its color. */
 .target-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; margin: 0 0 10px;
   padding: 0; }
-.target-legend .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+/* The swatch of a target color, in the legend and in the cards. */
+.swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px;
   border: 1px solid var(--border); }
 .chart { position: relative; }
 .chart svg { display: block; width: 100%; height: auto; }

@@ -1,32 +1,49 @@
+import dataclasses
 import math
+import re
 from html.parser import HTMLParser
+from pathlib import Path
 
 import pypulseq as pp
 import pytest
 from pulseq_analysis.grad_limits import gradient_limits
-from pulseq_checks import HardwareLimits
+from pulseq_checks import read_profile
 from synthetic import GAMMA_1H, SYSTEM
 
 from pulseq_reports import page
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
 from pulseq_reports.markup import fmt
+from pulseq_reports.registry import build_cards
+from pulseq_reports.targets import report_targets
 from pulseq_reports.waveforms import TimeWindow
+
+PROFILES = Path(__file__).parent / "profiles"
 
 
 class _CardParser(HTMLParser):
     """The tables of a card body, each as its rows of cell texts (the header row first, a
-    button's own text left out, white space collapsed), and the attributes of each button."""
+    button's own text left out, white space collapsed), the attributes of each button, the
+    `style` of each swatch, and for each table the `data-gamma-entry` and the `hidden`
+    attribute of the element around it (None for a table with no such element)."""
 
     def __init__(self) -> None:
         super().__init__()
         self.tables: list[list[list[str]]] = []
+        self.entries: list[tuple[str, bool] | None] = []
         self.buttons: list[dict[str, str | None]] = []
+        self.swatches: list[str] = []
         self._cell: list[str] | None = None
         self._in_button = False
+        self._entry: tuple[str, bool] | None = None
 
     def handle_starttag(self, tag, attrs):
-        if tag == "table":
+        if tag == "div" and "data-gamma-entry" in dict(attrs):
+            self._entry = (dict(attrs)["data-gamma-entry"], "hidden" in dict(attrs))
+        elif tag == "span" and dict(attrs).get("class") == "swatch":
+            self.swatches.append(dict(attrs)["style"])
+        elif tag == "table":
             self.tables.append([])
+            self.entries.append(self._entry)
         elif tag == "tr":
             self.tables[-1].append([])
         elif tag in ("th", "td"):
@@ -53,11 +70,31 @@ def _parse(body_html: str) -> _CardParser:
     return parser
 
 
-LIMITS = HardwareLimits(
-    max_grad_mt_per_m=SYSTEM.max_grad / GAMMA_1H * 1e3,
-    max_slew_t_per_m_per_s=SYSTEM.max_slew / GAMMA_1H,
-    label="system limits",
-)
+def _opts(max_grad=None, max_slew=None, gamma=None) -> str:
+    """The lines of the `[opts]` section of a target profile: the limits in mT/m and T/m/s,
+    and the gamma (Hz/T), each when it is given."""
+    lines = []
+    if max_grad is not None:
+        lines += [f"max_grad = {max_grad}", 'grad_unit = "mT/m"']
+    if max_slew is not None:
+        lines += [f"max_slew = {max_slew}", 'slew_unit = "T/m/s"']
+    if gamma is not None:
+        lines.append(f"gamma = {gamma!r}")
+    return "\n".join(lines)
+
+
+SYSTEM_OPTS = _opts(28, 150)  # the limits of the test system: SYSTEM.max_grad, SYSTEM.max_slew
+
+
+def _targets(make_profile, *specs):
+    """The `ReportTarget` of each `(name, opts)` of `specs`, with `opts` the lines of the
+    `[opts]` section (see `_opts`)."""
+    return report_targets([make_profile(name, opts) for name, opts in specs])
+
+
+def _heading(name: str) -> str:
+    """The text of the heading of the percent column of the target `name`."""
+    return f"% of limit ({name})"
 
 
 def _where(value: str, block_id: int | None, time_s: float) -> str:
@@ -92,10 +129,10 @@ def _hand_computed(amplitude: float, gx) -> dict:
     }
 
 
-def test_table_has_axis_rows_and_percents():
-    """One x trapezoid: the Gx, Gy, Gz and |G| rows hold the peak, the percent of the
-    limit, the max slew, its percent, and the RMS, each computed by hand from the
-    trapezoid's own parameters. The Gx and |G| peaks are reached at the end of the rise
+def test_table_has_axis_rows_and_percents(make_profile):
+    """One x trapezoid and one target with limits: the Gx, Gy, Gz and |G| rows hold the
+    peak, the percent of the limit, the max slew, its percent, and the RMS, each computed
+    by hand from the trapezoid's own parameters. The Gx and |G| peaks are reached at the end of the rise
     (0.2 ms) and the Gx max slew at its start (0 ms), all in block 1; the zero values of Gy
     and Gz have no block."""
     amplitude = 0.4 * SYSTEM.max_grad
@@ -109,10 +146,17 @@ def test_table_has_axis_rows_and_percents():
     block_id = next(iter(seq.block_events))
     peak_cell = _where(fmt(values["peak_mt"]), block_id, gx.rise_time)
 
-    card = gradient_limits_card(seq, limits=LIMITS)
+    card = gradient_limits_card(seq, targets=_targets(make_profile, ("system", SYSTEM_OPTS)))
 
     expected_table = [
-        ["Axis", "Peak (mT/m)", "% of limit", "Max slew (T/m/s)", "% of limit", "RMS (mT/m)"],
+        [
+            "Axis",
+            "Peak (mT/m)",
+            _heading("system"),
+            "Max slew (T/m/s)",
+            _heading("system"),
+            "RMS (mT/m)",
+        ],
         [
             "Gx",
             peak_cell,
@@ -134,7 +178,7 @@ def test_table_has_axis_rows_and_percents():
     assert _parse(card.body_html).tables == [expected_table]
 
 
-def test_window_gives_rms_over_window_and_over_whole_file():
+def test_window_gives_rms_over_window_and_over_whole_file(make_profile):
     """With a window, the table has two RMS columns: over the window, and over the
     whole file. The window here is the whole first ramp, so the window RMS differs
     from the whole-file RMS, and both are computed by hand from the trapezoid."""
@@ -153,15 +197,19 @@ def test_window_gives_rms_over_window_and_over_whole_file():
     # The peak is at the window end, and the slew segment starts at the window start.
     peak_cell = _where(fmt(window_peak_mt), block_id, gx.rise_time)
 
-    card = gradient_limits_card(seq, windows=[TimeWindow("ramp", *window)], limits=LIMITS)
+    card = gradient_limits_card(
+        seq,
+        windows=[TimeWindow("ramp", *window)],
+        targets=_targets(make_profile, ("system", SYSTEM_OPTS)),
+    )
 
     expected_table = [
         [
             "Axis",
             "Peak (mT/m)",
-            "% of limit",
+            _heading("system"),
             "Max slew (T/m/s)",
-            "% of limit",
+            _heading("system"),
             "RMS over window (mT/m)",
             "RMS over whole file (mT/m)",
         ],
@@ -191,35 +239,39 @@ def test_window_gives_rms_over_window_and_over_whole_file():
     assert _parse(card.body_html).tables == [expected_table]
 
 
-def test_without_limits_the_table_has_no_percent_columns():
-    """Without `limits`, the tables have no "% of limit" header and no percent cell: the
-    whole-file table has four columns (axis, peak, max slew, RMS), and the table of a window
-    has five (RMS over the window and over the whole file). With `limits`, each table has
-    the two percent columns more. The cells of each row are as many as the headers."""
+def test_without_a_target_with_limits_the_tables_have_no_percent_columns(make_profile):
+    """With no target, and with a target that has no limits, the tables have no "% of limit"
+    header and no percent cell: the whole-file table has four columns (axis, peak, max slew,
+    RMS), and the table of a window has five (RMS over the window and over the whole file).
+    With a target that has limits, each table has the two percent columns more. The cells of
+    each row are as many as the headers."""
     seq = _two_trapezoid_seq()
     end = gradient_limits(seq).range_s[1]
     windows = [TimeWindow("first half", 0.0, end / 2), TimeWindow("second half", end / 2, end)]
+    no_limits = _targets(make_profile, ("no-limits", "max_grad = 30"))
+    limits = _targets(make_profile, ("system", SYSTEM_OPTS))
 
     for kwargs, columns in (({}, 4), ({"windows": windows}, 5)):
-        for limits, percent_columns in ((None, 0), (LIMITS, 2)):
-            card = gradient_limits_card(seq, limits=limits, **kwargs)
+        for targets, percent_columns in (((), 0), (no_limits, 0), (limits, 2)):
+            card = gradient_limits_card(seq, targets=targets, **kwargs)
 
             tables = _parse(card.body_html).tables
             assert len(tables) == len(kwargs.get("windows", [None]))
             for table in tables:
-                assert table[0].count("% of limit") == percent_columns
+                assert sum(h.startswith("% of limit") for h in table[0]) == percent_columns
                 assert [len(row) for row in table] == [columns + percent_columns] * 5
 
 
-def test_without_limits_the_values_are_those_with_limits():
-    """The cells that the percent columns do not hold are the same with and without
-    `limits`: the table without limits is the table with limits, less its percent columns."""
+def test_without_a_target_with_limits_the_values_are_those_with_one(make_profile):
+    """The cells that the percent columns do not hold are the same with and without a target
+    that has limits: the table without it is the table with it, less its percent columns."""
     seq = _two_trapezoid_seq()
 
     without = _parse(gradient_limits_card(seq).body_html).tables[0]
-    with_limits = _parse(gradient_limits_card(seq, limits=LIMITS).body_html).tables[0]
+    targets = _targets(make_profile, ("system", SYSTEM_OPTS))
+    with_limits = _parse(gradient_limits_card(seq, targets=targets).body_html).tables[0]
 
-    percent = [i for i, header in enumerate(with_limits[0]) if header == "% of limit"]
+    percent = [i for i, header in enumerate(with_limits[0]) if header.startswith("% of limit")]
     assert percent == [2, 4]
     assert without == [
         [cell for i, cell in enumerate(row) if i not in percent] for row in with_limits
@@ -241,9 +293,11 @@ def test_no_gradients_adds_a_reason_note():
 
 
 def _expected_window_table(seq, window) -> list[list[str]]:
-    """The cell texts of the table of one window, from `gradient_limits` for that range."""
+    """The cell texts of the table of one window, from `gradient_limits` for that range, with
+    the percent columns of the target "system" (the limits of `SYSTEM`)."""
     result = gradient_limits(seq, window=window)
-    lim = LIMITS
+    max_grad_mt = SYSTEM.max_grad / GAMMA_1H * 1e3
+    max_slew_t = SYSTEM.max_slew / GAMMA_1H
 
     def mt(v):  # Hz/m to mT/m, as the card converts
         return v / GAMMA_1H * 1e3
@@ -258,9 +312,9 @@ def _expected_window_table(seq, window) -> list[list[str]]:
             [
                 label,
                 _where(fmt(mt(a.peak_hz_per_m)), a.peak_block, a.peak_time_s),
-                fmt(mt(a.peak_hz_per_m) / lim.max_grad_mt_per_m * 100),
+                fmt(mt(a.peak_hz_per_m) / max_grad_mt * 100),
                 _where(fmt(t_per_s(a.max_slew_hz_per_m_per_s)), a.slew_block, a.slew_time_s),
-                fmt(t_per_s(a.max_slew_hz_per_m_per_s) / lim.max_slew_t_per_m_per_s * 100),
+                fmt(t_per_s(a.max_slew_hz_per_m_per_s) / max_slew_t * 100),
                 fmt(mt(a.rms_hz_per_m)),
                 fmt(mt(result.whole_rms_hz_per_m[axis])),
             ]
@@ -275,7 +329,7 @@ def _expected_window_table(seq, window) -> list[list[str]]:
                 result.vector_peak_block,
                 result.vector_peak_time_s,
             ),
-            fmt(mt(result.vector_peak_hz_per_m) / lim.max_grad_mt_per_m * 100),
+            fmt(mt(result.vector_peak_hz_per_m) / max_grad_mt * 100),
             "—",
             "—",
             fmt(vector_rms),
@@ -286,9 +340,9 @@ def _expected_window_table(seq, window) -> list[list[str]]:
         [
             "Axis",
             "Peak (mT/m)",
-            "% of limit",
+            _heading("system"),
             "Max slew (T/m/s)",
-            "% of limit",
+            _heading("system"),
             "RMS over window (mT/m)",
             "RMS over whole file (mT/m)",
         ],
@@ -312,7 +366,7 @@ def _two_trapezoid_seq():
     return seq
 
 
-def test_two_windows_give_two_tables_with_the_values_of_each_range():
+def test_two_windows_give_two_tables_with_the_values_of_each_range(make_profile):
     """Two windows, one over each trapezoid: the card has one table for each, under an
     `<h3>` of its label, with the values that `gradient_limits` gives for that range."""
     seq = _two_trapezoid_seq()
@@ -323,7 +377,7 @@ def test_two_windows_give_two_tables_with_the_values_of_each_range():
     card = gradient_limits_card(
         seq,
         windows=[TimeWindow("first half", *first), TimeWindow("second half", *second)],
-        limits=LIMITS,
+        targets=_targets(make_profile, ("system", SYSTEM_OPTS)),
     )
 
     first_table = _expected_window_table(seq, first)
@@ -340,18 +394,6 @@ def test_window_outside_the_sequence_raises():
 
     with pytest.raises(ValueError, match="late"):
         gradient_limits_card(seq, windows=[TimeWindow("late", 1.0, 2.0)])
-
-
-def test_note_gives_the_values_of_the_given_limits():
-    """The note's limits are the values of the `limits` argument, with its label."""
-    seq, _gx = _trapezoid_seq(0.4 * SYSTEM.max_grad)
-    limits = HardwareLimits(
-        max_grad_mt_per_m=22.5, max_slew_t_per_m_per_s=77.0, label="test limits"
-    )
-
-    card = gradient_limits_card(seq, limits=limits)
-
-    assert f"Limits: test limits ({fmt(22.5)} mT/m, {fmt(77.0)} T/m/s)." in card.body_html
 
 
 def test_render_page_accepts_gradient_limits_card():
@@ -413,3 +455,219 @@ def test_show_button_view_of_a_short_block_is_1_ms_wide():
     for button in _parse(card.body_html).buttons:
         assert float(button["data-t0"]) == pytest.approx(0.15e-3 - 0.5e-3)
         assert float(button["data-t1"]) == pytest.approx(0.15e-3 + 0.5e-3)
+
+
+def _percent_cells(result, gamma: float, limits) -> list[list[str]]:
+    """The percent cells of the Gx, Gy, Gz and |G| rows of one target, as `[peak, slew]`:
+    the Hz/m (Hz/m/s) value of `result` (a `GradientLimits`) in mT/m (T/m/s) with `gamma`,
+    over the limit of `limits`, times 100. The |G| row has no slew."""
+    cells = []
+    for axis in "xyz":
+        a = result.axes[axis]
+        cells.append(
+            [
+                fmt(a.peak_hz_per_m / abs(gamma) * 1e3 / limits.max_grad_mt_per_m * 100),
+                fmt(a.max_slew_hz_per_m_per_s / abs(gamma) / limits.max_slew_t_per_m_per_s * 100),
+            ]
+        )
+    vector = fmt(result.vector_peak_hz_per_m / abs(gamma) * 1e3 / limits.max_grad_mt_per_m * 100)
+    return [*cells, [vector, "—"]]
+
+
+def test_each_target_has_its_percent_columns_with_its_own_gamma_in_target_order(make_profile):
+    """Two targets with limits and two gammas: the table has the peak percent of the first
+    target, then of the second, after the peak, and the same for the max slew. Each percent
+    is the Hz/m (Hz/m/s) value in mT/m (T/m/s) with the gamma of that target, over its
+    limit. The heading of a column names its target after a swatch of the color of the
+    target, and both tables (the gammas give two entries) have the same percent columns."""
+    seq = _two_trapezoid_seq()
+    targets = _targets(
+        make_profile, ("first", _opts(40, 200)), ("second", _opts(30, 120, gamma=20e6))
+    )
+    result = gradient_limits(seq)
+    by_target = [
+        _percent_cells(result, t.gamma, t.profile.hardware_limits) for t in targets
+    ]  # [target][row][peak or slew]
+
+    card = gradient_limits_card(seq, targets=targets)
+
+    parser = _parse(card.body_html)
+    assert len(parser.tables) == 2
+    for table in parser.tables:
+        assert table[0] == [
+            "Axis",
+            "Peak (mT/m)",
+            _heading("first"),
+            _heading("second"),
+            "Max slew (T/m/s)",
+            _heading("first"),
+            _heading("second"),
+            "RMS (mT/m)",
+        ]
+        for r, row in enumerate(table[1:]):
+            assert row[2:4] == [by_target[0][r][0], by_target[1][r][0]]
+            assert row[5:7] == [by_target[0][r][1], by_target[1][r][1]]
+        assert by_target[0] != by_target[1]
+    colors = [re.search(r"var\(--(target-\d)\)", style).group(1) for style in parser.swatches]
+    assert colors == ["target-1", "target-2"] * 4
+
+
+def test_a_target_without_limits_has_no_percent_column_and_is_named(make_profile):
+    """A target with limits and a target without (it has a max amplitude and no max slew): the
+    table has the percent columns of the first only, and the name of the second, escaped, is
+    in the card but not in a heading of a table."""
+    seq = _two_trapezoid_seq()
+    (with_limits,) = _targets(make_profile, ("system", SYSTEM_OPTS))
+    bare = dataclasses.replace(make_profile("bare", "max_grad = 30"), name="bare <i> & co")
+    targets = report_targets([with_limits.profile, bare])
+
+    card = gradient_limits_card(seq, targets=targets)
+
+    (table,) = _parse(card.body_html).tables
+    assert table[0] == [
+        "Axis",
+        "Peak (mT/m)",
+        _heading("system"),
+        "Max slew (T/m/s)",
+        _heading("system"),
+        "RMS (mT/m)",
+    ]
+    assert "bare &lt;i&gt; &amp; co" in card.body_html
+    assert "bare <i>" not in card.body_html
+
+
+def test_a_negative_gamma_gives_the_percent_of_its_magnitude(make_profile):
+    """Two targets with the same limits and the gamma 11.777 MHz/T and its negative: the
+    gammas have one magnitude, so there is one table (and no control), the two percent
+    columns of the peak are equal, and so are the two of the max slew. They equal the Hz/m
+    (Hz/m/s) value in mT/m (T/m/s) with the magnitude of the gamma, over the limit."""
+    seq = _two_trapezoid_seq()
+    targets = _targets(
+        make_profile,
+        ("positive", _opts(40, 200, gamma=11.777e6)),
+        ("negative", _opts(40, 200, gamma=-11.777e6)),
+    )
+    expected = _percent_cells(gradient_limits(seq), 11.777e6, targets[0].profile.hardware_limits)
+
+    card = gradient_limits_card(seq, targets=targets)
+
+    (table,) = _parse(card.body_html).tables
+    for r, row in enumerate(table[1:]):
+        assert row[2] == row[3] == expected[r][0]
+        if r < 3:
+            assert row[5] == row[6] == expected[r][1]
+    # The Gy peak is 14 mT/m at 42.576 MHz/T, so 51 mT/m at 11.777 MHz/T, above the 40 mT/m
+    # limit: the percent is not a trivial 0.
+    assert float(table[2][2].replace("−", "-")) > 100
+
+
+def test_two_gamma_magnitudes_give_a_table_for_each_and_the_control():
+    """Targets with the gammas 42.576 MHz/T and -11.777 MHz/T (two magnitudes): each window
+    has two tables, in elements with `data-gamma-entry` 0 and 1 (the second hidden), and the
+    peak cells of table k are those of entry k, the peak in mT/m with its |gamma|. The card
+    has one control, with a button for each entry, before the first table, and the script
+    of the "Show" buttons, which also runs the control."""
+    seq = _two_trapezoid_seq()
+    targets = report_targets(
+        [read_profile(PROFILES / "example_a.toml"), read_profile(PROFILES / "example_c.toml")]
+    )
+    end = gradient_limits(seq).range_s[1]
+    windows = [(0.0, end / 2), (end / 2, end)]
+
+    card = gradient_limits_card(
+        seq,
+        windows=[TimeWindow("first half", *windows[0]), TimeWindow("second half", *windows[1])],
+        targets=targets,
+    )
+
+    parser = _parse(card.body_html)
+    assert parser.entries == [("0", False), ("1", True)] * 2
+    gammas = [GAMMA_1H, 11.777e6]
+    for w, window in enumerate(windows):
+        result = gradient_limits(seq, window=window)
+        a = result.axes["y"]
+        for k, gamma in enumerate(gammas):
+            gy_row = parser.tables[2 * w + k][2]
+            assert gy_row[1] == _where(
+                fmt(a.peak_hz_per_m / gamma * 1e3), a.peak_block, a.peak_time_s
+            )
+    controls = [b for b in parser.buttons if "data-gamma-choice" in b]
+    assert [(b["data-gamma-choice"], b["aria-pressed"]) for b in controls] == [
+        ("0", "true"),
+        ("1", "false"),
+    ]
+    assert [float(b["data-gamma"]) for b in controls] == gammas
+    assert card.body_html.index("data-gamma-choice") < card.body_html.index("<table")
+    assert card.script == "gradient-limits"
+    assert card.scripts == (page.card_asset("gradient-limits"),)
+
+
+def test_one_gamma_magnitude_gives_one_table_and_no_control(make_profile):
+    """Targets with the gammas 42.576 MHz/T and -42.576 MHz/T (one magnitude): one table, in
+    no element with `data-gamma-entry`, and no control."""
+    seq = _two_trapezoid_seq()
+    targets = _targets(
+        make_profile, ("positive", _opts(40, 200)), ("negative", _opts(40, 200, gamma=-42.576e6))
+    )
+
+    card = gradient_limits_card(seq, targets=targets)
+
+    parser = _parse(card.body_html)
+    assert len(parser.tables) == 1
+    assert parser.entries == [None]
+    assert "data-gamma" not in card.body_html
+
+
+def test_a_control_without_a_show_button_has_the_gamma_select_script():
+    """A file with no gradient event has no "Show" button, so the card with two |gamma|
+    entries has the library script `gamma-select` for its control, and the page has it."""
+    seq = pp.Sequence(SYSTEM)
+    seq.add_block(pp.make_delay(2e-3))
+    targets = report_targets(
+        [read_profile(PROFILES / "example_a.toml"), read_profile(PROFILES / "example_c.toml")]
+    )
+
+    card = gradient_limits_card(seq, targets=targets)
+
+    assert len(_parse(card.body_html).tables) == 2
+    assert card.script == "gamma-select"
+    assert card.scripts == (page.card_asset("gamma-select"),)
+    assert 'PulseqReport.registerCard("gamma-select"' in page.render_page("T", "S", [card])
+
+
+def test_without_targets_the_values_are_in_the_gamma_of_the_sequence():
+    """Without targets, the peak is in mT/m with `seq.system.gamma`, in one table with no
+    control and no percent column."""
+    gamma = 20e6
+    system = pp.Opts(max_grad=28, grad_unit="mT/m", max_slew=150, slew_unit="T/m/s", gamma=gamma)
+    amplitude = 0.4 * system.max_grad
+    gx = pp.make_trapezoid(
+        channel="x", amplitude=amplitude, rise_time=200e-6, flat_time=1e-3, system=system
+    )
+    seq = pp.Sequence(system)
+    seq.add_block(gx)
+
+    card = gradient_limits_card(seq)
+
+    parser = _parse(card.body_html)
+    (table,) = parser.tables
+    block_id = next(iter(seq.block_events))
+    assert table[1][1] == _where(fmt(amplitude / gamma * 1e3), block_id, gx.rise_time)
+    assert table[1][1].startswith(fmt(0.4 * 28))
+    assert parser.entries == [None]
+    assert "data-gamma" not in card.body_html
+
+
+def test_the_registry_gives_the_targets_to_the_card(make_profile):
+    """`build_cards` builds the card with the targets of the report: the card is that of
+    `gradient_limits_card` with the `ReportTarget` of each profile."""
+    seq = _two_trapezoid_seq()
+    profiles = [
+        make_profile("first", _opts(40, 200)),
+        make_profile("second", _opts(30, 120, gamma=20e6)),
+    ]
+
+    (built,) = build_cards(seq, cards=["gradient-limits"], targets=profiles)
+
+    assert built == gradient_limits_card(seq, targets=report_targets(profiles))
+    assert [len(row) for row in _parse(built.body_html).tables[0]] == [8] * 5
