@@ -282,7 +282,7 @@ _BUILDERS = {
     "blocks": blocks_card,
 }
 # The keywords that the command line does not set (section 4.4, item 3 of the plan).
-_NOT_OPTIONS = {"card_id", "windows"}
+_NOT_OPTIONS = {"card_id", "windows", "targets"}
 
 
 def test_the_options_of_each_spec_are_the_keywords_of_its_builder():
@@ -329,6 +329,11 @@ def test_a_report_without_targets_has_no_targets_and_no_check_results(seen):
     assert ctx.check_results is None
 
 
+# The library cards that use the targets: their cards change with targets. A phase that makes
+# a card use the targets adds its name.
+_USE_TARGETS = {"gradient-limits"}
+
+
 def test_targets_do_not_change_the_cards_that_are_built(plugin, make_profile):
     seq = spin_echo_sequence()
 
@@ -336,7 +341,10 @@ def test_targets_do_not_change_the_cards_that_are_built(plugin, make_profile):
     with_targets = build_cards(seq, targets=[make_profile("a"), make_profile("b")])
 
     assert build_cards(seq) == without
-    assert with_targets == without
+    assert [c for c in with_targets if c.id not in _USE_TARGETS] == [
+        c for c in without if c.id not in _USE_TARGETS
+    ]
+    assert {c.id for c in without} >= _USE_TARGETS
 
 
 def test_the_context_has_the_report_targets_in_order_with_their_colors(seen, make_profile):

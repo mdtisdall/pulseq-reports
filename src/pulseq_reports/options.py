@@ -7,56 +7,10 @@ options imports its object. An uppercase name in another module is a default val
 example `rf_exposure.B1RMS_WINDOW_S`.
 """
 
-import math
-from collections.abc import Mapping
 from pathlib import Path
-
-from pulseq_checks import HardwareLimits
 
 from .registry import Flag, Option, OptionCli
 from .rf_exposure import B1RMS_WINDOW_S
-
-COMMAND_LINE_LABEL = "command line"
-CONFIG_FILE_LABEL = "config file"
-
-
-def _positive(name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise TypeError(f"{name} must be a number: {value!r}")
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError(f"{name} must be a finite number above 0: {value!r}")
-    return float(value)
-
-
-def _limits_from_flags(values: Mapping[str, object]) -> HardwareLimits:
-    if "max_grad" not in values or "max_slew" not in values:
-        raise ValueError("--max-grad and --max-slew go together: give both or neither")
-    return HardwareLimits(
-        max_grad_mt_per_m=_positive("--max-grad", values["max_grad"]),
-        max_slew_t_per_m_per_s=_positive("--max-slew", values["max_slew"]),
-        label=COMMAND_LINE_LABEL,
-    )
-
-
-def _limits_from_config(value: object, base_dir: Path) -> HardwareLimits:
-    required = ("max_grad_mt_per_m", "max_slew_t_per_m_per_s")
-    if not isinstance(value, Mapping):
-        raise TypeError(f"limits must be a table with the keys {required} and label: {value!r}")
-    unknown = sorted(set(value) - {*required, "label"})
-    missing = [key for key in required if key not in value]
-    if unknown or missing:
-        raise ValueError(
-            f"limits needs the keys {required} and can have label; unknown keys: {unknown}, "
-            f"missing keys: {missing}"
-        )
-    label = value.get("label", CONFIG_FILE_LABEL)
-    if not isinstance(label, str):
-        raise TypeError(f"the label of limits must be text: {label!r}")
-    return HardwareLimits(
-        max_grad_mt_per_m=_positive("max_grad_mt_per_m", value["max_grad_mt_per_m"]),
-        max_slew_t_per_m_per_s=_positive("max_slew_t_per_m_per_s", value["max_slew_t_per_m_per_s"]),
-        label=label,
-    )
 
 
 def _gradient_asc_from_config(value: object, base_dir: Path) -> Path:
@@ -83,32 +37,6 @@ gradient_asc = Option(
         ),
         from_flags=lambda values: values["gradient_asc"],
         from_config=_gradient_asc_from_config,
-    ),
-)
-
-limits = Option(
-    "limits",
-    HardwareLimits,
-    None,
-    "The gradient limits that the gradient limits card compares with: both --max-grad and "
-    "--max-slew, or neither (without them, the card has no percent columns).",
-    cli=OptionCli(
-        flags=(
-            Flag(
-                "--max-grad",
-                float,
-                "The gradient amplitude limit (mT/m). Needs --max-slew.",
-                metavar="MT_PER_M",
-            ),
-            Flag(
-                "--max-slew",
-                float,
-                "The gradient slew rate limit (T/m/s). Needs --max-grad.",
-                metavar="T_PER_M_PER_S",
-            ),
-        ),
-        from_flags=_limits_from_flags,
-        from_config=_limits_from_config,
     ),
 )
 

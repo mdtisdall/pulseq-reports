@@ -2411,18 +2411,22 @@ button, no `error`, and the SAFE model does not run.
 ### 2.14 Gradient limits card (`test_gradient_limits_card.py`)
 
 `test_gradient_limits_card.py` tests `cards/gradient_limits.py`: the "Gradient
-limits" table (Gx, Gy, Gz and |G| rows, with the peak, the max slew, and the RMS, and,
-when `limits` is given, the percent of the limit of the peak and of the max slew),
-one table for each `TimeWindow`
+limits" table (Gx, Gy, Gz and |G| rows, with the peak, the max slew, and the RMS, and, for
+each target that has hardware limits, the percent of its limit of the peak and of the max
+slew, in the gamma of that target), one table for each `TimeWindow`
 (with the extra RMS column), the block and the time of each peak and max slew with
-its "Show" button, and the limits in the note.
+its "Show" button, one table for each distinct |gamma| of the targets with the gamma control,
+and the names of the targets without limits.
 Every expected numeric cell is computed by hand from the trapezoid the test
 builds; the tests that read `gradient_limits` convert its Hz/m, Hz/m/s values with `GAMMA_1H`
 as the card does. The tests read the card's
 tables with Python's `html.parser` (`_CardParser`): the text of each cell, without a
-button's own text, and the attributes of each button. `LIMITS` is the limits of the
-test system (`SYSTEM.max_grad` and `SYSTEM.max_slew`); the card does not take limits
-from the sequence's system, so the tests that look at the percent columns give it.
+button's own text, the attributes of each button, the `style` of each swatch, and the
+`data-gamma-entry` of the element around each table. A target comes from a profile that the
+`make_profile` fixture reads (`_targets`, with the `[opts]` lines of `_opts`); `SYSTEM_OPTS`
+gives it the limits of the test system (`SYSTEM.max_grad` and `SYSTEM.max_slew`). The card
+does not take limits from the sequence's system, so the tests that look at the percent columns
+give a target.
 
 Since phase 4 of `docs/plans/cards-at-scale.md`, a window's "RMS over whole file" column comes
 from the one `gradient_limits` call's own `whole_rms_hz_per_m`, not a second call with
@@ -2443,7 +2447,7 @@ peak, slew and RMS from the trapezoid's parameters (as in
 `test_trapezoid_peak_slew_and_rms_match_hand_computed_values`) and their
 percents of `SYSTEM.max_grad` and `SYSTEM.max_slew`, and the expected cell texts,
 with "(block N, t ms)" after a value that has a block. It calls
-`gradient_limits_card` with `limits=LIMITS` and checks the card's `id`, `title` and `data`, and that
+`gradient_limits_card` with one target that has the limits of `SYSTEM` and checks the card's `id`, `title` and `data`, and that
 its one table has exactly the expected cell texts.
 
 **Assumptions:** None.
@@ -2457,7 +2461,7 @@ window.
 **How:** The test builds a sequence with an x trapezoid and a window equal to
 the rising ramp, given as a `TimeWindow`. It computes the expected peak, slew and window RMS from the
 ramp alone (RMS from `amplitude^2 * rise_time / 3` divided by the window
-length), with `limits=LIMITS`, and the expected whole-file RMS as in the first test. It builds
+length), with a target that has the limits of `SYSTEM`, and the expected whole-file RMS as in the first test. It builds
 the expected cell texts from these hand-computed values, with both RMS columns
 (the peak is at the window end, 0.200 ms, and the slew segment starts at the
 window start, 0.000 ms), and checks that the card's body starts with the `<h3>`
@@ -2471,7 +2475,7 @@ of the window's label and that its one table has these cell texts.
 label, with the values that `gradient_limits` gives for that window's range.
 
 **How:** The test builds a sequence with an x trapezoid and a y trapezoid of
-different amplitudes, and two windows, one half of the sequence each, and calls the card with `limits=LIMITS`. For each
+different amplitudes, and two windows, one half of the sequence each, and calls the card with a target that has the limits of `SYSTEM`. For each
 window it builds the expected cell texts from the fields of
 `gradient_limits(seq, window=...)`, with the block and time of each value, checks
 that the two tables differ, and checks that the card's body starts with the first
@@ -2479,29 +2483,31 @@ that the two tables differ, and checks that the card's body starts with the firs
 
 **Assumptions:** None.
 
-#### `test_without_limits_the_table_has_no_percent_columns`
+#### `test_without_a_target_with_limits_the_tables_have_no_percent_columns`
 
-**Checks:** Without `limits`, the card has no "% of limit" header and no percent cell: the
-whole-file table has 4 cells in each row, and the table of each window has 5. With `limits`, each
-row has the two percent cells more, and each table has two "% of limit" headers.
+**Checks:** With no target, and with a target that has no limits, the card has no "% of limit"
+header and no percent cell: the whole-file table has 4 cells in each row, and the table of each
+window has 5. With a target that has limits, each row has the two percent cells more, and each
+table has two "% of limit" headers.
 
 **How:** The test builds the two-trapezoid sequence and two windows. For the card without
-windows and with the two windows, each without and with `limits=LIMITS`, it reads the tables
+windows and with the two windows, each with no target, with a target that has only a max
+amplitude, and with a target that has the limits of `SYSTEM`, it reads the tables
 and checks the number of tables (1, or 2 for the windows), the number of "% of limit" headers in
 each header row (0, or 2), and that each of the 5 rows (the header, Gx, Gy, Gz and |G|) has as many cells as 4
 (or 5 with windows) plus the number of percent columns.
 
 **Assumptions:** None.
 
-#### `test_without_limits_the_values_are_those_with_limits`
+#### `test_without_a_target_with_limits_the_values_are_those_with_one`
 
-**Checks:** The table without `limits` is the table with `limits` less its two percent
-columns: the other cells are the same.
+**Checks:** The table without a target is the table with a target that has limits less its two
+percent columns: the other cells are the same.
 
 **How:** The test builds the two-trapezoid sequence, reads the table of the card without
-limits and the table of the card with `LIMITS`, checks that the percent columns of the second
-are columns 2 and 4, and that the first equals the second with those columns removed from
-each row.
+targets and the table of the card with a target that has the limits of `SYSTEM`, checks that the
+percent columns of the second are columns 2 and 4, and that the first equals the second with
+those columns removed from each row.
 
 **Assumptions:** None.
 
@@ -2512,17 +2518,6 @@ label.
 
 **How:** The test calls `gradient_limits_card` with a window after the end of the
 sequence, and checks the error.
-
-**Assumptions:** None.
-
-#### `test_note_gives_the_values_of_the_given_limits`
-
-**Checks:** The note of the card gives the values of the `limits` argument
-next to its label.
-
-**How:** The test builds a `HardwareLimits` with values that differ from
-`SYSTEM`, calls `gradient_limits_card` with it, and checks that the body has
-"Limits: " with the label and the two values formatted with `markup.fmt`.
 
 **Assumptions:** None.
 
@@ -2578,6 +2573,100 @@ on the block, as the diagram's own `goto` of a block.
 **How:** The test builds one x trapezoid block of 0.3 ms and checks that every
 button's `data-t0` and `data-t1` are 0.5 ms before and after the block's middle
 (0.15 ms).
+
+**Assumptions:** None.
+
+#### `test_each_target_has_its_percent_columns_with_its_own_gamma_in_target_order`
+
+**Checks:** With two targets that have limits and two gammas, the table has the percent of
+the peak of the first target, then of the second, after the peak, and the same for the max
+slew. Each percent is the value of `gradient_limits` (Hz/m, Hz/m/s) in mT/m (T/m/s) with the
+gamma of that target, over its limit, times 100, for the Gx, Gy, Gz and |G| rows (the |G| row
+has no slew percent). The heading of each percent column names its target, after a swatch
+with the color token of the target. The two gammas give two tables, and both have the same
+percent columns.
+
+**How:** The two-trapezoid sequence and two profiles with different limits and gammas (the
+second 20 MHz/T). The expected percents are computed from `gradient_limits(seq)` and the
+`hardware_limits` of the profiles; the swatch colors are read from the `style` of the swatches.
+
+**Assumptions:** None.
+
+#### `test_a_target_without_limits_has_no_percent_column_and_is_named`
+
+**Checks:** With a target that has limits and a target that has none (a max amplitude and no max
+slew), the table has the percent columns of the first only. The name of the second, escaped, is
+in the card, and it is not in a heading.
+
+**How:** The two-trapezoid sequence; the name of the second target has `<`, `>` and `&`. The test
+checks the headings of the table and that the escaped name is in the body and the raw one is not.
+It does not test the sentence of the note.
+
+**Assumptions:** None.
+
+#### `test_a_negative_gamma_gives_the_percent_of_its_magnitude`
+
+**Checks:** Two targets with the same limits and the gammas 11.777 MHz/T and -11.777 MHz/T
+give one table (one |gamma|), and the two percent columns of the peak are equal, and so are
+the two of the max slew. They equal the value in Hz/m (Hz/m/s) in mT/m (T/m/s) with the
+magnitude of the gamma, over the limit. The Gy percent is above 100, so it is not 0.
+
+**How:** The two-trapezoid sequence and two profiles; the expected percents come from
+`gradient_limits(seq)`.
+
+**Assumptions:** None.
+
+#### `test_two_gamma_magnitudes_give_a_table_for_each_and_the_control`
+
+**Checks:** With the targets `example_a` (42.576 MHz/T) and `example_c` (-11.777 MHz/T), each
+window has two tables, in elements with `data-gamma-entry` 0 and 1, the second `hidden`; the Gy
+peak cell of table k is the peak in mT/m with the |gamma| of entry k. The card has one control
+with two buttons (`data-gamma-choice` 0 and 1, the first pressed, with the gammas as
+`data-gamma`) before the first table. Its script is `gradient-limits` and it has one script text,
+the `gradient-limits` one.
+
+**How:** The two-trapezoid sequence, two windows, and the two profiles of `tests/profiles`.
+
+**Assumptions:** The script runs only in a browser: no test runs it. It is checked by hand in a
+browser.
+
+#### `test_one_gamma_magnitude_gives_one_table_and_no_control`
+
+**Checks:** Targets with the gammas 42.576 MHz/T and -42.576 MHz/T give one table, in no
+element with `data-gamma-entry`, and the card has no control.
+
+**How:** The two-trapezoid sequence and two profiles.
+
+**Assumptions:** None.
+
+#### `test_a_control_without_a_show_button_has_the_gamma_select_script`
+
+**Checks:** A sequence with no gradient event has no "Show" button. With two |gamma| entries,
+the card has two tables, its `script` is `gamma-select`, its `scripts` is the text of
+`assets/cards/gamma-select.js`, and the page has the `registerCard("gamma-select"` call.
+
+**How:** A delay-only sequence, the two profiles of `tests/profiles`, and `render_page`.
+
+**Assumptions:** None.
+
+#### `test_without_targets_the_values_are_in_the_gamma_of_the_sequence`
+
+**Checks:** Without targets, the peak is in mT/m with `seq.system.gamma`, in one table, in no
+element with `data-gamma-entry`, with no control.
+
+**How:** A sequence whose system has the gamma 20 MHz/T, with an x trapezoid of 0.4 of the system's
+max amplitude; the Gx peak cell is `amplitude / gamma * 1e3` mT/m (11.2 mT/m) with its block and time.
+
+**Assumptions:** None.
+
+#### `test_the_registry_gives_the_targets_to_the_card`
+
+**Checks:** `build_cards` with `targets` builds the gradient limits card that
+`gradient_limits_card` builds with the `ReportTarget` of each profile, and the table has the
+four percent columns of two targets.
+
+**How:** The two-trapezoid sequence and two profiles; `build_cards(..., cards=["gradient-limits"])`
+compared with a direct call.
 
 **Assumptions:** None.
 
@@ -7139,7 +7228,7 @@ a second card that subscribes to `goto`: a request topic has at most one card th
 #### `test_the_options_of_each_spec_are_the_keywords_of_its_builder`
 
 **Checks:** For each of the nine library cards, each keyword-only parameter of its builder is
-an option that its spec declares, except `card_id` and (for the blocks and gradient limits
+an option that its spec declares, except `card_id`, `targets` and (for the blocks and gradient limits
 cards) `windows`; each option that the spec declares is a keyword-only parameter of the
 builder, with the same default as the option (decision 17 of the plan); and the default
 `card_id` is the spec's name.
@@ -7164,15 +7253,15 @@ builder, with the same default as the option (decision 17 of the plan); and the 
 #### `test_targets_do_not_change_the_cards_that_are_built`
 
 **Checks:** `build_cards` with targets makes the same cards (equal `Card` objects, not only
-the same ids) as `build_cards` without targets.
+the same ids) as `build_cards` without targets, but for the cards that use the targets
+(`_USE_TARGETS`: `gradient-limits`), which are built in both cases.
 
 **How:** `build_cards` for the spin echo sequence with all the cards, twice without targets
 and once with two target profiles. The test checks that the second build without targets
 equals the first (so that `Card` equality works for the built cards), and that the build with
-targets equals them too.
+targets equals them too, in the cards that do not use the targets.
 
-**Assumptions:** No card uses the targets in this phase (plan 4.3, item 8). When a card does,
-this test changes.
+**Assumptions:** When another card uses the targets, its name goes in `_USE_TARGETS`.
 
 #### `test_the_context_has_the_report_targets_in_order_with_their_colors`
 
@@ -7275,9 +7364,9 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 #### `test_the_page_of_the_command_line_equals_the_page_of_build_cards`
 
-**Checks:** The page that `main` writes equals `render_page` of `build_cards` for the same file read back, with the file name as title, "pulseq-reports <version>" as subtitle, and the same limits; the status is 0.
+**Checks:** The page that `main` writes equals `render_page` of `build_cards` for the same file read back, with the file name as title, "pulseq-reports <version>" as subtitle, and the same option value; the status is 0.
 
-**How:** `main` with `--max-grad` and `--max-slew`; the expected page from `Sequence.read`, `build_cards` and `render_page`, compared as text.
+**How:** `main` with `--max-rows`; the expected page from `Sequence.read`, `build_cards` and `render_page`, compared as text.
 
 **Assumptions:** None.
 
@@ -7286,22 +7375,6 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 **Checks:** Without `-o`, the page of `se.seq` is `se.html` in the current directory.
 
 **How:** `monkeypatch.chdir` into an empty directory.
-
-**Assumptions:** None.
-
-#### `test_max_grad_and_max_slew_reach_the_gradient_limits_card`
-
-**Checks:** With both flags, the page equals the page of `build_cards` with those `HardwareLimits` and stderr is empty, and it differs from the page without limits. Without them, the page equals the page of `build_cards` with no limits and stderr is empty (there is no default limits, so no warning).
-
-**How:** Two `main` calls; the expected pages are from `build_cards` on the read-back sequence.
-
-**Assumptions:** None.
-
-#### `test_one_of_max_grad_and_max_slew_alone_exits_1`
-
-**Checks:** One of `--max-grad` and `--max-slew` alone exits 1, stderr names `--max-grad`, and no page is written.
-
-**How:** Parametrized over the two flags.
 
 **Assumptions:** None.
 
@@ -7387,9 +7460,9 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 #### `test_a_toml_and_a_json_config_file_give_the_page_of_the_same_flags`
 
-**Checks:** A `.toml` and a `.json` config file with the same values (limits table, max_rows, cards) give the page that the same values as flags give.
+**Checks:** A `.toml` and a `.json` config file with the same values (max_rows, cards) give the page that the same values as flags give.
 
-**How:** The limits label in the files is "command line", the label of the flags.
+**How:** Page equality.
 
 **Assumptions:** None.
 
