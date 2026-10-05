@@ -5962,14 +5962,30 @@ the difference must be 3 to 5 times smaller.
 
 #### `test_freq_ppm_adds_to_the_total_frequency_offset`
 
-**Checks:** The total frequency offset is `freq_offset + freq_ppm * 1e-6 * |gamma| *
-B0`, the total phase has the same form, and the RF as played is the baseband times
-`exp(1j * (phase + 2π f t))` with `t` at the centre of each hold interval.
+**Checks:** The total frequency offset is `freq_offset + freq_ppm * 1e-6 * gamma * B0`
+with the B0 and the signed gamma that the caller gives `block_pulse` (not those of
+`seq.system`), the total phase has the same form, and the RF as played is the baseband
+times `exp(1j * (phase + 2π f t))` with `t` at the centre of each hold interval. The peak B1
+uses the magnitude of the gamma. The same pulse with `gamma` and `-gamma` has opposite
+`ppm` parts of the offset and the same peak B1.
 
-**How:** A 0.5 ms saturation block pulse with all four offsets, on a system with
-B0 = 2.89 T. The expected offset and samples are written out in the test (the block
-pulse amplitude is flip / (2π × duration)). Relative 1e-12 (the same formula, only
-rounding).
+**How:** A 0.5 ms saturation block pulse with all four offsets, read with four pairs of
+B0 and gamma (1.5 T and 3 T with the proton gamma, 3 T with its negative, and 2.89 T with
+a negative xenon gamma), on a sequence with the default system. The expected offset and
+samples are written out in the test (the block pulse amplitude is flip / (2π × duration)).
+Relative 1e-12 (the same formula, only rounding).
+
+**Assumptions:** None.
+
+#### `test_a_ppm_offset_needs_b0_and_the_other_pulses_do_not`
+
+**Checks:** `block_pulse` and `combined_profile` raise `ValueError` for a pulse with a `ppm`
+offset when `b0_t` is None, and give a pulse without `ppm` terms for `b0_t` None, equal to
+the pulse for a B0. `pulse_list`, which takes no B0, lists a pulse with a `ppm` offset.
+
+**How:** A saturation block pulse with `freq_ppm`; a hard excitation pulse with a
+frequency offset in Hz read with `b0_t` None and with 3 T (equal signals); two spin echoes,
+one with a `freq_ppm` on the excitation pulse and one without.
 
 **Assumptions:** None.
 
@@ -6449,7 +6465,8 @@ check each rule on small hand-made cases, without Python.
 The tests load `rf_profiles.js` directly with Node's `require`, and use `node:test` and
 `node:assert/strict`, with no browser or DOM. Each test builds its sequence with the
 helper `newSeq`: RF rows (the columns of `cards.rf_profile._rf_table`, made by
-`rfTables`), gradient events in Hz/m (as the diagram tables keep them), ADC events and blocks. `build` returns a fake sequence view
+`rfTables`, with the terms of the offsets), gradient events in Hz/m (as the diagram tables
+keep them), ADC events and blocks. `build` returns a fake sequence view
 (`fakeView`: the methods of `SeqLanes.sequenceView` over those arrays) and the file
 data of `RfProfiles.fileData`. Equal events share one dense index, as pypulseq's
 libraries share one id. The pulses follow `tests/test_rf_profiles.py`: a 1 ms
@@ -6776,12 +6793,55 @@ Python message.
 #### `test_file_data_checks_the_rf_table`
 
 **Checks:** `fileData` returns a frozen object with the entry's values (null for no W),
-and refuses a file without use labels, a missing column, and a column of another
-length.
+and refuses a file without use labels, an entry without groups, a missing column, and a
+column of another length.
 
 **How:** The RF table of `spinEcho("gy")` with a hand-made entry (it has no `name`,
-as the entry of `_rf_profile_data` has none); a copy without the `center` column; a copy
-whose `dt` column has one value.
+as the entry of `_rf_profile_data` has none); an entry with no groups; a copy without the
+`center` column; a copy whose `dt` column has one value.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_ppm_offsets_change_into_hz_with_the_signed_gamma_and_b0_of_the_group`
+
+**Checks:** In a group, the offsets of an RF event in Hz and rad are `freq_offset + freq_ppm
+* 1e-6 * gamma * B0` and the same form for the phase, with the signed gamma: the `ppm` part
+flips sign with the gamma, and the peak B1 and the energy do not change. The peak B1 doubles
+for half the gamma. A `ppm` offset in a group without B0 has no offsets (`pulseOffset` gives
+null, `blockPulse` and `combinedProfile` throw) and a pulse without `ppm` terms has the same
+offsets and signal as in a group with B0. `pulseKey` equals the key of `blockPulse`, and a
+group that is not in the file throws.
+
+**How:** Five groups (1.5 T, 3 T, 3 T with the negative gamma, no B0, and half the gamma at
+1.5 T); a hard pulse with all four offsets (`ppm` terms −3.45 and 0.7) and a hard pulse with
+Hz offsets only; a spin echo whose excitation has a `ppm` offset, in a file with a group
+with B0 and a group without. The expected offsets are written out in the test (1e-6 Hz).
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_line_cache_keeps_the_offsets_of_the_groups_apart`
+
+**Checks:** A selective pulse with a `ppm` offset has the same pulse key in each group. The
+line cache has one line for each offset in Hz: two groups with another B0 do not share a
+line, and a group with the same offset in Hz (twice the gamma, half the B0) does, with the
+same arrays. A line from the cache equals the same line without a cache.
+
+**How:** Three groups (1.5 T, 3 T, and twice the gamma at 0.75 T); the pulse in each group;
+`simulate` with one cache for all three; the size of the cache and the arrays.
+
+**Assumptions:** None beyond the file's own.
+
+#### `test_a_pulse_shared_between_groups_has_the_b1_of_each_group`
+
+**Checks:** `pulseInGroup` gives a pulse read in another group with the same offsets in Hz the
+peak B1 and the energy of that group, equal to those of `blockPulse` in the group (relative
+1e-12) and in the ratio of the |gamma| (a negative gamma counts as its magnitude), and shares the
+signal and the gradients of the first pulse. The first pulse does not change, and a group with
+the same |gamma| gives the pulse itself. A `ppm` pulse in a group with another B0, or with no B0,
+throws.
+
+**How:** Five groups (the proton gamma at 3 T, 1/3.6 of its negative at 3 T, the proton gamma
+at 3 T, at 1.5 T and with no B0); a selective refocusing pulse and a hard pulse with `freqPpm`.
 
 **Assumptions:** None beyond the file's own.
 
@@ -6826,11 +6886,10 @@ section 3.5, item 2 of the plan and the reason each value can differ at all:
   `freq_offset_hz`, `nominal_m`, `fov_m`, `notes`, `echo_reason`, the echo
   `sign` and `adc_block`, every reason text, the kinds and `n` of each spec
   axis, and a combined profile's `reason`, blocks and `directions`. `dt_s`
-  and `freq_offset_hz` are exact because both languages read them straight
-  from the RF table's `dt` and `freq_hz` columns, which `rf_profiles.py`
-  itself computes with the same formula in the same order as
-  `cards.rf_profile._rf_table`, so the two Python computations already agree
-  bit for bit before either reaches JavaScript.
+  is exact because both languages read it straight from the RF table's `dt`
+  column. `freq_offset_hz` is exact because both languages compute it from
+  the same terms (`freq_offset`, `freq_ppm`, and the gamma and the B0 of the
+  group) with the same operations in the same order, with the signed gamma.
 - **The pulse key partition**: a Python key is a tuple and a JavaScript key
   is a string, so the test never compares them by value. Instead, every
   block it asks about builds a bijection between the two representations
@@ -6892,21 +6951,26 @@ pulse, a fat saturation before the excitation, an inversion between the
 excitation and the ADC, a PRESS-like sequence and an oblique direction, a
 turning gradient with a `FOV` definition, a block pulse and a sinc without
 `SliceThickness`, an MPRAGE-like block, a sequence of another nucleus, a
-sequence with `freq_ppm` on a system with `B0` set, and the example GRE of
+sequence with `freq_ppm`, and the example GRE of
 `examples/gre_report.py` -- `RfProfiles` gives the same period (for every
 block, plus a few with `maxBlocks: 1` for `truncated`), the same pulse (for
 every block with RF), the same view spec/profile/quantities/widths/echo
 phase (for the first block of every distinct pulse of every period, all
 three views, with one `echoMomentPerM` override), and the same combined
 profile (`profile` and `2d`, for the first block of every distinct period)
-as `rf_profiles.py`, within the tolerances above. 1055 queries in total; the
-16 tests run in about 13 s.
+as `rf_profiles.py`, within the tolerances above. The sequence with `freq_ppm` and the fat
+saturation spin echo are read in three groups, two values of B0 (1.5 T and 3 T) and a gamma
+and its negative (3 T): their pulses are queried in each group, their views only in a group
+that gives the pulse another offset in Hz, their combined profiles in each group. The
+other sequences have one group, with the gamma and the B0 of their system. About 1100 queries
+in total; the 16 tests run in about 12 s.
 
 **How:** Parametrized over the 16 sequences. For its sequence, the test builds a `period` query for every
 block, a few `period` queries with `maxBlocks: 1`, a `pulse` query for
-every RF block, a `view` query (all three views) for the first block of
-every distinct pulse of every period, and a `combined` query (both views)
-for the first block of every distinct period, then writes the sequence's
+every RF block and group, a `view` query (all three views) for the first
+block of every distinct pulse of every period, and a `combined` query (both
+views) for the first block of every distinct period (each for the first group,
+and for another group as the paragraph above says), then writes the sequence's
 encoded diagram tables, lane metadata and RF profile card file entry
 alongside the queries to a JSON file and runs
 `tests/js/golden_rf_profiles.js` with Node on it. It then recomputes each
@@ -6976,9 +7040,10 @@ exact says why.
 **Checks:** `_rf_table`'s dtypes are those of its column table; after encoding and
 decoding (`pulseq_analysis.series.encode_array`/`decode_array`), each dense RF index's pool
 slice equals `hold_samples` of the RF event as pypulseq rebuilds it, and `dt`, `delay`,
-`shape_dur`, `center`, `use`, `freq_hz` and `phase_rad` equal their definitions;
-`freq_hz` also equals `rf_profiles.block_pulse(seq, block).freq_offset_hz` at the first
-block of the event.
+`shape_dur`, `center`, `use`, `freq_offset_hz`, `freq_ppm`, `phase_offset_rad` and
+`phase_ppm` equal their definitions (the terms of the offsets, not their sums); the terms
+with a B0 and a gamma give `rf_profiles.block_pulse(seq, block, b0, gamma).freq_offset_hz`
+at the first block of the event.
 
 **How:** A sinc excitation with a slice-select gradient and all four RF offsets
 (`freq_offset`, `phase_offset`, `freq_ppm`, `phase_ppm`, on a system with `B0` set), a
@@ -7026,9 +7091,10 @@ has no use label, because `use` has no index for "undefined".
 #### `test_pulse_list_and_file_entry_keys`
 
 **Checks:** `_rf_profile_data`'s `pulses` equals `dataclasses.asdict` of
-`rf_profiles.pulse_list(seq)`, and its other keys (`slice_thickness_m`, `fov_m`, `b0_t`,
-`gamma_hz_per_t`, `first_rf_block`) match their definitions, with and without an `FOV`
-definition. The card body has one "Show" button for each pulse, with its `data-block`.
+`rf_profiles.pulse_list(seq, gamma)`, and its other keys (`slice_thickness_m`, `fov_m`,
+`groups`, `first_rf_block`) match their definitions, with and without an `FOV`
+definition. The entry has exactly these keys, `rf` and `pulses`, and no `b0_t` or
+`gamma_hz_per_t`. The card body has one "Show" button for each pulse, with its `data-block`.
 
 **How:** A sequence with an excitation and a refocusing pulse (sincs with gradients), a
 block pulse, and a pulse with a turning gradient (`_turning_gradients`), and an `FOV`
@@ -7120,7 +7186,7 @@ library tests only in a browser check (decision 10 of `docs/plans/pulseq-reports
 this test holds the Python half to what the script reads. On a page with a diagram card
 and this card, for a spin echo: the page has the card script one time
 (`PulseqReport.registerCard("rf-profile"` and the text of
-`page.card_asset("rf-profile")`); the card data has `format` 2 and exactly the keys
+`page.card_asset("rf-profile")`); the card data has `format` 3 and exactly the keys
 `format`, `views`, `plane`, `extent_m` and `file` (no `diagram_card_id`); the body has
 the status line with `aria-live="polite"`, the empty pulses element, and the combined
 element, hidden, whose first paragraph is the primary echo note (the script hides that
@@ -7131,6 +7197,59 @@ body. The "Show" buttons are exactly one for each distinct pulse, in order, with
 **How:** `page.render_page` with `diagram_card` (a full window) and `rf_profile_card`;
 regular expressions on the body for the elements and the buttons, compared with the card
 data's `pulses`.
+
+**Assumptions:** None.
+
+#### `test_groups_hold_the_targets_with_the_same_gamma_and_b0`
+
+**Checks:** `_groups` puts targets with the same signed gamma and the same B0 in one group,
+with their names in order and the color of the first. Another B0, the negative gamma, and no
+B0 each give another group. The groups are in the order of the first target of each.
+
+**How:** Five target profiles: two with 3 T, one with 1.5 T, one with 3 T and the negative
+gamma, and one without `B0`.
+
+**Assumptions:** None.
+
+#### `test_without_targets_there_is_one_group_with_the_gamma_of_the_sequence`
+
+**Checks:** Without targets, `_groups` gives one group with `seq.system.gamma` (signed),
+`b0_t` None (also when the system has a B0), no names and no color.
+
+**How:** A sequence with `pp.Opts(gamma=-11.777e6, B0=3.0)`.
+
+**Assumptions:** None.
+
+#### `test_a_ppm_pulse_is_listed_without_b0_and_the_table_does_not_depend_on_the_group`
+
+**Checks:** A pulse with a `ppm` offset is in the pulse list and in the RF table (with its
+terms) in a group without B0. The RF table is the same for any groups. The pulse list uses
+the gamma of the first group, and the peak B1 follows it.
+
+**How:** A saturation pulse with `freq_ppm` and `phase_ppm` and an excitation pulse with a
+frequency offset in Hz; the entry without targets, and with a target with half the proton
+gamma and 3 T.
+
+**Assumptions:** None.
+
+#### `test_the_card_of_a_report_has_the_groups_of_its_targets`
+
+**Checks:** `build_cards` gives the RF profile card the targets of the report: its file entry
+has their groups in order, with their colors and B0.
+
+**How:** `build_cards` for the spin echo sequence with two target profiles with different B0.
+
+**Assumptions:** None.
+
+#### `test_the_pulse_table_has_one_table_for_each_gamma_magnitude`
+
+**Checks:** With targets of two |gamma|, the "Distinct pulses" table is in the body one time
+for each, in `data-gamma-entry` blocks (the second hidden), with the gamma control, and the
+peak |B1| of each table is that of its |gamma|; with one |gamma| (a gamma and its negative),
+there is one table and no control.
+
+**How:** `rf_profile_card` for the spin echo sequence with two sets of targets; the blocks,
+the control buttons and the peak |B1| of the first row are read from the body.
 
 **Assumptions:** None.
 
@@ -7501,9 +7620,8 @@ builder, with the same default as the option (decision 17 of the plan); and the 
 
 **Checks:** `build_cards` with targets makes the same cards (equal `Card` objects, not only
 the same ids) as `build_cards` without targets, but for the cards that use the targets
-(`_USE_TARGETS`: `diagram`, `gradient-limits`, `gradient-spectrum`, `pns` and
-`rf-exposure`), which are built in both
-cases.
+(`_USE_TARGETS`: `diagram`, `gradient-limits`, `gradient-spectrum`, `pns`, `rf-exposure` and
+`rf-profile`), which are built in both cases.
 
 **How:** `build_cards` for the spin echo sequence with all the cards, twice without targets
 and once with two target profiles. The test checks that the second build without targets

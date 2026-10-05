@@ -29,6 +29,7 @@ from pulseq_analysis.seq_utils import TIME_TOLERANCE, gradient_points, hold_samp
 
 from pulseq_reports import profile_metrics
 from pulseq_reports.rf_sim import crushed_echo, magnetization, precess, spin_domain
+from pulseq_reports.units import hz_to_ut
 
 USES = ("excitation", "refocusing", "inversion", "saturation", "preparation", "other")
 AXIS_KINDS = ("x", "y", "z", "select", "df")
@@ -228,9 +229,18 @@ def rf_uses_labeled(seq: pp.Sequence) -> bool:
 
 
 def block_pulse(
-    seq: pp.Sequence, block: int, *, max_blocks: int = PERIOD_MAX_BLOCKS
+    seq: pp.Sequence,
+    block: int,
+    b0_t: float | None,
+    gamma_hz_per_t: float,
+    *,
+    max_blocks: int = PERIOD_MAX_BLOCKS,
 ) -> BlockPulse | None:
     """The RF pulse of the block at play index `block`, or None when it has no RF.
+
+    `b0_t` (T, or None) and `gamma_hz_per_t` (Hz/T, signed) are the B0 and the gamma of the
+    caller (a target, or `seq.system` without targets): the module reads neither from `seq`.
+    `ValueError` when the pulse has a `ppm` offset and `b0_t` is None.
 
     Section 4.2 of the plan, items 1 to 7:
 
@@ -238,13 +248,13 @@ def block_pulse(
        `rf_uses_labeled(seq)` is False.
     2. The RF as played: `seq_utils.hold_samples(rf, seq.rf_raster_time)` times
        `exp(1j * (phase + 2*pi*f*t))`, with t = (k + 0.5) * dt from the start of the
-       shape, f = freq_offset + freq_ppm * 1e-6 * |gamma| * B0 and the same form for the
-       phase (`seq.system.gamma`, `seq.system.B0`).
+       shape, f = freq_offset + freq_ppm * 1e-6 * gamma * B0 and the same form for the
+       phase (`gamma_hz_per_t` with its sign, as pypulseq does, and `b0_t`).
     3. The gradient of each hold interval: for each axis, the exact integral over
        [rf.delay + k*dt, rf.delay + (k+1)*dt] of the piecewise-linear gradient of the
        block (`seq_utils.gradient_points(g, 0.0)`, zero outside the event), divided by dt.
     4. The gradient kind, the select kind, the direction, G and `constant_gradient`.
-    5. The numbers, with |gamma| of the sequence for µT.
+    5. The numbers, with |gamma| (`gamma_hz_per_t`) for µT.
     6. The pulse key: the rf_library row without phase_offset and phase_ppm, the use,
        and the pypulseq ids of the gradient events whose time in the block overlaps
        [rf.delay, rf.delay + shape_dur] (0 for no such event on an axis).
@@ -280,7 +290,7 @@ def block_pulse(
     _check_max_blocks(max_blocks)
     index = sequence_index(seq)
     i = _play_index(index, block)
-    return _block_pulse(seq, index, i, with_echo=True, max_blocks=max_blocks)
+    return _block_pulse(seq, index, i, b0_t, gamma_hz_per_t, with_echo=True, max_blocks=max_blocks)
 
 
 def period(seq: pp.Sequence, block: int, *, max_blocks: int = PERIOD_MAX_BLOCKS) -> Period:
@@ -550,9 +560,16 @@ def widths(
 
 
 def combined_profile(
-    seq: pp.Sequence, per: Period, *, view: str = "profile", n: int | None = None
+    seq: pp.Sequence,
+    per: Period,
+    b0_t: float | None,
+    gamma_hz_per_t: float,
+    *,
+    view: str = "profile",
+    n: int | None = None,
 ) -> CombinedProfile:
-    """The combined profile of the first echo of `per` (section 4.3, item 7).
+    """The combined profile of the first echo of `per` (section 4.3, item 7). `b0_t` and
+    `gamma_hz_per_t` are those of `block_pulse`, which reads each pulse.
 
     `reason` is set, and the other fields are empty, when there is none: no ADC in the
     period, no excitation before the first ADC, no refocusing pulse between them, a
@@ -620,7 +637,7 @@ def combined_profile(
 
     excitation_block = int(rf_blocks[k0])
     pulses = [
-        _block_pulse(seq, index, p, with_echo=False, max_blocks=0)
+        _block_pulse(seq, index, p, b0_t, gamma_hz_per_t, with_echo=False, max_blocks=0)
         for p in (excitation_block, *refocusing_blocks)
     ]
     if any(p.gradient_kind == "changing" for p in pulses):
@@ -661,7 +678,7 @@ def combined_profile(
     )
 
 
-def pulse_list(seq: pp.Sequence) -> list[PulseSummary]:
+def pulse_list(seq: pp.Sequence, gamma_hz_per_t: float) -> list[PulseSummary]:
     """The distinct pulses of `seq`, in the order of their first block: the blocks with
     RF grouped by the RF event without all its offsets (the rf_library row without
     freq_ppm, phase_ppm, freq_offset and phase_offset, and the use) and the gradient
@@ -671,8 +688,9 @@ def pulse_list(seq: pp.Sequence) -> list[PulseSummary]:
 
     "Play during the RF" is the rule of `block_pulse` (an overlap longer than
     `seq_utils.TIME_TOLERANCE`). The numbers and the gradient kind of a distinct pulse
-    are those of its first block. `refuse_rotations(seq)` first; `ValueError` when
-    `rf_uses_labeled(seq)` is False.
+    are those of its first block, with the magnitude of `gamma_hz_per_t` (Hz/T) for µT. They do not depend
+    on the offsets, so the function needs no B0. `refuse_rotations(seq)` first; `ValueError`
+    when `rf_uses_labeled(seq)` is False.
     """
     refuse_rotations(seq)
     _require_labels(seq, "pulse_list")
@@ -733,7 +751,8 @@ def pulse_list(seq: pp.Sequence) -> list[PulseSummary]:
     summaries = []
     for g in order.tolist():
         i = int(rf_blocks[first_index[g]])
-        core = _pulse_core(seq, _read_block(seq, index, i))
+        # The numbers of a summary do not use the offsets, so any B0 gives them.
+        core = _pulse_core(seq, _read_block(seq, index, i), 0.0, gamma_hz_per_t)
         summaries.append(
             PulseSummary(
                 first_block=i,
@@ -911,16 +930,22 @@ def _gradient_kind(grad: np.ndarray):
     return "changing", None, None, None, False
 
 
-def _pulse_core(seq: pp.Sequence, blk) -> _PulseCore:
+def _pulse_core(seq: pp.Sequence, blk, b0_t: float | None, gamma_hz_per_t: float) -> _PulseCore:
     rf = blk.rf
-    gamma = abs(float(seq.system.gamma))
-    ppm_hz = 1e-6 * gamma * float(seq.system.B0)
+    freq_ppm = float(getattr(rf, "freq_ppm", 0.0))
+    phase_ppm = float(getattr(rf, "phase_ppm", 0.0))
+    if b0_t is None and (freq_ppm != 0 or phase_ppm != 0):
+        raise ValueError(
+            "the RF pulse has a ppm offset, which needs B0 to change into Hz, and b0_t is None"
+        )
+    # A ppm offset changes into Hz with the signed gamma, as pypulseq does.
+    ppm_hz = 0.0 if b0_t is None else 1e-6 * gamma_hz_per_t * b0_t
     # The file's raster ([DEFINITIONS]): `Sequence.read` does not change `seq.system`.
     baseband, dt = hold_samples(rf, seq.rf_raster_time)
     dt = float(dt)
     n = baseband.size
-    f = float(rf.freq_offset) + float(getattr(rf, "freq_ppm", 0.0)) * ppm_hz
-    phase = float(rf.phase_offset) + float(getattr(rf, "phase_ppm", 0.0)) * ppm_hz
+    f = float(rf.freq_offset) + freq_ppm * ppm_hz
+    phase = float(rf.phase_offset) + phase_ppm * ppm_hz
     t = (np.arange(n) + 0.5) * dt
     signal = baseband * np.exp(1j * (phase + 2 * np.pi * f * t))
 
@@ -936,7 +961,8 @@ def _pulse_core(seq: pp.Sequence, blk) -> _PulseCore:
             grad[:, j] = np.where(np.isnan(mid), total / dt, mid)
     kind, select_kind, direction, select_gradient, constant = _gradient_kind(grad)
 
-    b1_ut = np.abs(baseband) / gamma * 1e6
+    amplitude = np.abs(baseband)
+    b1_ut = hz_to_ut(amplitude, gamma_hz_per_t)
     return _PulseCore(
         use=rf.use,
         signal=signal,
@@ -971,12 +997,19 @@ def _pulse_key(seq: pp.Sequence, block_id: int, blk) -> tuple:
 
 
 def _block_pulse(
-    seq: pp.Sequence, index: SequenceIndex, i: int, *, with_echo: bool, max_blocks: int
+    seq: pp.Sequence,
+    index: SequenceIndex,
+    i: int,
+    b0_t: float | None,
+    gamma_hz_per_t: float,
+    *,
+    with_echo: bool,
+    max_blocks: int,
 ) -> BlockPulse | None:
     if index.rf[i] == 0:
         return None
     blk = _read_block(seq, index, i)
-    core = _pulse_core(seq, blk)
+    core = _pulse_core(seq, blk, b0_t, gamma_hz_per_t)
     thickness = _definition(seq, "SliceThickness", 1)
     nominal = None if thickness is None else float(thickness[0])
     fov = _definition(seq, "FOV", 3)

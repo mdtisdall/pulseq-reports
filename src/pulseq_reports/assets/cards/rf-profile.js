@@ -35,6 +35,16 @@
 // phase numbers of an excitation come from its last block in the period (the one
 // nearest to the ADC), with the profile of its key.
 //
+// The groups (docs/plans/pulseq-checks.md, section 4.8). The data has the groups of the
+// targets with the same gamma and B0 (`file.groups`). A `ppm` offset changes into Hz with
+// the signed gamma and the B0 of a group, and |B1| uses |gamma| (RfProfiles). With more
+// than one group, each lane of a 1D profile has one series for each group, in the color of
+// the group, and the table of the pulses has one row for each pulse and group. The
+// Bloch simulation depends only on the offsets in Hz, so the groups that give a pulse the
+// same offsets share its profiles (a "variant" of the pulse key). The maps and the maps of
+// the combined profile are for the first group that has the pulse. A pulse with a `ppm`
+// offset in a group without B0 has a note for that group, and is not drawn for it.
+//
 // The "Show" buttons of the pulse list publish `goto` with the block, and are shown only
 // while a card subscribes to `goto` (decision 22 of docs/plans/public-api.md).
 PulseqReport.registerCard("rf-profile", (section, data) => {
@@ -94,23 +104,29 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     return file.decoding;
   }
 
-  // The pulse key of the RF block `b`.
+  // The pulse key of the RF block `b`: it does not depend on the group.
   function blockKey(seqView, b) {
     const ev = seqView.events(b);
     const combo = `${ev.rf},${ev.gx},${ev.gy},${ev.gz}`;
     let key = file.blockKeys.get(combo);
     if (key === undefined) {
-      key = RfProfiles.blockPulse(seqView, file.fd, b, {maxBlocks: 1}).key;
+      key = RfProfiles.pulseKey(seqView, file.fd, b);
       file.blockKeys.set(combo, key);
     }
     return key;
   }
 
+  // The groups of the targets with the same gamma and B0 (the file data).
+  const manyGroups = () => file.fd.groups.length > 1;
+  // The names of the targets of a group.
+  const groupNames = group => group.names.join(", ");
+
   // ---- The caches ----
 
-  // pulse key -> {key, pulse, profile, maps: {view}}, in the order of use (the first
-  // entry is the least recently used). `profile` and each map are a record of one view of
-  // the pulse (newRecord).
+  // pulse key -> {key, variants: Map}, in the order of use (the first entry is the least
+  // recently used). A variant is {pulse, profile, maps: {view}} for one offset of the pulse
+  // in Hz (the groups with that offset share it; only a `ppm` offset differs between
+  // groups); `profile` and each map are a record of one view of the pulse (newRecord).
   const keyCache = new Map();
 
   // The record of one view of a pulse: its spec (undefined until the work makes it,
@@ -147,17 +163,15 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     return rec.result;
   }
 
-  // The cache entry of `key`, made with the pulse that `makePulse()` gives (a pulse of
-  // a block with that key) when the cache does not have it.
-  function keyEntry(key, makePulse) {
+  // The cache entry of `key`.
+  function keyEntry(key) {
     let entry = keyCache.get(key);
     if (entry !== undefined) {
       keyCache.delete(key);
       keyCache.set(key, entry);
       return entry;
     }
-    const pulse = makePulse();
-    entry = {key, pulse, profile: newRecord(), maps: {}};
+    entry = {key, variants: new Map()};
     keyCache.set(key, entry);
     while (keyCache.size > MAX_KEYS) {
       const [oldKey] = keyCache.entries().next().value;
@@ -170,17 +184,31 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     return entry;
   }
 
+  // The variant of `entry` for the offset in Hz `freqHz`, made with the pulse that
+  // `makePulse()` gives when the entry does not have it.
+  function variantOf(entry, freqHz, makePulse) {
+    const id = String(freqHz);
+    let variant = entry.variants.get(id);
+    if (variant === undefined) {
+      variant = {pulse: makePulse(), profile: newRecord(), maps: {}};
+      entry.variants.set(id, variant);
+    }
+    return variant;
+  }
+
   // `${layout}/${view}` -> {firstBlock, result}: the combined profiles,
   // by the layout of the RF blocks of their period up to its first ADC (each block's
-  // offset from the period start and its pulse key), which decides the result; its
-  // blocks are those of the period `firstBlock`.
+  // offset from the period start, its pulse key and its offset in Hz in the group), which
+  // decides the result; its blocks are those of the period `firstBlock`.
   const combinedCache = new Map();
 
-  function combinedName(seqView, per) {
+  function combinedName(seqView, per, gi) {
     const parts = [];
     if (per.firstAdcBlock !== null) {
       for (let b = per.firstBlock; b <= per.firstAdcBlock; b++) {
-        if (seqView.events(b).rf !== 0) parts.push(`${b - per.firstBlock}:${blockKey(seqView, b)}`);
+        if (seqView.events(b).rf === 0) continue;
+        const offsets = RfProfiles.pulseOffset(seqView, file.fd, b, gi);
+        parts.push(`${b - per.firstBlock}:${blockKey(seqView, b)}:${offsets && offsets.freqHz}`);
       }
     }
     return `${parts.join(",")}/${combinedView}`;
@@ -365,9 +393,9 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   const PHASE_TICKS = {domain: [-Math.PI, Math.PI], ticks: [-Math.PI, 0, Math.PI],
     tick_labels: ["−π", "0", "π"]};
 
-  // One line lane of values at the points x (scaled for the axis), cut where a value is
+  // The segments of the values at the points x (scaled for the axis), cut where a value is
   // not finite (the echo phase is NaN where |Mxy| is small).
-  function lane(laneId, title, unit, color, x, scale, values, ticks) {
+  function segmentsOf(x, scale, values) {
     const segments = [];
     let seg = [];
     for (let i = 0; i < x.length; i++) {
@@ -379,8 +407,28 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
       }
     }
     if (seg.length) segments.push(seg);
-    return {id: laneId, title, unit, color, kind: "line", segments, fill: null, ...ticks};
+    return segments;
   }
+
+  // One line lane. `items` are {x, values, label, color}, one for each group (or each set
+  // of groups) that has the lane: with several groups in the file, each is a series of the
+  // lane in its color, else the one item is the lane.
+  function lane(laneId, title, unit, color, items, scale, ticks) {
+    const out = {id: laneId, title, unit, color, kind: "line", segments: [], fill: null, ...ticks};
+    if (manyGroups()) {
+      out.series = items.map(it => ({label: `${title}: ${it.label}`, color: it.color,
+        segments: segmentsOf(it.x, scale, it.values)}));
+    } else {
+      out.segments = segmentsOf(items[0].x, scale, items[0].values);
+    }
+    return out;
+  }
+
+  // The bands of a slice, in the unit of the axis: [lo, hi], or {lo, hi, color} in the color
+  // of a group when the card has several.
+  const scaledBand = (band, scale) => (Array.isArray(band)
+    ? [band[0] * scale, band[1] * scale]
+    : {lo: band.lo * scale, hi: band.hi * scale, color: band.color});
 
   function drawLanes(container, svgId, label, axis, lo, hi, lanes, bands) {
     const {box, svg, tip} = chartBox(svgId, label, false);
@@ -390,7 +438,7 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
       svg, chart: box, tip, lanes, xDomain, minSpan: (xDomain[1] - xDomain[0]) / 1000,
       xLabel: axis.label,
       cursorText: v => `${axis.name} = ${fmt(v)} ${axis.unit}`,
-      bands: bands.map(([a, b]) => [a * axis.scale, b * axis.scale]),
+      bands: bands.map(band => scaledBand(band, axis.scale)),
     });
   }
 
@@ -496,8 +544,8 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   // ---- The elements of the distinct pulses ----
 
   // The elements of each distinct pulse of the shown period, by pulse key: {el, heading,
-  // profileBox, drawn (the 1D chart is drawn), phase (the echo phase it shows, or null),
-  // mapBoxes: {view}, maps: {view: map chart}}. A pulse of the
+  // profileBox, drawn (what the 1D chart shows: null, or {groups, phases}), mapBoxes: {view},
+  // mapTitles: {view}, maps: {view: map chart}}. A pulse of the
   // next period with the same key keeps its elements, so a move to the next TR of a
   // sequence draws no chart again, except a 1D chart whose echo phase changes.
   let pulseViews = new Map();
@@ -507,15 +555,15 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     for (const chart of Object.values(v.maps)) chart.destroy();
   }
 
-  function makeView(pulse) {
-    const v = {heading: el("h4"), profileBox: el("div"), drawn: false, phase: null,
-      mapBoxes: {}, maps: {}, svgId: `${id}-lanes-${nextViewId++}`};
+  function makeView(use) {
+    const v = {heading: el("h4"), profileBox: el("div"), drawn: null, mapBoxes: {}, mapTitles: {},
+      maps: {}, svgId: `${id}-lanes-${nextViewId++}`};
     v.el = el("div", {}, v.heading, v.profileBox);
     for (const view of mapViews) {
-      const title = view === "z_df" ? "Select coordinate × Δf" : "Two spatial axes";
       v.mapBoxes[view] = el("div");
-      v.el.append(el("p", {}, el("strong", {}, `${title} (${QUANTITY_LABEL[MAIN[pulse.use]]})`)),
-        v.mapBoxes[view]);
+      v.mapTitles[view] = el("strong", {}, `${view === "z_df" ? "Select coordinate × Δf" : "Two spatial axes"} ` +
+        `(${QUANTITY_LABEL[MAIN[use]]})`);
+      v.el.append(el("p", {}, v.mapTitles[view]), v.mapBoxes[view]);
     }
     return v;
   }
@@ -547,6 +595,8 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   // The columns that the 1D profile fills, in the order of TABLE_HEADERS from "FWHM".
   const WIDTH_KEYS = ["fwhm", "edge_width", "passband_ripple", "stopband_level",
     "rephasing_error_rad", "nonlinear_residual_rad", "centre_phase_rad"];
+  // The note of a pulse with a `ppm` offset in a group without B0.
+  const NO_B0 = "the offset is in ppm and no target gives B0, so it cannot be changed into Hz";
 
   const mm = v => (v === null || v === undefined ? "—" : fmt(v * 1e3));
 
@@ -556,46 +606,66 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     const {seqView, per} = shown;
     stopWork();
     statusEl.textContent = statusText();
+    const groups = file.fd.groups;
+    const many = manyGroups();
 
-    // One slot for each distinct pulse: its key's cache entry, its pulse (for an
-    // excitation, the pulse of its last block, for the echo pathway of that block; else
-    // the key's pulse), and its elements.
+    // One slot for each distinct pulse: its key's cache entry, its elements, and a "sub"
+    // for each group: the pulse in that group (for an excitation, the pulse of its last
+    // block, for the echo pathway of that block; else the pulse of the key's variant) and
+    // that variant, both null for a `ppm` offset in a group without B0.
     const views = new Map();
     const slots = per.pulses.map((g, i) => {
       const name = g.key;
-      let pulse = g.use === "excitation" ? RfProfiles.blockPulse(seqView, file.fd, g.lastBlock) : null;
-      const entry = keyEntry(g.key,
-        () => pulse ?? RfProfiles.blockPulse(seqView, file.fd, g.lastBlock));
-      if (pulse === null) pulse = entry.pulse;
-      const view = pulseViews.get(name) ?? makeView(pulse);
+      const entry = keyEntry(g.key);
+      const subs = groups.map((group, gi) => {
+        const offsets = RfProfiles.pulseOffset(seqView, file.fd, g.lastBlock, gi);
+        if (offsets === null) return {gi, group, pulse: null, variant: null};
+        const own = g.use === "excitation"
+          ? RfProfiles.blockPulse(seqView, file.fd, g.lastBlock, {group: gi}) : null;
+        const variant = variantOf(entry, offsets.freqHz,
+          () => own ?? RfProfiles.blockPulse(seqView, file.fd, g.lastBlock, {group: gi}));
+        // The variant is shared by the groups with this offset in Hz, but its pulse has the
+        // |B1| of the group that made it: each group reads the pulse with its own |gamma|.
+        return {gi, group, pulse: own ?? RfProfiles.pulseInGroup(seqView, file.fd, variant.pulse, gi),
+          variant};
+      });
+      const first = subs.find(sub => sub.pulse !== null);
+      const view = pulseViews.get(name) ?? makeView(g.use);
       views.set(name, view);
-      view.heading.textContent =
-        `Pulse ${i + 1}: ${pulse.use}, ${gradientText(pulse)}, ×${g.count}`;
-      return {k: i + 1, g, name, pulse, entry, view};
+      view.heading.textContent = `Pulse ${i + 1}: ${g.use}, ` +
+        `${first ? `${gradientText(first.pulse)}, ` : ""}×${g.count}`;
+      return {k: i + 1, g, name, entry, view, subs, first};
     });
     for (const [name, v] of pulseViews) if (!views.has(name)) dropView(v);
     pulseViews = views;
 
     const tbody = el("tbody");
     for (const slot of slots) {
-      const {k, g, pulse} = slot;
-      const notes = pulse.notes.slice();
-      if (pulse.use === "excitation" && pulse.echo === null && pulse.echoReason !== null) {
-        notes.push(`phase at the echo: ${pulse.echoReason}`);
+      const {k, g} = slot;
+      for (const sub of slot.subs) {
+        const {pulse, variant} = sub;
+        const notes = pulse === null ? [NO_B0] : pulse.notes.slice();
+        if (pulse !== null) {
+          if (pulse.use === "excitation" && pulse.echo === null && pulse.echoReason !== null) {
+            notes.push(`phase at the echo: ${pulse.echoReason}`);
+          }
+          if (variant.profile.reason !== null) notes.push(variant.profile.reason);
+        }
+        sub.widthCells = WIDTH_KEYS.map(() => el("td", {}, pulse === null ? "—" : "…"));
+        sub.notes = notes;
+        sub.notesCell = el("td", {}, notes.join("; "));
+        const target = many ? [el("td", {}, groupNames(sub.group))] : [];
+        const numbers = pulse === null ? ["—", "—", "—", "—", "—", "—"]
+          : [gradientText(pulse), fmt(pulse.flipDeg), fmt(pulse.peakB1Ut), fmt(pulse.energyUt2Ms),
+            mm(pulse.nominalM), mm(pulse.sliceCentreM)];
+        tbody.append(el("tr", {},
+          el("td", {}, String(k)), ...target, el("td", {}, g.use), el("td", {}, String(g.count)),
+          ...numbers.map(text => el("td", {}, text)), ...sub.widthCells, sub.notesCell));
       }
-      if (slot.entry.profile.reason !== null) notes.push(slot.entry.profile.reason);
-      slot.widthCells = WIDTH_KEYS.map(() => el("td", {}, "…"));
-      slot.notes = notes;
-      slot.notesCell = el("td", {}, notes.join("; "));
-      tbody.append(el("tr", {},
-        el("td", {}, String(k)), el("td", {}, pulse.use), el("td", {}, String(g.count)),
-        el("td", {}, gradientText(pulse)), el("td", {}, fmt(pulse.flipDeg)),
-        el("td", {}, fmt(pulse.peakB1Ut)), el("td", {}, fmt(pulse.energyUt2Ms)),
-        el("td", {}, mm(pulse.nominalM)), el("td", {}, mm(pulse.sliceCentreM)),
-        ...slot.widthCells, slot.notesCell));
     }
+    const headers = many ? [TABLE_HEADERS[0], "Target", ...TABLE_HEADERS.slice(1)] : TABLE_HEADERS;
     const table = el("div", {class: "scroll"}, el("table", {},
-      el("thead", {}, el("tr", {}, ...TABLE_HEADERS.map(h => el("th", {}, h)))), tbody));
+      el("thead", {}, el("tr", {}, ...headers.map(h => el("th", {}, h)))), tbody));
     pulsesEl.replaceChildren(table, ...slots.map(s => s.view.el));
 
     // The 1D profiles at once, in the order of the table (section 4.5, item 5); then the
@@ -611,26 +681,24 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
   const alive = slot => pulseViews.get(slot.name) === slot.view;
 
   // The 1D profile of a slot, at once: its reason, or its chart (from the cache, or
-  // computed here).
+  // computed here). The work of a variant is done one time for all its groups.
   function profileNow(slot) {
-    const {entry, view} = slot;
-    const p = entry.profile;
-    if (!recordDone(p)) {
-      const work = viewWork(p, entry.pulse, "profile", file.lineCache);
-      while (!work.done) work.step(Infinity);
-    }
-    if (p.spec === null) {
-      if (!view.drawn) {
-        view.profileBox.replaceChildren(muted(`No 1D profile: ${p.reason}.`));
-        view.drawn = true;
+    for (const sub of slot.subs) {
+      if (sub.variant === null) continue;
+      const p = sub.variant.profile;
+      if (!recordDone(p)) {
+        const work = viewWork(p, sub.variant.pulse, "profile", file.lineCache);
+        while (!work.done) work.step(Infinity);
       }
-      if (!slot.notes.includes(p.reason)) {
-        slot.notesCell.textContent = [...slot.notes, p.reason].join("; ");
+      if (p.spec === null) {
+        if (!sub.notes.includes(p.reason)) {
+          sub.notesCell.textContent = [...sub.notes, p.reason].join("; ");
+        }
+        for (const cell of sub.widthCells) cell.textContent = "—";
+      } else {
+        takeResult(p);
       }
-      for (const cell of slot.widthCells) cell.textContent = "—";
-      return;
     }
-    takeResult(p);
     showProfile(slot);
   }
 
@@ -638,71 +706,110 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     a.every((v, i) => v === b[i] || (Number.isNaN(v) && Number.isNaN(b[i]))));
 
   // Draws the 1D chart of a slot, unless the same chart is on the page, and fills the
-  // width cells of its row.
+  // width cells of its rows. A group whose pulse has no profile is not in the chart.
   function showProfile(slot) {
-    const {pulse, entry, view} = slot;
-    const p = entry.profile;
-    const profile = p.result;
-    const axis = axisOf(profile.spec.axes[0].kind);
-    const phase = pulse.use === "excitation" && pulse.gradientKind === "one"
-      ? RfProfiles.echoPhase(pulse, profile) : null;
-    if (!view.drawn || !samePhase(view.phase, phase)) {
-      if (p.quantities === undefined) {
-        p.quantities = {};
-        for (const q of ["mxy_abs", "mz", "beta_sq"]) p.quantities[q] = RfProfiles.quantity(profile, q);
+    const {view} = slot;
+    const drawable = slot.subs.filter(sub => sub.variant !== null && sub.variant.profile.spec !== null);
+    if (drawable.length === 0) {
+      // The same reason for each group (it comes from the pulse), or the note.
+      const sub = slot.subs.find(s => s.variant !== null);
+      const reason = sub ? sub.variant.profile.reason : NO_B0;
+      if (view.drawn === null || view.drawn.reason !== reason) {
+        view.profileBox.replaceChildren(muted(`No 1D profile: ${reason}.`));
+        view.drawn = {reason};
       }
-      const q = p.quantities;
-      const x = profile.grid[0];
+      return;
+    }
+    const axis = axisOf(drawable[0].variant.profile.result.spec.axes[0].kind);
+    const phases = drawable.map(sub => (sub.pulse.use === "excitation" && sub.pulse.gradientKind === "one"
+      ? RfProfiles.echoPhase(sub.pulse, sub.variant.profile.result) : null));
+    const groupsKey = drawable.map(sub => `${sub.gi}:${sub.variant.profile.result.spec.axes[0].lo}`).join(",");
+    const same = view.drawn !== null && view.drawn.groups === groupsKey &&
+      view.drawn.phases.every((phase, i) => samePhase(phase, phases[i]));
+    if (!same) {
+      const items = drawable.map((sub, i) => {
+        const p = sub.variant.profile;
+        if (p.quantities === undefined) {
+          p.quantities = {};
+          for (const q of ["mxy_abs", "mz", "beta_sq"]) p.quantities[q] = RfProfiles.quantity(p.result, q);
+        }
+        return {x: p.result.grid[0], q: p.quantities, phase: phases[i], label: groupNames(sub.group),
+          color: sub.group.color};
+      });
       const lanes = [];
-      for (const name of LANES[pulse.use]) {
+      const of = values => items.map(it => ({x: it.x, values: values(it), label: it.label, color: it.color}));
+      for (const name of LANES[slot.g.use]) {
         if (name === "mxy") {
-          lanes.push(lane("mxy", "|Mxy|", "", "rf", x, axis.scale, q.mxy_abs, unitTicks(q.mxy_abs)));
+          lanes.push(lane("mxy", "|Mxy|", "", "rf", of(it => it.q.mxy_abs), axis.scale,
+            unitTicks(...items.map(it => it.q.mxy_abs))));
         } else if (name === "mz") {
-          lanes.push(lane("mz", "Mz", "", "gx", x, axis.scale, q.mz, SIGNED_TICKS));
+          lanes.push(lane("mz", "Mz", "", "gx", of(it => it.q.mz), axis.scale, SIGNED_TICKS));
         } else if (name === "beta") {
-          lanes.push(lane("beta", "|β|²", "", "rf", x, axis.scale, q.beta_sq, unitTicks(q.beta_sq)));
-        } else if (phase !== null) {
-          lanes.push(lane("phase", "Phase at the echo", "rad", "gy", x, axis.scale, phase,
-            PHASE_TICKS));
+          lanes.push(lane("beta", "|β|²", "", "rf", of(it => it.q.beta_sq), axis.scale,
+            unitTicks(...items.map(it => it.q.beta_sq))));
+        } else if (phases.some(phase => phase !== null)) {
+          const withPhase = items.filter(it => it.phase !== null);
+          lanes.push(lane("phase", "Phase at the echo", "rad", "gy",
+            withPhase.map(it => ({x: it.x, values: it.phase, label: it.label, color: it.color})),
+            axis.scale, PHASE_TICKS));
         }
       }
-      const bands = pulse.gradientKind === "one" && pulse.nominalM !== null
-        ? [[pulse.sliceCentreM - pulse.nominalM / 2, pulse.sliceCentreM + pulse.nominalM / 2]]
-        : [];
-      drawLanes(view.profileBox, view.svgId, `1D profile of pulse ${slot.k}`, axis,
-        x[0], x[x.length - 1], lanes, bands);
-      view.drawn = true;
-      view.phase = phase;
+      const bands = [];
+      for (const sub of drawable) {
+        const {pulse} = sub;
+        if (pulse.gradientKind !== "one" || pulse.nominalM === null) continue;
+        const lo = pulse.sliceCentreM - pulse.nominalM / 2, hi = pulse.sliceCentreM + pulse.nominalM / 2;
+        bands.push(manyGroups() ? {lo, hi, color: sub.group.color} : [lo, hi]);
+      }
+      const lo = Math.min(...items.map(it => it.x[0]));
+      const hi = Math.max(...items.map(it => it.x[it.x.length - 1]));
+      drawLanes(view.profileBox, view.svgId, `1D profile of pulse ${slot.k}`, axis, lo, hi, lanes,
+        bands);
+      view.drawn = {groups: groupsKey, phases};
     }
 
     // The widths of an excitation depend on its block (the echo pathway); the others
     // are kept with the profile.
-    let w;
-    if (pulse.use === "excitation") {
-      w = RfProfiles.widths(pulse, profile);
-    } else {
-      if (p.widths === undefined) p.widths = RfProfiles.widths(pulse, profile);
-      w = p.widths;
-    }
     const width = v => (v === undefined ? "—"
       : axis.unit === "mm" ? `${fmt(v * 1e3)} mm` : `${fmt(v)} Hz`);
     const plain = v => (v === undefined ? "—" : fmt(v));
-    WIDTH_KEYS.forEach((key, i) => {
-      slot.widthCells[i].textContent = i < 2 ? width(w[key]) : plain(w[key]);
-    });
+    for (const sub of drawable) {
+      const {pulse} = sub;
+      const p = sub.variant.profile;
+      let w;
+      if (pulse.use === "excitation") {
+        w = RfProfiles.widths(pulse, p.result);
+      } else {
+        if (p.widths === undefined) p.widths = RfProfiles.widths(pulse, p.result);
+        w = p.widths;
+      }
+      WIDTH_KEYS.forEach((key, i) => {
+        sub.widthCells[i].textContent = i < 2 ? width(w[key]) : plain(w[key]);
+      });
+    }
   }
 
-  // The map of `view` of a slot: nothing when it is on the page, its reason, drawn at
-  // once from the cache, or a job.
+  // The map of `view` of a slot, for the first group that has the pulse: nothing when it
+  // is on the page, its reason, drawn at once from the cache, or a job.
   function mapWork(slot, view, list) {
-    const {entry, pulse} = slot;
+    const sub = slot.subs.find(s => s.variant !== null);
     const v = slot.view;
     if (v.maps[view] !== undefined || v.mapBoxes[view].dataset.reason !== undefined) return;
     const box = v.mapBoxes[view];
-    let m = entry.maps[view];
+    if (sub === undefined) {
+      box.replaceChildren(muted(`No map: ${NO_B0}.`));
+      box.dataset.reason = "";
+      return;
+    }
+    const {pulse, variant} = sub;
+    if (manyGroups()) {
+      v.mapTitles[view].textContent = `${v.mapTitles[view].textContent.replace(/ — .*$/, "")} — ` +
+        groupNames(sub.group);
+    }
+    let m = variant.maps[view];
     if (m === undefined) {
       m = newRecord();
-      entry.maps[view] = m;
+      variant.maps[view] = m;
     }
     const finish = () => {
       if (m.spec === null) {
@@ -728,43 +835,96 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
       return;
     }
     box.replaceChildren(muted("Computing the map… 0 %"));
-    list.push({work: viewWork(m, entry.pulse, view, null), finish, progress: fr => {
+    list.push({work: viewWork(m, variant.pulse, view, null), finish, progress: fr => {
       box.firstChild.textContent = `Computing the map… ${percent(fr)}`;
     }});
   }
 
   // ---- The combined profile ----
 
+  // The combined profile of the period for each group: the groups that give the pulses the
+  // same offsets in Hz share a result (an "entry" with the indexes `gis` of its groups). A
+  // group whose pulses cannot change a `ppm` offset into Hz (no B0) has no entry.
   function combinedWork(seqView, per, slots, list) {
-    const name = combinedName(seqView, per);
-    const kept = combinedCache.get(name);
-    if (kept !== undefined) {
-      combinedCache.delete(name);
-      combinedCache.set(name, kept);
-      showCombined(seqView, slots, name, kept.result, per.firstBlock - kept.firstBlock);
+    const entries = [];
+    const byName = new Map();
+    file.fd.groups.forEach((group, gi) => {
+      const name = combinedName(seqView, per, gi);
+      let entry = byName.get(name);
+      if (entry === undefined) {
+        entry = {name, gis: [], result: null, shift: 0, work: null};
+        byName.set(name, entry);
+        entries.push(entry);
+      }
+      entry.gis.push(gi);
+    });
+
+    const usable = [];
+    const later = [];
+    for (const entry of entries) {
+      const kept = combinedCache.get(entry.name);
+      if (kept !== undefined) {
+        combinedCache.delete(entry.name);
+        combinedCache.set(entry.name, kept);
+        entry.result = kept.result;
+        entry.shift = per.firstBlock - kept.firstBlock;
+      } else {
+        try {
+          entry.work = RfProfiles.combinedProfile(seqView, file.fd, per,
+            {view: combinedView, cache: file.lineCache, group: entry.gis[0]});
+        } catch (error) {
+          // A pulse of the combined profile has a `ppm` offset and the group has no B0.
+          entry.noB0 = true;
+          continue;
+        }
+        if (entry.work.done) {
+          finishEntry(entry, per);
+        } else {
+          later.push(entry);
+        }
+      }
+      usable.push(entry);
+    }
+    if (usable.length === 0) {
+      showNoB0Combined();
       return;
     }
-    const work = RfProfiles.combinedProfile(seqView, file.fd, per,
-      {view: combinedView, cache: file.lineCache});
-    const finish = () => {
-      const result = work.result();
-      combinedCache.set(name, {firstBlock: per.firstBlock, result});
-      while (combinedCache.size > MAX_COMBINED) {
-        combinedCache.delete(combinedCache.keys().next().value);
-      }
-      showCombined(seqView, slots, name, result, 0);
-    };
-    if (work.done) {
-      finish();
+    const left = entries.filter(e => e.noB0).flatMap(e => e.gis);
+    if (later.length === 0) {
+      showCombined(seqView, slots, usable, left);
       return;
     }
     dropCombined();
     combinedEl.hidden = false;
     combinedNote.hidden = false;
     combinedBody.replaceChildren(muted("Computing the combined profile… 0 %"));
-    list.push({work, finish, progress: fr => {
-      combinedBody.firstChild.textContent = `Computing the combined profile… ${percent(fr)}`;
-    }});
+    for (const entry of later) {
+      list.push({work: entry.work, finish: () => {
+        finishEntry(entry, per);
+        if (later.every(e => e.result !== null)) showCombined(seqView, slots, usable, left);
+      }, progress: fr => {
+        combinedBody.firstChild.textContent = `Computing the combined profile… ${percent(fr)}`;
+      }});
+    }
+  }
+
+  // Keeps the result of the finished work of `entry` in the cache.
+  function finishEntry(entry, per) {
+    entry.result = entry.work.result();
+    entry.shift = 0;
+    combinedCache.set(entry.name, {firstBlock: per.firstBlock, result: entry.result});
+    while (combinedCache.size > MAX_COMBINED) {
+      combinedCache.delete(combinedCache.keys().next().value);
+    }
+  }
+
+  // No group has the pulses of the combined profile (a `ppm` offset, no B0).
+  function showNoB0Combined() {
+    dropCombined();
+    combinedShown = {name: "no B0", summary: null, maps: []};
+    combinedEl.hidden = false;
+    combinedNote.hidden = true;
+    combinedBody.replaceChildren(muted(`No combined profile for this period: ${NO_B0}.`));
   }
 
   const COMBINED_NUMBERS = [
@@ -775,15 +935,24 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     ["centre_signal", "Signal at the slice centre", fmt],
   ];
 
-  // Shows the combined profile `result` (the entry `name` of combinedCache). `shift`
-  // moves its blocks to this period, when it comes from another period with the same
-  // layout of RF blocks. When the card shows that entry already, only the block numbers
-  // change.
-  function showCombined(seqView, slots, name, result, shift) {
+  // Shows the combined profile of the entries `usable` of combinedWork (each with the
+  // result of the entry `name` of combinedCache). `shift` of an entry moves its blocks to
+  // this period, when it comes from another period with the same layout of RF blocks.
+  // `left` are the indexes of the groups that have no entry. The first entry sets the
+  // structure (the blocks, the directions, the reason: they do not depend on the group) and
+  // the maps. When the card shows these entries already, only the block numbers change.
+  function showCombined(seqView, slots, usable, left) {
+    const groups = file.fd.groups;
+    const [{result, shift}] = usable;
+    const name = usable.map(e => e.name).join("+");
     // The distinct pulse (its number in the table) of a block of the result.
     const slotOf = b => slots.find(s => s.g.key === blockKey(seqView, b + shift));
     const blocks = result.reason === null ? [result.excitationBlock, ...result.refocusingBlocks] : [];
-    const pulses = blocks.map(b => RfProfiles.blockPulse(seqView, file.fd, b + shift, {maxBlocks: 1}));
+    // The pulses of the blocks of an entry, in its first group.
+    const pulsesOf = entry => [entry.result.excitationBlock, ...entry.result.refocusingBlocks]
+      .map(b => RfProfiles.blockPulse(seqView, file.fd, b + entry.shift,
+        {maxBlocks: 1, group: entry.gis[0]}));
+    const label = entry => entry.gis.map(gi => groupNames(groups[gi])).join(", ");
     const summaryText = () => {
       const names = blocks.map(b => {
         const s = slotOf(b);
@@ -791,8 +960,14 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
       });
       let text = `Excitation: ${names[0]}; refocusing: ${names.slice(1).join(", ")}. ` +
         `Directions: ${result.directions.length ? result.directions.join(", ") : "none"}.`;
-      if (pulses.some(p => p.gradientKind === "none")) {
+      if (pulsesOf(usable[0]).some(p => p.gradientKind === "none")) {
         text += ` The pulses without a gradient give a factor of ${fmt(result.factor)}.`;
+      }
+      if (left.length) {
+        text += ` Not drawn for ${left.map(gi => groupNames(groups[gi])).join(", ")}: ${NO_B0}.`;
+      }
+      if (usable.length > 1 && result.maps.length) {
+        text += ` The maps are for ${label(usable[0])}.`;
       }
       return text;
     };
@@ -814,42 +989,55 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
       return;
     }
     combinedNote.hidden = false;
-    const numbers = result.numbers;
-    const shownNumbers = COMBINED_NUMBERS.filter(([key]) => numbers[key] !== undefined);
+    const shownNumbers = COMBINED_NUMBERS.filter(([key]) => result.numbers[key] !== undefined);
+    const many = manyGroups();
     const summary = el("p", {}, summaryText());
     combinedShown.summary = summary;
+    const headers = [...(many ? ["Target"] : []), ...shownNumbers.map(([, label]) => label)];
+    const rows = usable.map(entry => el("tr", {},
+      ...(many ? [el("td", {}, label(entry))] : []),
+      ...shownNumbers.map(([key, , text]) => el("td", {}, text(entry.result.numbers[key])))));
     const parts = [summary, el("div", {class: "scroll"}, el("table", {},
-      el("thead", {}, el("tr", {}, ...shownNumbers.map(([, label]) => el("th", {}, label)))),
-      el("tbody", {}, el("tr", {},
-        ...shownNumbers.map(([key, , text]) => el("td", {}, text(numbers[key]))))))),
+      el("thead", {}, el("tr", {}, ...headers.map(h => el("th", {}, h)))),
+      el("tbody", {}, ...rows))),
     ];
 
-    const centreOf = kind => {
+    const pulsesByEntry = usable.map(pulsesOf);
+    const centreOf = (pulses, kind) => {
       const p = pulses.find(q => q.gradientKind === "one" && q.selectKind === kind);
       return p ? p.sliceCentreM : null;
     };
     const nominal = file.fd.sliceThicknessM;
     if (result.line !== null) {
-      const u = result.line.u;
       const axis = axisOf(result.directions[0]);
       const colors = ["rf", "gy", "gz", "gx"];
-      const ticks = unitTicks(result.line.values, ...result.linePulses.map(lp => lp.values));
+      const ticks = unitTicks(...usable.flatMap(e =>
+        [e.result.line.values, ...e.result.linePulses.map(lp => lp.values)]));
+      const item = (entry, values) => ({x: entry.result.line.u, values, label: label(entry),
+        color: groups[entry.gis[0]].color});
       const lanes = result.linePulses.map((lp, i) => {
         const s = slotOf(lp.block);
-        const use = s ? s.pulse.use : "";
+        const use = s ? s.g.use : "";
         const title = `Pulse ${s ? s.k : "?"} ${use === "excitation" ? "|Mxy|" : "|β|²"}`;
-        return lane(`line-${i}`, title, "", colors[i % colors.length], u, axis.scale, lp.values,
-          ticks);
+        return lane(`line-${i}`, title, "", colors[i % colors.length],
+          usable.map(e => item(e, e.result.linePulses[i].values)), axis.scale, ticks);
       });
-      lanes.push(lane("combined", "Combined", "", "adc", u, axis.scale, result.line.values,
-        ticks));
-      const c = centreOf(result.directions[0]);
-      const bands = nominal !== null && c !== null ? [[c - nominal / 2, c + nominal / 2]] : [];
+      lanes.push(lane("combined", "Combined", "", "adc",
+        usable.map(e => item(e, e.result.line.values)), axis.scale, ticks));
+      const bands = [];
+      usable.forEach((entry, k) => {
+        const c = centreOf(pulsesByEntry[k], result.directions[0]);
+        if (nominal === null || c === null) return;
+        const band = [c - nominal / 2, c + nominal / 2];
+        bands.push(many ? {lo: band[0], hi: band[1], color: groups[entry.gis[0]].color} : band);
+      });
+      const lo = Math.min(...usable.map(e => e.result.line.u[0]));
+      const hi = Math.max(...usable.map(e => e.result.line.u[e.result.line.u.length - 1]));
       const box = el("div");
       parts.push(box);
       combinedBody.replaceChildren(...parts);
       drawLanes(box, `${id}-combined-line`, "Combined profile of the first echo", axis,
-        u[0], u[u.length - 1], lanes, bands);
+        lo, hi, lanes, bands);
       return;
     }
     if (result.maps.length === 0 && result.directions.length > 1) {
@@ -869,7 +1057,7 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     combinedBody.replaceChildren(...parts);
     result.maps.forEach((m, i) => {
       const [a, b] = m.axes;
-      const ca = centreOf(a.kind), cb = centreOf(b.kind);
+      const ca = centreOf(pulsesByEntry[0], a.kind), cb = centreOf(pulsesByEntry[0], b.kind);
       const outlines = nominal !== null && ca !== null && cb !== null
         ? [[ca - nominal / 2, ca + nominal / 2, cb - nominal / 2, cb + nominal / 2]] : [];
       combinedShown.maps.push(drawMap(boxes[i], `Combined profile, ${a.kind} × ${b.kind}`,
@@ -883,6 +1071,8 @@ PulseqReport.registerCard("rf-profile", (section, data) => {
     PulseqReport.subscribe(topic, message => onMessage(topic, message));
   }
 
+  // The gamma control of the "Distinct pulses" table (one table for each |gamma|).
+  PulseqReport.gammaSelect(section);
   for (const button of section.querySelectorAll("button[data-block]")) {
     PulseqReport.requestButton(button, "goto");
     button.addEventListener("click", () => {

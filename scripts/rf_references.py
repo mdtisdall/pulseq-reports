@@ -467,7 +467,7 @@ def _write_case(case: Case, work: Path) -> Path:
     # The pulse as the reference of this project reads the same file.
     read = pp.Sequence(SYSTEM)
     read.read(str(seq_path))
-    pulse = rp.block_pulse(read, 0)
+    pulse = rp.block_pulse(read, 0, float(SYSTEM.B0), float(SYSTEM.gamma))
 
     fixture: dict = {
         "case": case.name,

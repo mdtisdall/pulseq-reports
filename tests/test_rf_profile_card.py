@@ -30,7 +30,10 @@ from rf_sequences import (
     _sinc,
     _trap,
     _turning_gradients,
+    pulse_of,
+    pulses_of,
 )
+from synthetic import spin_echo_sequence
 
 from pulseq_reports import page
 from pulseq_reports import rf_profiles as rp
@@ -38,13 +41,21 @@ from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.cards.rf_profile import (
     PRIMARY_ECHO_NOTE,
     PRIMARY_ECHO_TITLE,
+    _groups,
     _rf_profile_data,
     _rf_table,
     rf_profile_card,
 )
+from pulseq_reports.registry import build_cards
+from pulseq_reports.targets import report_targets
 from pulseq_reports.waveforms import full_window
 
 # ---- Sequence helpers ----
+
+
+def _data(seq, targets=()):
+    """The file entry of the card for `seq` and the report targets `targets`."""
+    return _rf_profile_data(seq, _groups(seq, targets))
 
 
 def _rotation_library_sequence():
@@ -64,7 +75,9 @@ def test_rf_table_matches_hold_samples_and_definitions():
     """rf_table (task 5.3, item 1): a sinc excitation with a slice-select gradient and
     all four RF offsets, a sinc refocusing pulse, and a block pulse (its shape has few
     enough points that hold_samples interpolates it). Encoding and decoding round-trips
-    the pools exactly, and each column matches its definition."""
+    the pools exactly, and each column matches its definition. The table has the terms
+    of the offsets, not their sums: with a B0 and a gamma they give the offset in Hz and
+    rad of `rf_profiles.block_pulse`."""
     system = pp.Opts(
         max_grad=30,
         grad_unit="mT/m",
@@ -97,8 +110,10 @@ def test_rf_table_matches_hold_samples_and_definitions():
         "dt": np.float64,
         "shape_at": np.uint32,
         "shape_n": np.uint32,
-        "freq_hz": np.float64,
-        "phase_rad": np.float64,
+        "freq_offset_hz": np.float64,
+        "freq_ppm": np.float64,
+        "phase_offset_rad": np.float64,
+        "phase_ppm": np.float64,
         "shape_re": np.float64,
         "shape_im": np.float64,
     }
@@ -106,7 +121,7 @@ def test_rf_table_matches_hold_samples_and_definitions():
         assert table[name].dtype == dtype, name
 
     decoded = {name: decode_array(encode_array(a)) for name, a in table.items()}
-    ppm_hz = 1e-6 * abs(system.gamma) * system.B0
+    ppm_hz = 1e-6 * system.gamma * system.B0
     for k, use in enumerate(["excitation", "refocusing", "saturation"]):
         # The RF as pypulseq stores and rebuilds it (`seq.get_block`), not the object
         # given to `add_block`: the rebuilt samples can differ from the given ones by
@@ -121,13 +136,16 @@ def test_rf_table_matches_hold_samples_and_definitions():
         assert decoded["shape_dur"][k] == float(rf.shape_dur)
         assert decoded["center"][k] == float(pp.calc_rf_center(rf)[0])
         assert decoded["use"][k] == rp.USES.index(use)
-        expected_freq = float(rf.freq_offset) + float(getattr(rf, "freq_ppm", 0.0)) * ppm_hz
-        expected_phase = float(rf.phase_offset) + float(getattr(rf, "phase_ppm", 0.0)) * ppm_hz
-        assert decoded["freq_hz"][k] == expected_freq
-        assert decoded["phase_rad"][k] == expected_phase
+        assert decoded["freq_offset_hz"][k] == float(rf.freq_offset)
+        assert decoded["freq_ppm"][k] == float(getattr(rf, "freq_ppm", 0.0))
+        assert decoded["phase_offset_rad"][k] == float(rf.phase_offset)
+        assert decoded["phase_ppm"][k] == float(getattr(rf, "phase_ppm", 0.0))
         # "at the first block of that RF event": each RF event here has only one block,
         # at play index k.
-        assert decoded["freq_hz"][k] == rp.block_pulse(seq, k).freq_offset_hz
+        freq = decoded["freq_offset_hz"][k] + decoded["freq_ppm"][k] * ppm_hz
+        assert freq == pulse_of(seq, k).freq_offset_hz
+    assert decoded["freq_ppm"].tolist() == [-3.45, 0.0, 0.0]
+    assert decoded["phase_ppm"].tolist() == [0.7, 0.0, 0.0]
 
 
 def test_rf_table_shares_one_shape_for_an_rf_spoiled_gre():
@@ -194,19 +212,26 @@ def test_pulse_list_and_file_entry_keys():
     seq.add_block(block)
     seq.add_block(_hard("inversion", duration=0.8e-3), turn_x, turn_y)
 
-    entry = _rf_profile_data(seq)
+    entry = _data(seq)
     assert entry["labeled"] is True
-    assert entry["pulses"] == [dataclasses.asdict(p) for p in rp.pulse_list(seq)]
+    assert entry["pulses"] == [dataclasses.asdict(p) for p in pulses_of(seq)]
     assert len(entry["pulses"]) == 4
     assert entry["slice_thickness_m"] == W
     assert entry["fov_m"] == [0.2, 0.2, 0.2]
-    assert entry["b0_t"] == float(SYSTEM.B0)
-    assert entry["gamma_hz_per_t"] == abs(float(SYSTEM.gamma))
+    assert set(entry) == {
+        "labeled",
+        "slice_thickness_m",
+        "fov_m",
+        "groups",
+        "first_rf_block",
+        "rf",
+        "pulses",
+    }
     assert entry["first_rf_block"] == 0
 
     without_fov = _new()
     without_fov.add_block(_hard("excitation", duration=0.4e-3))
-    assert _rf_profile_data(without_fov)["fov_m"] is None
+    assert _data(without_fov)["fov_m"] is None
 
     card = rf_profile_card(seq)
     assert card.body_html.count("<button") == len(entry["pulses"])
@@ -376,7 +401,7 @@ def test_sequence_without_rf_has_an_empty_entry_and_no_pulses_note():
     seq.add_block(_trap("x", 100.0))
     seq.add_block(pp.make_delay(1e-3))
 
-    entry = _rf_profile_data(seq)
+    entry = _data(seq)
     assert entry["labeled"] is True
     assert entry["first_rf_block"] is None
     assert entry["pulses"] == []
@@ -411,7 +436,7 @@ def test_page_has_the_card_script_and_the_elements_it_reads():
     """A page with a diagram card and this card, for a spin echo
     (`assets/cards/rf-profile.js` is DOM code, with no Node test: decision 10 of
     `docs/plans/pulseq-reports.md`): the page has the card script once; the data has
-    the keys of format 2 (no `diagram_card_id`); the body has the elements that the
+    the keys of format 3 (no `diagram_card_id`); the body has the elements that the
     script reads by id (the status line with `aria-live`, the pulses element, the
     combined element, hidden, with the combined body inside it), and the primary echo
     note is the first paragraph of the combined element (the script hides that paragraph
@@ -423,7 +448,7 @@ def test_page_has_the_card_script_and_the_elements_it_reads():
 
     assert result.count('PulseqReport.registerCard("rf-profile"') == 1
     assert page.card_asset("rf-profile") in result
-    assert card.data["format"] == 2
+    assert card.data["format"] == 3
     assert set(card.data) == {"format", "views", "plane", "extent_m", "file"}
 
     body = card.body_html
@@ -453,3 +478,110 @@ def test_usage_md_has_the_primary_echo_note_word_for_word():
     text = " ".join(line.removeprefix(">").strip() for line in usage.splitlines())
     text = re.sub(r"\s+", " ", text)
     assert f"**{PRIMARY_ECHO_TITLE}** {PRIMARY_ECHO_NOTE}" in text
+
+
+# ---- 11. The groups of the targets ----
+
+
+def _ppm_sequence():
+    """A saturation pulse with `ppm` offsets, and an excitation pulse with an offset in Hz."""
+    seq = _new()
+    seq.add_block(_hard("saturation", duration=0.4e-3, freq_ppm=-3.45, phase_ppm=0.7))
+    seq.add_block(_hard("excitation", duration=0.4e-3, freq_offset=200.0))
+    return seq
+
+
+def test_groups_hold_the_targets_with_the_same_gamma_and_b0(make_profile):
+    """Two targets with the same gamma and B0 are one group, with both names and the color
+    of the first; another B0, the negative gamma, or no B0 gives another group. The groups
+    are in the order of the first target of each, and the gamma is signed."""
+    gamma = pp.Opts().gamma
+    targets = report_targets(
+        [
+            make_profile("a", "B0 = 3.0"),
+            make_profile("b", "B0 = 3.0"),
+            make_profile("c", "B0 = 1.5"),
+            make_profile("d", f"B0 = 3.0\ngamma = {-gamma}"),
+            make_profile("e"),
+        ]
+    )
+
+    assert _groups(_new(), targets) == [
+        {"gamma_hz_per_t": gamma, "b0_t": 3.0, "names": ["a", "b"], "color": "target-1"},
+        {"gamma_hz_per_t": gamma, "b0_t": 1.5, "names": ["c"], "color": "target-3"},
+        {"gamma_hz_per_t": -gamma, "b0_t": 3.0, "names": ["d"], "color": "target-4"},
+        {"gamma_hz_per_t": gamma, "b0_t": None, "names": ["e"], "color": "target-5"},
+    ]
+
+
+def test_without_targets_there_is_one_group_with_the_gamma_of_the_sequence():
+    """Without targets: one group with `seq.system.gamma` (signed), no B0 even when the
+    system of the sequence has one, no names and no color."""
+    seq = _new(system=pp.Opts(gamma=-11.777e6, B0=3.0))
+
+    assert _groups(seq, ()) == [
+        {"gamma_hz_per_t": -11.777e6, "b0_t": None, "names": [], "color": None}
+    ]
+
+
+def test_a_ppm_pulse_is_listed_without_b0_and_the_table_does_not_depend_on_the_group(
+    make_profile,
+):
+    """A pulse with a `ppm` offset is in the pulse list and in the RF table (with its
+    terms) for a group without B0, and the RF table is the same for any groups. The
+    groups are in the file entry, and the pulse list uses the gamma of the first group."""
+    seq = _ppm_sequence()
+    without = _data(seq)
+    targets = report_targets([make_profile("half", "gamma = 21.288e6\nB0 = 3.0")])
+    with_b0 = _data(seq, targets)
+
+    assert without["groups"][0]["b0_t"] is None
+    assert with_b0["groups"][0]["b0_t"] == 3.0
+    assert len(without["pulses"]) == len(with_b0["pulses"]) == 2
+    assert without["rf"] == with_b0["rf"]
+    assert decode_array(without["rf"]["freq_ppm"]).tolist() == [-3.45, 0.0]
+    assert decode_array(without["rf"]["freq_offset_hz"]).tolist() == [0.0, 200.0]
+
+    first = with_b0["groups"][0]["gamma_hz_per_t"]
+    assert with_b0["pulses"] == [dataclasses.asdict(p) for p in rp.pulse_list(seq, first)]
+    assert with_b0["pulses"][0]["peak_b1_ut"] == pytest.approx(
+        2 * without["pulses"][0]["peak_b1_ut"], rel=1e-9
+    )
+
+
+def test_the_card_of_a_report_has_the_groups_of_its_targets(make_profile):
+    """`build_cards` gives the card the targets of the report: its file entry has their
+    groups, in order, with their colors."""
+    profiles = [make_profile("a", "B0 = 3.0"), make_profile("b", "B0 = 1.5")]
+    cards = build_cards(spin_echo_sequence(), targets=profiles)
+
+    (card,) = [c for c in cards if c.id == "rf-profile"]
+    groups = card.data["file"]["groups"]
+    assert [g["names"] for g in groups] == [["a"], ["b"]]
+    assert [g["color"] for g in groups] == ["target-1", "target-2"]
+    assert [g["b0_t"] for g in groups] == [3.0, 1.5]
+
+
+def test_the_pulse_table_has_one_table_for_each_gamma_magnitude(make_profile):
+    """Targets with two |gamma| give the "Distinct pulses" table one time for each, in
+    `data-gamma-entry` blocks (the second hidden) with the gamma control; the peak |B1| of
+    table k is that of |gamma| of entry k. One |gamma| (also with a negative gamma) gives one
+    table and no control."""
+    gamma = pp.Opts().gamma
+    seq = spin_echo_sequence()
+    two = report_targets([make_profile("a"), make_profile("c", "gamma = -11.777e6")])
+    one = report_targets([make_profile("a"), make_profile("d", f"gamma = {-gamma}")])
+
+    body = rf_profile_card(seq, targets=two).body_html
+    blocks = re.findall(
+        r'<div data-gamma-entry="(\d)"( hidden)?>(.*?)</div></div>', body, re.DOTALL
+    )
+    assert [(k, hidden) for k, hidden, _ in blocks] == [("0", ""), ("1", " hidden")]
+    assert body.count("data-gamma-choice") == 2
+    peaks = [
+        float(re.findall(r"<td>([^<]*)</td>", table)[5]) for _, _, table in blocks
+    ]  # the peak |B1| of the first pulse of each table
+    assert peaks[1] / peaks[0] == pytest.approx(gamma / 11.777e6, rel=1e-2)
+
+    single = rf_profile_card(seq, targets=one).body_html
+    assert "data-gamma-entry" not in single and "data-gamma-choice" not in single

@@ -10,7 +10,7 @@ const R = require(
 //
 // `RfProfiles` reads a sequence view (the methods of `SeqLanes.sequenceView`) and the
 // file data of the card (`RfProfiles.fileData` over the columns of
-// `cards.rf_profile.rf_table`). The tests build both by hand: `newSeq` collects RF rows,
+// `cards.rf_profile._rf_table`). The tests build both by hand: `newSeq` collects RF rows,
 // gradient events (Hz/m, as the diagram tables keep them), ADC events and blocks, and
 // `build` returns {view, file}. The pulses and gradients follow the Python tests
 // (tests/test_rf_profiles.py): a 1 ms sinc of 200 samples at 5 µs from 100 µs, on a
@@ -53,8 +53,9 @@ function rfTables(rows) {
   const t = {
     key: new Uint32Array(n), use: new Uint8Array(n), delay: new Float64Array(n),
     shape_dur: new Float64Array(n), center: new Float64Array(n), dt: new Float64Array(n),
-    shape_at: new Uint32Array(n), shape_n: new Uint32Array(n), freq_hz: new Float64Array(n),
-    phase_rad: new Float64Array(n),
+    shape_at: new Uint32Array(n), shape_n: new Uint32Array(n),
+    freq_offset_hz: new Float64Array(n), freq_ppm: new Float64Array(n),
+    phase_offset_rad: new Float64Array(n), phase_ppm: new Float64Array(n),
   };
   const re = [], im = [];
   rows.forEach((r, i) => {
@@ -66,8 +67,10 @@ function rfTables(rows) {
     t.center[i] = t.shape_dur[i] / 2;
     t.shape_at[i] = re.length;
     t.shape_n[i] = r.re.length;
-    t.freq_hz[i] = r.freq ?? 0;
-    t.phase_rad[i] = r.phase ?? 0;
+    t.freq_offset_hz[i] = r.freq ?? 0;
+    t.freq_ppm[i] = r.freqPpm ?? 0;
+    t.phase_offset_rad[i] = r.phase ?? 0;
+    t.phase_ppm[i] = r.phasePpm ?? 0;
     re.push(...r.re);
     im.push(...(r.im ?? new Array(r.re.length).fill(0)));
   });
@@ -114,7 +117,11 @@ function denseIndex(list, item) {
   return list.length;
 }
 
-function newSeq({thickness = W, fov = null} = {}) {
+// The group of the file data that most tests use: the proton gamma and B0 of 3 T.
+const GAMMA = 42.576e6;
+const GROUP = {gamma_hz_per_t: GAMMA, b0_t: 3, names: [], color: null};
+
+function newSeq({thickness = W, fov = null, groups = [GROUP]} = {}) {
   const rows = [], grads = [], adcs = [], blocks = [];
   const seq = {
     rf: row => denseIndex(rows, row),
@@ -124,13 +131,14 @@ function newSeq({thickness = W, fov = null} = {}) {
     // An RF pulse on its select trapezoid (flat top from RF_DELAY to RF_DELAY + 1 ms):
     // a sinc for a thickness, or a hard pulse (0.5 ms) without a gradient.
     pulse(use, flip, {axis = "gz", thickness: w = W, hard = false, freq = 0, phase = 0,
-      key, scale = null} = {}) {
+      freqPpm = 0, phasePpm = 0, key, scale = null} = {}) {
       if (hard) {
         const row = seq.rf({use, delay: RF_DELAY, dt: SINC_DT, re: hardShape(flip, 100, SINC_DT),
-          freq, phase, key});
+          freq, phase, freqPpm, phasePpm, key});
         return seq.block({dur: 0.6e-3, rf: row});
       }
-      const row = seq.rf({use, delay: RF_DELAY, dt: SINC_DT, re: sincShape(flip), freq, phase, key});
+      const row = seq.rf({use, delay: RF_DELAY, dt: SINC_DT, re: sincShape(flip), freq, phase,
+        freqPpm, phasePpm, key});
       const G = SINC_BW / w;
       const block = {dur: 1.2e-3, rf: row};
       if (scale === null) block[axis] = seq.grad(trap(G, 100e-6, 1000e-6));
@@ -154,7 +162,7 @@ function newSeq({thickness = W, fov = null} = {}) {
     build() {
       const first = blocks.findIndex(b => b.rf);
       const entry = {labeled: true, slice_thickness_m: thickness, fov_m: fov,
-        b0_t: 3, gamma_hz_per_t: 42576000, first_rf_block: first < 0 ? null : first};
+        groups, first_rf_block: first < 0 ? null : first};
       return {view: fakeView(blocks, grads, adcs, rows), file: R.fileData(entry, rfTables(rows))};
     },
   };
@@ -986,11 +994,12 @@ test("test_file_data_checks_the_rf_table", () => {
   // another length; the pools may have another length than the columns.
   const {file} = spinEcho("gy");
   const entry = {labeled: true, slice_thickness_m: null, fov_m: [0.2, 0.2, 0.01],
-    b0_t: 3, gamma_hz_per_t: 42576000, first_rf_block: 0};
+    groups: [GROUP], first_rf_block: 0};
   const data = R.fileData(entry, file.rf);
   assert.deepEqual([data.sliceThicknessM, data.fovM, data.firstRfBlock], [null, [0.2, 0.2, 0.01], 0]);
   assert.ok(Object.isFrozen(data));
   assert.throws(() => R.fileData({labeled: false}, file.rf), /use label/);
+  assert.throws(() => R.fileData({...entry, groups: []}, file.rf), /no groups/);
   const {center, ...missing} = file.rf;
   assert.equal(center.length, file.rf.key.length);
   assert.throws(() => R.fileData(entry, missing), /no column "center"/);
@@ -1018,4 +1027,135 @@ test("test_widths_keys_follow_the_reference", () => {
   assert.ok(Math.abs(phase[200]) <= 1e-15, `${phase[200]}`);
   assert.ok(Number.isNaN(phase[0]));
   assert.throws(() => R.echoPhase(exc, profile, {echoMomentPerM: [1, 2]}), /3 values \(x y z\): \(2,\)/);
+});
+
+// ---- 12. The groups: gamma and B0 -----------------------------------------------------------------
+
+const GROUPS = [
+  {gamma_hz_per_t: GAMMA, b0_t: 1.5, names: ["a"], color: "target-1"},
+  {gamma_hz_per_t: GAMMA, b0_t: 3, names: ["b"], color: "target-2"},
+  {gamma_hz_per_t: -GAMMA, b0_t: 3, names: ["c"], color: "target-3"},
+  {gamma_hz_per_t: GAMMA, b0_t: null, names: ["d"], color: "target-4"},
+  {gamma_hz_per_t: GAMMA / 2, b0_t: 1.5, names: ["e"], color: "target-5"},
+];
+
+// A hard saturation pulse with `ppm` offsets (block 0) and a hard excitation pulse with
+// Hz offsets only (block 1), in the groups of GROUPS.
+function ppmSequence() {
+  const seq = newSeq({groups: GROUPS});
+  seq.pulse("saturation", Math.PI / 2, {hard: true, freq: 100, freqPpm: -3.45, phase: 0.3,
+    phasePpm: 0.7});
+  seq.pulse("excitation", Math.PI / 2, {hard: true, freq: 200, phase: 0.1});
+  return seq.build();
+}
+
+test("test_ppm_offsets_change_into_hz_with_the_signed_gamma_and_b0_of_the_group", () => {
+  // freq = freq_offset + freq_ppm * 1e-6 * gamma * B0 and the same form for the phase,
+  // with the signed gamma: the ppm part flips sign with gamma. |B1| uses |gamma|. A ppm
+  // offset in a group without B0 has no offsets in Hz; a pulse without ppm terms does.
+  const {view, file} = ppmSequence();
+  const ppm = (group, term) => term * 1e-6 * GROUPS[group].gamma_hz_per_t * GROUPS[group].b0_t;
+  for (const group of [0, 1, 2, 4]) {
+    const pulse = R.blockPulse(view, file, 0, {group});
+    const offsets = R.pulseOffset(view, file, 0, group);
+    assertClose(pulse.freqOffsetHz, 100 + ppm(group, -3.45), 1e-6, `group ${group}: freq`);
+    assert.equal(offsets.freqHz, pulse.freqOffsetHz);
+    assertClose(offsets.phaseRad, 0.3 + ppm(group, 0.7), 1e-6, `group ${group}: phase`);
+  }
+  const [plus, minus] = [1, 2].map(group => R.blockPulse(view, file, 0, {group}));
+  assertClose(plus.freqOffsetHz - 100, -(minus.freqOffsetHz - 100), 1e-9, "the ppm part flips");
+  assert.ok(Math.abs(plus.freqOffsetHz - 100) > 100, "a ppm part of a few hundred Hz");
+  assert.equal(minus.peakB1Ut, plus.peakB1Ut);
+  assert.equal(minus.energyUt2Ms, plus.energyUt2Ms);
+  const half = R.blockPulse(view, file, 0, {group: 4});
+  assertClose(half.peakB1Ut / plus.peakB1Ut, 2, 1e-12, "|B1| for half the gamma");
+
+  assert.equal(R.pulseOffset(view, file, 0, 3), null);
+  assert.throws(() => R.blockPulse(view, file, 0, {group: 3}), /needs B0/);
+  const noB0 = R.blockPulse(view, file, 1, {group: 3});
+  const withB0 = R.blockPulse(view, file, 1, {group: 0});
+  assert.equal(noB0.freqOffsetHz, 200);
+  assertSameArray(noB0.sigRe, withB0.sigRe, "a pulse without ppm terms does not use B0");
+  assert.deepEqual(R.pulseOffset(view, file, 1, 3), {freqHz: 200, phaseRad: 0.1});
+  assert.equal(R.pulseKey(view, file, 0), R.blockPulse(view, file, 0, {group: 0}).key);
+  assert.throws(() => R.blockPulse(view, file, 0, {group: 5}), /group 5 is not a group/);
+
+  // The combined profile reads the pulses of its period in the group.
+  const spin = newSeq({groups: [GROUPS[0], GROUPS[3]]});
+  spin.pulse("excitation", Math.PI / 2, {freqPpm: -3.45});
+  spin.crusher("gy");
+  spin.pulse("refocusing", Math.PI, {axis: "gy", phase: Math.PI / 2});
+  spin.crusher("gy");
+  spin.readout();
+  const echo = spin.build();
+  const per = R.period(echo.view, echo.file, 0);
+  assert.equal(R.combinedProfile(echo.view, echo.file, per, {group: 0}).done, false);
+  assert.throws(() => R.combinedProfile(echo.view, echo.file, per, {group: 1}), /needs B0/);
+});
+
+test("test_line_cache_keeps_the_offsets_of_the_groups_apart", () => {
+  // A selective pulse with a ppm offset has the same pulse key in each group, and a line
+  // of the cache for each frequency offset in Hz: groups with another B0 do not share a
+  // line, and groups with the same offset in Hz (another gamma with the B0 that keeps
+  // gamma * B0) do.
+  const groups = [
+    {gamma_hz_per_t: GAMMA, b0_t: 1.5, names: [], color: null},
+    {gamma_hz_per_t: GAMMA, b0_t: 3, names: [], color: null},
+    {gamma_hz_per_t: 2 * GAMMA, b0_t: 0.75, names: [], color: null},
+  ];
+  const seq = newSeq({groups});
+  seq.pulse("excitation", Math.PI / 2, {freqPpm: -3.45});
+  const {view, file} = seq.build();
+  const pulses = [0, 1, 2].map(group => R.blockPulse(view, file, 0, {group}));
+  assert.equal(pulses[0].key, pulses[1].key);
+  assert.equal(pulses[0].freqOffsetHz, pulses[2].freqOffsetHz);
+  assert.notEqual(pulses[0].freqOffsetHz, pulses[1].freqOffsetHz);
+
+  const cache = new Map();
+  const results = pulses.map(pulse => R.simulate(pulse, R.viewSpec(pulse).spec, {cache}));
+  assert.equal(cache.size, 2);
+  assertSameArray(results[2].aRe, results[0].aRe, "the same offset in Hz gives the same line");
+  assert.notDeepEqual(Array.from(results[1].aRe), Array.from(results[0].aRe));
+  const direct = R.simulate(pulses[1], R.viewSpec(pulses[1]).spec);
+  assertSameArray(results[1].aRe, direct.aRe, "a cached line is the line without a cache");
+});
+
+test("test_a_pulse_shared_between_groups_has_the_b1_of_each_group", () => {
+  // The card shares the simulation of a pulse between the groups with the same offsets in
+  // Hz, and each group reads the shared pulse with its own |gamma|: the peak B1 and the
+  // energy are those of `blockPulse` in that group (relative 1e-12), the signal and the
+  // gradients are the shared ones, and the pulse of the first group is not changed. The
+  // groups of a negative gamma have |gamma|. A group with other offsets in Hz, or none, throws.
+  const groups = [
+    {gamma_hz_per_t: GAMMA, b0_t: 3, names: [], color: null},
+    {gamma_hz_per_t: -GAMMA / 3.6, b0_t: 3, names: [], color: null},
+    {gamma_hz_per_t: GAMMA, b0_t: 3, names: [], color: null},
+    {gamma_hz_per_t: GAMMA, b0_t: 1.5, names: [], color: null},
+    {gamma_hz_per_t: GAMMA, b0_t: null, names: [], color: null},
+  ];
+  const seq = newSeq({groups});
+  seq.pulse("refocusing", Math.PI, {axis: "gy", phase: Math.PI / 2});
+  seq.pulse("saturation", Math.PI / 2, {hard: true, freqPpm: -3.45});
+  const {view, file} = seq.build();
+  const first = R.blockPulse(view, file, 0, {group: 0});
+  const peak = first.peakB1Ut, energy = first.energyUt2Ms;
+
+  for (const group of [1, 2]) {
+    const shared = R.pulseInGroup(view, file, first, group);
+    const own = R.blockPulse(view, file, 0, {group});
+    assertClose(shared.peakB1Ut / own.peakB1Ut, 1, 1e-12, `group ${group}: peak B1`);
+    assertClose(shared.energyUt2Ms / own.energyUt2Ms, 1, 1e-12, `group ${group}: energy`);
+    assert.equal(shared.sigRe, first.sigRe);
+    assert.equal(shared.grad, first.grad);
+  }
+  assertClose(R.pulseInGroup(view, file, first, 1).peakB1Ut / peak, 3.6, 1e-12, "|gamma| of 1/3.6");
+  assert.equal(R.pulseInGroup(view, file, first, 2), first);
+  assert.equal(first.peakB1Ut, peak);
+  assert.equal(first.energyUt2Ms, energy);
+
+  // A pulse with a ppm offset has other offsets in Hz in a group with another B0.
+  const ppm = R.blockPulse(view, file, 1, {group: 0});
+  assert.equal(R.pulseInGroup(view, file, ppm, 2), ppm);
+  assert.throws(() => R.pulseInGroup(view, file, ppm, 3), /another offset in Hz/);
+  assert.throws(() => R.pulseInGroup(view, file, ppm, 4), /another offset in Hz/);
 });

@@ -11,10 +11,19 @@
 // module is pure and synchronous: the long work (`simulation`, `combinedProfile`) is an
 // object whose `step(budgetMs)` the card calls in slices.
 //
+// The groups. The RF table has the terms of the frequency and the phase offset of each RF
+// event, and the file data has the groups of the targets with the same gamma and B0
+// (`cards.rf_profile._groups`). A function that reads the offsets (`blockPulse`,
+// `combinedProfile`) takes the index `group` of one of them (default 0). In a group, a
+// `ppm` term changes into Hz with the signed gamma and the B0 of the group, as pypulseq
+// does, and |B1| uses |gamma|. A pulse with a `ppm` term in a group without B0 has no
+// offsets in Hz: `pulseOffset` gives null for it, and `blockPulse` throws.
+//
 // The line cache. `simulation`, `simulate` and `combinedProfile` take an optional
 // `cache`: a Map that the caller owns, one for each file. They read and add the `a` and
 // `b` of a pulse along a 1D line of points (the "profile" view of a pulse along a
-// spatial axis, and the lines of a combined profile), keyed by the pulse key and the
+// spatial axis, and the lines of a combined profile), keyed by the pulse key, the
+// frequency offset of the pulse in Hz (a `ppm` offset differs between groups) and the
 // points, so the combined profile reuses the profiles of its pulses and a pulse that
 // takes part two times is simulated one time. The pulse key leaves out the phase
 // offsets of the RF, so an entry can come from another block with the same key: the
@@ -70,7 +79,7 @@ const RfProfiles = (() => {
   // The columns of one row of the RF table (`_rf_table`), all with one length, and its
   // two pools of baseband samples.
   const RF_COLUMNS = ["key", "use", "delay", "shape_dur", "center", "dt", "shape_at",
-    "shape_n", "freq_hz", "phase_rad"];
+    "shape_n", "freq_offset_hz", "freq_ppm", "phase_offset_rad", "phase_ppm"];
   const RF_POOLS = ["shape_re", "shape_im"];
   // The sliced work checks the clock after about this many point-samples of the
   // spin-domain loop, not after each point, so the clock costs nothing for short
@@ -778,15 +787,63 @@ const RfProfiles = (() => {
       throw new Error("RfProfiles.fileData: the pools shape_re and shape_im have " +
         "different lengths");
     }
+    if (!Array.isArray(entry.groups) || entry.groups.length === 0) {
+      throw new Error("RfProfiles.fileData: the entry has no groups");
+    }
     const fov = entry.fov_m;
     return Object.freeze({
       rf: rfTables,
       sliceThicknessM: entry.slice_thickness_m ?? null,
       fovM: fov === null || fov === undefined ? null : Object.freeze(Array.from(fov, Number)),
-      gammaHzPerT: entry.gamma_hz_per_t,
-      b0T: entry.b0_t,
+      groups: Object.freeze(entry.groups.map(g => _group(g, rfTables, rows))),
       firstRfBlock: entry.first_rf_block ?? null,
     });
+  }
+
+  // One group of the file data: its gamma (signed), B0 (or null), names and color, and the
+  // offsets of each RF event in Hz and rad. `rf_profiles._pulse_core` has the formula: f =
+  // freq_offset + freq_ppm * (1e-6 * gamma * B0), and the same for the phase. An event with
+  // a `ppm` term in a group without B0 has `known` 0 and NaN offsets.
+  function _group(g, rf, rows) {
+    const gamma = g.gamma_hz_per_t;
+    const b0 = g.b0_t ?? null;
+    const ppmHz = b0 === null ? 0 : 1e-6 * gamma * b0;
+    const freqHz = new Float64Array(rows), phaseRad = new Float64Array(rows);
+    const known = new Uint8Array(rows);
+    for (let r = 0; r < rows; r++) {
+      if (b0 === null && (rf.freq_ppm[r] !== 0 || rf.phase_ppm[r] !== 0)) {
+        freqHz[r] = NaN;
+        phaseRad[r] = NaN;
+      } else {
+        freqHz[r] = rf.freq_offset_hz[r] + rf.freq_ppm[r] * ppmHz;
+        phaseRad[r] = rf.phase_offset_rad[r] + rf.phase_ppm[r] * ppmHz;
+        known[r] = 1;
+      }
+    }
+    return Object.freeze({
+      gammaHzPerT: gamma, b0T: b0, names: Object.freeze(Array.from(g.names ?? [])),
+      color: g.color ?? null, freqHz, phaseRad, known,
+    });
+  }
+
+  // The group `group` of `file`.
+  function _groupOf(file, group) {
+    const k = _index(group);
+    if (!(k >= 0 && k < file.groups.length)) {
+      throw new RangeError(`group ${group} is not a group of the file, which has ` +
+        `${file.groups.length}`);
+    }
+    return file.groups[k];
+  }
+
+  // The offsets of the RF event of the block `block` in Hz and rad, in the group `group`:
+  // {freqHz, phaseRad}, or null for a `ppm` offset in a group without B0. The block must
+  // have an RF event.
+  function pulseOffset(seqView, file, block, group = 0) {
+    const g = _groupOf(file, group);
+    const r = seqView.events(_playIndex(seqView, block)).rf - 1;
+    if (r < 0) throw new Error(`pulseOffset: block ${block} has no RF event`);
+    return g.known[r] === 0 ? null : {freqHz: g.freqHz[r], phaseRad: g.phaseRad[r]};
   }
 
   // ---- One block (rf_profiles.block_pulse and its helpers) ----
@@ -985,16 +1042,21 @@ const RfProfiles = (() => {
       constant: false};
   }
 
-  // `rf_profiles._pulse_core` of the block `i` (with RF): the RF as played, its numbers,
-  // and the gradient of each hold interval.
-  function _pulseCore(seqView, file, i) {
+  // `rf_profiles._pulse_core` of the block `i` (with RF), in the group `group`: the RF as
+  // played, its numbers, and the gradient of each hold interval.
+  function _pulseCore(seqView, file, i, group) {
     const ev = seqView.events(i);
     const r = ev.rf - 1;
     const rf = file.rf;
-    const gamma = file.gammaHzPerT;
+    const g = _groupOf(file, group);
+    if (g.known[r] === 0) {
+      throw new Error("the RF pulse has a ppm offset, which needs B0 to change into Hz, " +
+        "and the group has no B0");
+    }
+    const gamma = Math.abs(g.gammaHzPerT);
     const at = rf.shape_at[r], n = rf.shape_n[r];
     const dt = rf.dt[r];
-    const f = rf.freq_hz[r], phase = rf.phase_rad[r];
+    const f = g.freqHz[r], phase = g.phaseRad[r];
     const baseRe = rf.shape_re, baseIm = rf.shape_im;
 
     // As played: baseband * exp(i (phase + (2π f) t)), t = (k + 0.5) dt.
@@ -1038,6 +1100,7 @@ const RfProfiles = (() => {
       use: USES[rf.use[r]],
       sigRe, sigIm, dt, grad, kind,
       freqOffset: f,
+      absGamma: gamma,
       flipDeg: (2 * Math.PI * Math.hypot(sumRe * dt, sumIm * dt)) * (180.0 / Math.PI),
       peakB1Ut: peak,
       energyUt2Ms: energy * dt * 1e3,
@@ -1059,6 +1122,14 @@ const RfProfiles = (() => {
       parts.push(k !== 0 && _playsDuring(seqView.gradEvent(k), rfStart, rfEnd) ? k : 0);
     }
     return parts.join("|");
+  }
+
+  // The pulse key of the RF block `block` (`BlockPulse.key`), without reading the pulse: the
+  // key does not depend on the group.
+  function pulseKey(seqView, file, block) {
+    const i = _playIndex(seqView, block);
+    if (seqView.events(i).rf === 0) throw new Error(`pulseKey: block ${block} has no RF`);
+    return _pulseKey(seqView, file, i);
   }
 
   // `rf_profiles._echo_pathway` of the excitation in the block `i`: {echo, reason}.
@@ -1155,10 +1226,10 @@ const RfProfiles = (() => {
 
   // `rf_profiles._block_pulse`: the pulse of the block `i`, or null without RF. The
   // echo pathway only for an excitation with `withEcho`.
-  function _blockPulse(seqView, file, i, withEcho, maxBlocks) {
+  function _blockPulse(seqView, file, i, group, withEcho, maxBlocks) {
     const ev = seqView.events(i);
     if (ev.rf === 0) return null;
-    const core = _pulseCore(seqView, file, i);
+    const core = _pulseCore(seqView, file, i, group);
     const kind = core.kind;
     const nominal = file.sliceThicknessM;
     const notes = [];
@@ -1187,6 +1258,7 @@ const RfProfiles = (() => {
       freqOffsetHz: core.freqOffset,
       sliceCentreM: centre,
       flipDeg: core.flipDeg,
+      absGamma: core.absGamma,
       peakB1Ut: core.peakB1Ut,
       energyUt2Ms: core.energyUt2Ms,
       nominalM: nominal,
@@ -1199,11 +1271,32 @@ const RfProfiles = (() => {
   }
 
   // `rf_profiles.block_pulse`: the RF pulse of the block at play index `block`, as
-  // played, or null when it has no RF.
-  function blockPulse(seqView, file, block, {maxBlocks = PERIOD_MAX_BLOCKS} = {}) {
+  // played with the gamma and B0 of the group `group`, or null when it has no RF. It
+  // throws for a `ppm` offset in a group without B0 (`pulseOffset` tells).
+  function blockPulse(seqView, file, block, {maxBlocks = PERIOD_MAX_BLOCKS, group = 0} = {}) {
     _checkMaxBlocks(maxBlocks);
     const i = _playIndex(seqView, block);
-    return _blockPulse(seqView, file, i, true, maxBlocks);
+    return _blockPulse(seqView, file, i, group, true, maxBlocks);
+  }
+
+  // The pulse `pulse` (of `blockPulse`) as the group `group` reads it, for a group that gives
+  // the pulse the same offsets in Hz as the group of `pulse`: the groups share the signal and
+  // the gradients (so a simulation of `pulse` is also that of the other group), and only
+  // |B1| differs, with |gamma|. Returns `pulse` itself for the same |gamma|; else a copy with
+  // `absGamma`, `peakB1Ut` and `energyUt2Ms` of the group (peak B1 scales with 1/|gamma|, the
+  // energy with 1/|gamma|^2). Throws when the offsets in Hz differ or do not exist.
+  function pulseInGroup(seqView, file, pulse, group) {
+    const g = _groupOf(file, group);
+    const offsets = pulseOffset(seqView, file, pulse.block, group);
+    if (offsets === null || offsets.freqHz !== pulse.freqOffsetHz) {
+      throw new Error(`pulseInGroup: the group ${group} gives block ${pulse.block} another ` +
+        "offset in Hz than the pulse has");
+    }
+    const gamma = Math.abs(g.gammaHzPerT);
+    if (gamma === pulse.absGamma) return pulse;
+    const ratio = pulse.absGamma / gamma;
+    return Object.freeze({...pulse, absGamma: gamma, peakB1Ut: pulse.peakB1Ut * ratio,
+      energyUt2Ms: pulse.energyUt2Ms * ratio * ratio});
   }
 
   // ---- The period (rf_profiles.period) ----
@@ -1571,7 +1664,7 @@ const RfProfiles = (() => {
     if (axes.length !== 1 || Object.keys(spec.at || {}).length !== 0) return null;
     const {kind, lo, hi, n} = axes[0];
     if (kind === "df") return null;
-    return `${pulse.key}|${_lineKey(kind, pulse.direction, lo, hi, n)}`;
+    return `${pulse.key}|${pulse.freqOffsetHz}|${_lineKey(kind, pulse.direction, lo, hi, n)}`;
   }
 
   // `rf_profiles.simulate` as sliced work: {step(budgetMs), done, result()}. `step`
@@ -1799,7 +1892,7 @@ const RfProfiles = (() => {
   // from the cache (all its point-samples count as done), or goes into it.
   function* _pulseValuesGen(p, positions, state, lineKey) {
     const m = positions.length / 3;
-    const cacheKey = state.cache === null || lineKey === null ? null : `${p.key}|${lineKey}`;
+    const cacheKey = state.cache === null || lineKey === null ? null : `${p.key}|${p.freqOffsetHz}|${lineKey}`;
     const hit = cacheKey === null ? undefined : state.cache.get(cacheKey);
     if (hit !== undefined) {
       state.done += m * p.sigRe.length;
@@ -2099,7 +2192,7 @@ const RfProfiles = (() => {
   // factor of the pulses of kind "none", and the directions. Returns a result with a
   // reason, or the setup {excitationBlock, refocusingBlocks, pulses, factor,
   // centreValue, directions, nominal, ranges}.
-  function _combinedSetup(seqView, file, per) {
+  function _combinedSetup(seqView, file, per, group) {
     const adcBlock = per.firstAdcBlock;
     if (adcBlock === null) return _noCombined(REASONS.NO_ADC);
     const rfBlocks = [];
@@ -2116,7 +2209,7 @@ const RfProfiles = (() => {
     if (refocusingBlocks.length === 0) return _noCombined(REASONS.NO_REFOCUSING);
     const excitationBlock = rfBlocks[k0];
     const pulses = [excitationBlock, ...refocusingBlocks].map(
-      b => _blockPulse(seqView, file, b, false, 0));
+      b => _blockPulse(seqView, file, b, group, false, 0));
     if (pulses.some(p => p.gradientKind === "changing")) {
       return _noCombined(REASONS.DIRECTION_CHANGES);
     }
@@ -2159,17 +2252,19 @@ const RfProfiles = (() => {
   // `rf_profiles.combined_profile` as sliced work, like `simulation`: {step(budgetMs),
   // done, result()}. `per` is a result of `period`. A period with a reason, or without
   // a direction, is done at once. The pulses come from the blocks without their echo
-  // pathway. `result()`: {reason, excitationBlock, refocusingBlocks, factor,
+  // pathway, as `blockPulse` reads them in the group `group` (it throws for a `ppm`
+  // offset in a group without B0). `result()`: {reason, excitationBlock, refocusingBlocks, factor,
   // directions, line ({u, values} or null), linePulses ([{block, values}]: each pulse
   // of the line's direction, in play order, `line_pulses` of the reference), maps
   // ([{axes, values}]), numbers}. `cache`: the line cache of the module comment, for the
   // lines of the directions (not the oblique map, whose points are not a line).
-  function combinedProfile(seqView, file, per, {view = "profile", n = null, cache = null} = {}) {
+  function combinedProfile(seqView, file, per,
+                           {view = "profile", n = null, cache = null, group = 0} = {}) {
     if (view !== "profile" && view !== "2d") {
       throw new Error(`view must be 'profile' or '2d': ${_pyRepr(view)}`);
     }
     _checkN(n);
-    const c = _combinedSetup(seqView, file, per);
+    const c = _combinedSetup(seqView, file, per, group);
     let result = null;
     let gen = null;
     const state = {done: 0, total: 0, cache};
@@ -2219,7 +2314,7 @@ const RfProfiles = (() => {
     fwhm, edgeWidth, passbandRipple, stopbandLevel,
     linspace, unwrap, fft, spectrumMagnitudes, spectrumFwhmHz,
     pieceWiseIntegral, gradientKind,
-    blockPulse, period, viewSpec, simulation, simulate, quantity, echoPhase, widths,
+    pulseOffset, pulseKey, pulseInGroup, blockPulse, period, viewSpec, simulation, simulate, quantity, echoPhase, widths,
     combinedProfile,
   });
 })();

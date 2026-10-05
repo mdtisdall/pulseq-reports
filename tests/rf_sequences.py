@@ -1,7 +1,8 @@
 """The sequence builders that `tests/test_rf_profiles.py` and
 `tests/test_rf_profile_card.py` share: a system with a 5 µs RF raster, sinc and hard
 pulses, a readout, trapezoids, an empty sequence with a `SliceThickness` definition,
-turning gradients, and a gradient-echo sequence. `tests/test_rf_profiles_golden.py` reads
+turning gradients, and a gradient-echo sequence; and the calls of `rf_profiles` that read
+the B0 and the gamma of `seq.system` (the module itself reads neither). `tests/test_rf_profiles_golden.py` reads
 them as `test_rf_profiles._gre` and so on, so `tests/test_rf_profiles.py` imports each
 name into its own namespace.
 """
@@ -10,6 +11,8 @@ import math
 
 import numpy as np
 import pypulseq as pp
+
+from pulseq_reports import rf_profiles as rp
 
 SYSTEM = pp.Opts(
     max_grad=30,
@@ -23,6 +26,21 @@ SYSTEM = pp.Opts(
 )
 W = 5e-3  # m, the SliceThickness definition
 CRUSHER_AREA = 4 / W  # 1/m: four cycles across W
+
+
+def pulse_of(seq, block, **kwargs):
+    """`rf_profiles.block_pulse` with the B0 and the gamma of `seq.system`."""
+    return rp.block_pulse(seq, block, seq.system.B0, seq.system.gamma, **kwargs)
+
+
+def combined_of(seq, per, **kwargs):
+    """`rf_profiles.combined_profile` with the B0 and the gamma of `seq.system`."""
+    return rp.combined_profile(seq, per, seq.system.B0, seq.system.gamma, **kwargs)
+
+
+def pulses_of(seq):
+    """`rf_profiles.pulse_list` with the gamma of `seq.system`."""
+    return rp.pulse_list(seq, seq.system.gamma)
 
 
 def _sinc(use, flip=math.pi / 2, thickness=W, system=SYSTEM, **kwargs):
