@@ -28,7 +28,6 @@ import pypulseq as pp
 from pulseq_analysis.extensions import refuse_rotations
 from pulseq_analysis.pns import pns_levels_for
 from pulseq_analysis.pns_levels import PnsLevels
-from pulseq_analysis.seq_utils import GAMMA
 from pulseq_analysis.series import encode_array
 
 from .. import options
@@ -36,6 +35,7 @@ from ..diagram_data import diagram_tables, lane_meta
 from ..markup import zoom_controls
 from ..page import Card, card_asset
 from ..registry import CardSpec, ReportContext
+from ..units import PROTON_GAMMA, gamma_magnitude
 from ..waveforms import TimeWindow, _check_windows, duration_s
 
 PUBLISHES = ("sequence", "cursor", "anchor", "view")
@@ -49,23 +49,29 @@ def _ms(t_s: float) -> float:
 def _pns_entry(seq: pp.Sequence, levels: PnsLevels) -> dict:
     """The `"pns"` key of the `"file"` entry (`docs/plans/diagram-lanes.md`, section 4.4),
     from `levels` (`pns.pns_levels_for(seq, gradient_asc=...)`): the hardware, the SAFE
-    parameters, the gradient raster and the gyromagnetic-ratio scale (`seq_utils.GAMMA /
+    parameters, the gradient raster and the gyromagnetic-ratio scale (`PROTON_GAMMA /
     seq.system.gamma`, decision 14 of that plan), the summary, and the stored level,
-    encoded with `encode_array`."""
+    encoded with `encode_array`. `levels` gives its values in Hz/T (the fraction of the
+    stimulation limit times |gamma|), so the summary and the levels are divided by
+    |`seq.system.gamma`|: they stay fractions of the limit."""
+    g = gamma_magnitude(seq.system.gamma)
     return {
         "hardware": levels.hardware,
         "example": levels.asc_file is None,
         "asc_file": levels.asc_file,
         "hw": levels.hw,
         "dtS": levels.dt_s,
-        "gradScale": GAMMA / seq.system.gamma,
+        "gradScale": PROTON_GAMMA / seq.system.gamma,
         "binSamples": levels.bin_samples,
         "summary": {
-            "peak": levels.peak,
+            "peak": levels.peak_hz_per_t / g,
             "peak_time_s": levels.peak_time_s,
-            "axis_peaks": levels.axis_peaks,
+            "axis_peaks": {axis: v / g for axis, v in levels.axis_peaks_hz_per_t.items()},
         },
-        "levels": {"min": encode_array(levels.level_min), "max": encode_array(levels.level_max)},
+        "levels": {
+            "min": encode_array(levels.level_min_hz_per_t / g),
+            "max": encode_array(levels.level_max_hz_per_t / g),
+        },
     }
 
 

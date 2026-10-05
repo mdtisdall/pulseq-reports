@@ -15,7 +15,8 @@ from dataclasses import dataclass
 import numpy as np
 import pypulseq as pp
 from oracles.blocks import iter_blocks
-from pulseq_analysis.seq_utils import GAMMA, hold_samples
+from pulseq_analysis.seq_utils import hold_samples
+from synthetic import GAMMA_1H
 
 WINDOW_S = 10.0  # averaging window (s) for the highest B1+rms
 
@@ -48,7 +49,7 @@ def _rf_samples(
         rf = getattr(block, "rf", None)
         if rf is not None:
             signal, dt = hold_samples(rf, raster)
-            b1_ut = np.abs(signal) / GAMMA * 1e6
+            b1_ut = np.abs(signal) / GAMMA_1H * 1e6
             times.append(t + rf.delay + np.arange(b1_ut.size) * dt)
             energies.append(b1_ut**2 * dt)
             num_pulses += 1

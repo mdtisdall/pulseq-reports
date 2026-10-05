@@ -1,8 +1,7 @@
 import math
 
 import pytest
-from pulseq_analysis.seq_utils import GAMMA
-from synthetic import empty_sequence, spin_echo_sequence
+from synthetic import GAMMA_1H, empty_sequence, spin_echo_sequence
 
 from pulseq_reports import page
 from pulseq_reports.cards.rf_exposure import _rf_exposure_data, rf_exposure_card
@@ -10,7 +9,7 @@ from pulseq_reports.cards.rf_exposure import _rf_exposure_data, rf_exposure_card
 
 def _b1_ut(flip_rad: float, duration_s: float) -> float:
     """The constant B1 (µT) of a block pulse with this flip angle and duration."""
-    return (flip_rad / (2 * math.pi)) / duration_s / GAMMA * 1e6
+    return (flip_rad / (2 * math.pi)) / duration_s / GAMMA_1H * 1e6
 
 
 @pytest.fixture(scope="module")

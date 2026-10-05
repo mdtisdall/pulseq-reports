@@ -64,10 +64,13 @@ def test_pns_data_matches_pns_prediction(default_seq, write_gradient_asc):
     asc = write_gradient_asc()
     p = pns.pns_prediction(default_seq, gradient_asc=asc)
     data = _pns_data(default_seq, gradient_asc=asc)
-    assert data["peak_percent"] == pytest.approx(100 * p.peak, abs=0.01)
+    gamma = abs(default_seq.system.gamma)  # the prediction is in Hz/T: the fraction times |gamma|
+    assert data["peak_percent"] == pytest.approx(100 * p.peak_hz_per_t / gamma, abs=0.01)
     assert data["peak_time_ms"] == pytest.approx(1e3 * p.peak_time_s, abs=1e-4)
     for axis in "xyz":
-        assert data["axis_peaks_percent"][axis] == pytest.approx(100 * p.axis_peaks[axis], abs=0.01)
+        assert data["axis_peaks_percent"][axis] == pytest.approx(
+            100 * p.axis_peaks_hz_per_t[axis] / gamma, abs=0.01
+        )
 
 
 @pytest.mark.parametrize("peak_tr", [0, 1, 2])

@@ -19,11 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pypulseq as pp
-from pulseq_analysis.seq_utils import GAMMA
 from pulseq_checks import ResultMatrix, TargetProfile
 
 from .page import Card
 from .targets import ReportTarget, report_targets
+from .units import PROTON_GAMMA
 from .waveforms import TimeWindow, first_adc_window, full_window
 
 ENTRY_POINT_GROUP = "pulseq_reports.cards"
@@ -335,10 +335,10 @@ def _check_inputs(
     seq: pp.Sequence, profiles: Sequence[TargetProfile], check_results: ResultMatrix | None
 ) -> tuple[ReportTarget, ...]:
     """The `ReportTarget` of each of `profiles`, after the checks of `build_cards`."""
-    if seq.system.gamma != GAMMA:
+    if seq.system.gamma != PROTON_GAMMA:
         raise ValueError(
             f"the sequence has the gamma {seq.system.gamma:g} Hz/T, and pulseq-reports "
-            f"supports only the proton gamma ({GAMMA:g} Hz/T)"
+            f"supports only the proton gamma ({PROTON_GAMMA:g} Hz/T)"
         )
     targets = report_targets(profiles)
     if check_results is not None:
@@ -376,7 +376,7 @@ def build_cards(
     that the caller does not give has its default. A card whose `when` is false is not
     built.
 
-    Raises `ValueError` when `seq.system.gamma` is not the proton gamma (`GAMMA`), for
+    Raises `ValueError` when `seq.system.gamma` is not the proton gamma (`PROTON_GAMMA`), for
     more than `targets.MAX_TARGETS` targets or two targets with one name, when the target
     names of `check_results` are not the names of `targets` in the same order, for a name
     in `cards` or `skip` that no spec has, and for the errors of `discover`. Raises

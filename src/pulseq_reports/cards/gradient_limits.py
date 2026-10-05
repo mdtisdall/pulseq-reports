@@ -16,6 +16,7 @@ from .. import options
 from ..markup import fmt
 from ..page import Card, card_asset
 from ..registry import CardSpec, ReportContext
+from ..units import PROTON_GAMMA, hz_per_m_per_s_to_t_per_m_per_s, hz_per_m_to_mt_per_m
 from ..waveforms import TimeWindow, _check_windows
 
 _AXES = ("x", "y", "z")
@@ -68,28 +69,36 @@ def _rows(
     windowed: GradientLimits, index: SequenceIndex, limits: HardwareLimits | None
 ) -> list[list[str]]:
     """The four rows (Gx, Gy, Gz, |G|) of HTML cells, from one `gradient_limits` call.
-    `windowed.whole_rms_mt_per_m` gives the extra "RMS over whole file" column when
+    `windowed.whole_rms_hz_per_m` gives the extra "RMS over whole file" column when
     `windowed` is over a window (computed in that same call); it is None when there is
     no window. The rows have the two "% of limit" cells only when `limits` is given."""
-    whole_rms = windowed.whole_rms_mt_per_m
+    whole_rms = (
+        None
+        if windowed.whole_rms_hz_per_m is None
+        else {
+            axis: hz_per_m_to_mt_per_m(v, PROTON_GAMMA)
+            for axis, v in windowed.whole_rms_hz_per_m.items()
+        }
+    )
+    vector_peak_mt = hz_per_m_to_mt_per_m(windowed.vector_peak_hz_per_m, PROTON_GAMMA)
     rows = []
+    axis_rms_mt = {}
     for axis in _AXES:
         a = windowed.axes[axis]
         label = _AXIS_LABEL[axis]
+        peak_mt = hz_per_m_to_mt_per_m(a.peak_hz_per_m, PROTON_GAMMA)
+        slew_t = hz_per_m_per_s_to_t_per_m_per_s(a.max_slew_hz_per_m_per_s, PROTON_GAMMA)
+        axis_rms_mt[axis] = hz_per_m_to_mt_per_m(a.rms_hz_per_m, PROTON_GAMMA)
         row = [
             label,
-            _value_cell(a.peak_mt_per_m, a.peak_block, a.peak_time_s, index, f"{label} peak"),
+            _value_cell(peak_mt, a.peak_block, a.peak_time_s, index, f"{label} peak"),
         ]
         if limits is not None:
-            row.append(_pct(a.peak_mt_per_m, limits.max_grad_mt_per_m))
-        row.append(
-            _value_cell(
-                a.max_slew_t_per_m_per_s, a.slew_block, a.slew_time_s, index, f"{label} max slew"
-            )
-        )
+            row.append(_pct(peak_mt, limits.max_grad_mt_per_m))
+        row.append(_value_cell(slew_t, a.slew_block, a.slew_time_s, index, f"{label} max slew"))
         if limits is not None:
-            row.append(_pct(a.max_slew_t_per_m_per_s, limits.max_slew_t_per_m_per_s))
-        row.append(fmt(a.rms_mt_per_m))
+            row.append(_pct(slew_t, limits.max_slew_t_per_m_per_s))
+        row.append(fmt(axis_rms_mt[axis]))
         if whole_rms is not None:
             row.append(fmt(whole_rms[axis]))
         rows.append(row)
@@ -101,7 +110,7 @@ def _rows(
     vector_row = [
         "|G|",
         _value_cell(
-            windowed.vector_peak_mt_per_m,
+            vector_peak_mt,
             windowed.vector_peak_block,
             windowed.vector_peak_time_s,
             index,
@@ -109,11 +118,11 @@ def _rows(
         ),
     ]
     if limits is not None:
-        vector_row.append(_pct(windowed.vector_peak_mt_per_m, limits.max_grad_mt_per_m))
+        vector_row.append(_pct(vector_peak_mt, limits.max_grad_mt_per_m))
     vector_row.append(_NO_VALUE)
     if limits is not None:
         vector_row.append(_NO_VALUE)
-    vector_row.append(fmt(_vector_rms({axis: windowed.axes[axis].rms_mt_per_m for axis in _AXES})))
+    vector_row.append(fmt(_vector_rms(axis_rms_mt)))
     if whole_rms is not None:
         vector_row.append(fmt(_vector_rms(whole_rms)))
     rows.append(vector_row)
@@ -147,7 +156,7 @@ def _table(
     )
 
     # One call: with a window, gradient_limits also computes the whole-file RMS in the
-    # same pass over the index (GradientLimits.whole_rms_mt_per_m), instead of a second
+    # same pass over the index (GradientLimits.whole_rms_hz_per_m), instead of a second
     # call for it.
     windowed = gradient_limits(seq, window=window)
 

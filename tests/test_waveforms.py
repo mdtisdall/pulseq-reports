@@ -3,8 +3,7 @@ import math
 import pypulseq as pp
 import pytest
 from oracles.blocks import iter_blocks
-from pulseq_analysis.seq_utils import GAMMA
-from synthetic import DWELL, NUM_SAMPLES, SYSTEM, gre_sequence, spin_echo_sequence
+from synthetic import DWELL, GAMMA_1H, NUM_SAMPLES, SYSTEM, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import waveforms
 
@@ -19,7 +18,7 @@ def spin_echo():
 
 def test_spin_echo_lanes(spin_echo):
     seq, by_id = spin_echo
-    max_grad_mt = SYSTEM.max_grad / GAMMA * 1e3
+    max_grad_mt = SYSTEM.max_grad / GAMMA_1H * 1e3
     # Block pulses have no slice-select gradient, so only Gx (prephaser, readout) and
     # Gy (the two crushers) carry events; Gz stays empty.
     for axis in ("gx", "gy"):

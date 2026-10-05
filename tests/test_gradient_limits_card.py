@@ -4,9 +4,8 @@ from html.parser import HTMLParser
 import pypulseq as pp
 import pytest
 from pulseq_analysis.grad_limits import gradient_limits
-from pulseq_analysis.seq_utils import GAMMA
 from pulseq_checks import HardwareLimits
-from synthetic import SYSTEM
+from synthetic import GAMMA_1H, SYSTEM
 
 from pulseq_reports import page
 from pulseq_reports.cards.gradient_limits import gradient_limits_card
@@ -55,8 +54,8 @@ def _parse(body_html: str) -> _CardParser:
 
 
 LIMITS = HardwareLimits(
-    max_grad_mt_per_m=SYSTEM.max_grad / GAMMA * 1e3,
-    max_slew_t_per_m_per_s=SYSTEM.max_slew / GAMMA,
+    max_grad_mt_per_m=SYSTEM.max_grad / GAMMA_1H * 1e3,
+    max_slew_t_per_m_per_s=SYSTEM.max_slew / GAMMA_1H,
     label="system limits",
 )
 
@@ -87,9 +86,9 @@ def _hand_computed(amplitude: float, gx) -> dict:
         + gx.fall_time * amplitude**2 / 3
     )
     return {
-        "peak_mt": amplitude / GAMMA * 1e3,
-        "slew_t": amplitude / gx.rise_time / GAMMA,
-        "rms_mt": math.sqrt(energy / duration) / GAMMA * 1e3,
+        "peak_mt": amplitude / GAMMA_1H * 1e3,
+        "slew_t": amplitude / gx.rise_time / GAMMA_1H,
+        "rms_mt": math.sqrt(energy / duration) / GAMMA_1H * 1e3,
     }
 
 
@@ -102,8 +101,8 @@ def test_table_has_axis_rows_and_percents():
     amplitude = 0.4 * SYSTEM.max_grad
     seq, gx = _trapezoid_seq(amplitude)
     values = _hand_computed(amplitude, gx)
-    max_grad_mt = SYSTEM.max_grad / GAMMA * 1e3
-    max_slew_t = SYSTEM.max_slew / GAMMA
+    max_grad_mt = SYSTEM.max_grad / GAMMA_1H * 1e3
+    max_slew_t = SYSTEM.max_slew / GAMMA_1H
     peak_pct = values["peak_mt"] / max_grad_mt * 100
     slew_pct = values["slew_t"] / max_slew_t * 100
     zero_row = ["", fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0), fmt(0.0)]
@@ -145,11 +144,11 @@ def test_window_gives_rms_over_window_and_over_whole_file():
     whole = _hand_computed(amplitude, gx)
     # Over the window (just the rising ramp, 0 to amplitude): energy = rise_time *
     # amplitude^2 / 3, divided by the window length (rise_time).
-    window_rms_mt = math.sqrt(amplitude**2 / 3) / GAMMA * 1e3
-    max_grad_mt = SYSTEM.max_grad / GAMMA * 1e3
-    max_slew_t = SYSTEM.max_slew / GAMMA
-    window_peak_mt = amplitude / GAMMA * 1e3  # the ramp reaches amplitude at the window edge
-    window_slew_t = amplitude / gx.rise_time / GAMMA
+    window_rms_mt = math.sqrt(amplitude**2 / 3) / GAMMA_1H * 1e3
+    max_grad_mt = SYSTEM.max_grad / GAMMA_1H * 1e3
+    max_slew_t = SYSTEM.max_slew / GAMMA_1H
+    window_peak_mt = amplitude / GAMMA_1H * 1e3  # the ramp reaches amplitude at the window edge
+    window_slew_t = amplitude / gx.rise_time / GAMMA_1H
     block_id = next(iter(seq.block_events))
     # The peak is at the window end, and the slew segment starts at the window start.
     peak_cell = _where(fmt(window_peak_mt), block_id, gx.rise_time)
@@ -245,31 +244,38 @@ def _expected_window_table(seq, window) -> list[list[str]]:
     """The cell texts of the table of one window, from `gradient_limits` for that range."""
     result = gradient_limits(seq, window=window)
     lim = LIMITS
+
+    def mt(v):  # Hz/m to mT/m, as the card converts
+        return v / GAMMA_1H * 1e3
+
+    def t_per_s(v):  # Hz/m/s to T/m/s
+        return v / GAMMA_1H
+
     rows = []
     for axis, label in (("x", "Gx"), ("y", "Gy"), ("z", "Gz")):
         a = result.axes[axis]
         rows.append(
             [
                 label,
-                _where(fmt(a.peak_mt_per_m), a.peak_block, a.peak_time_s),
-                fmt(a.peak_mt_per_m / lim.max_grad_mt_per_m * 100),
-                _where(fmt(a.max_slew_t_per_m_per_s), a.slew_block, a.slew_time_s),
-                fmt(a.max_slew_t_per_m_per_s / lim.max_slew_t_per_m_per_s * 100),
-                fmt(a.rms_mt_per_m),
-                fmt(result.whole_rms_mt_per_m[axis]),
+                _where(fmt(mt(a.peak_hz_per_m)), a.peak_block, a.peak_time_s),
+                fmt(mt(a.peak_hz_per_m) / lim.max_grad_mt_per_m * 100),
+                _where(fmt(t_per_s(a.max_slew_hz_per_m_per_s)), a.slew_block, a.slew_time_s),
+                fmt(t_per_s(a.max_slew_hz_per_m_per_s) / lim.max_slew_t_per_m_per_s * 100),
+                fmt(mt(a.rms_hz_per_m)),
+                fmt(mt(result.whole_rms_hz_per_m[axis])),
             ]
         )
-    vector_rms = math.sqrt(sum(result.axes[x].rms_mt_per_m ** 2 for x in "xyz"))
-    whole_vector_rms = math.sqrt(sum(result.whole_rms_mt_per_m[x] ** 2 for x in "xyz"))
+    vector_rms = math.sqrt(sum(mt(result.axes[x].rms_hz_per_m) ** 2 for x in "xyz"))
+    whole_vector_rms = math.sqrt(sum(mt(result.whole_rms_hz_per_m[x]) ** 2 for x in "xyz"))
     rows.append(
         [
             "|G|",
             _where(
-                fmt(result.vector_peak_mt_per_m),
+                fmt(mt(result.vector_peak_hz_per_m)),
                 result.vector_peak_block,
                 result.vector_peak_time_s,
             ),
-            fmt(result.vector_peak_mt_per_m / lim.max_grad_mt_per_m * 100),
+            fmt(mt(result.vector_peak_hz_per_m) / lim.max_grad_mt_per_m * 100),
             "—",
             "—",
             fmt(vector_rms),
