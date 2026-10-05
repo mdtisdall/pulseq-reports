@@ -3,8 +3,8 @@
 Mode: Strict STE100. Structural rules are enforced. Lexical rules are a
 direction of travel, not a verified dictionary match.
 
-Status: design, version 4, written on 2026-10-04. The user made the decisions
-of sections 9.3 and 9.4 on the same day. This is not an implementation plan. It gives
+Status: design, version 5, written on 2026-10-04. The user made the decisions
+of sections 9.3 to 9.5 on the same day. This is not an implementation plan. It gives
 the goals, the principles and the design decisions for the work in
 pulseq-reports. An implementation plan comes next.
 
@@ -20,14 +20,20 @@ History:
   ([`docs/plans/pulseq-analysis.md`](https://github.com/mdtisdall/pulseq-checks/blob/main/docs/plans/pulseq-analysis.md)
   of pulseq-checks). Section 8 of that plan gives the work in pulseq-reports,
   and this version follows it.
-- Version 4 (this version) is for `pulseq-checks` `v0.1.0rc4` and
+- Version 4 (commit `2a516b4`) is for `pulseq-checks` `v0.1.0rc4` and
   `pulseq-analysis` `v0.1.0rc4`. Each series has a coordinate unit, the
   gradient spectrum moved to `pulseq-analysis`, and the check
   `acoustic.resonance-energy` compares the spectrum with the resonances of a
   target. Section 3.4 gives the changes. Principle 10 and the decisions P29
   to P32 are new. Phases 1 to 4 of the implementation plan were done with
-  version 3. Version 5 (a separate pull request) replaces P21 with the gamma
-  of each target.
+  version 3.
+- Version 5 (this version) is for `pulseq-checks` `v0.1.0rc5` and
+  `pulseq-analysis` `v0.1.0rc5`. No value of `pulseq-analysis` uses a gamma
+  now, and `pulseq-checks` converts with the magnitude of the gamma of each
+  target. pulseq-reports does the same: each card uses the gamma of each
+  target, and a gamma can be negative. This replaces the proton rule P21.
+  Section 3.5 gives the changes. Principle 8 is new, principle 11 is new, and
+  the decisions P33 to P39 are new.
 
 The `pulseq-checks` and `pulseq-analysis` documents refer to versions 1 and 2
 by commit, so their links still work. Both packages are stable for this work,
@@ -65,6 +71,9 @@ After this work:
   is missing.
 - **No duplicate code.** pulseq-reports deletes its copies of the modules
   that moved, and imports them from `pulseq-analysis`.
+- **The gamma of the target.** A card changes a value into tesla units with
+  the gamma of a target, by the rule of `pulseq-checks`. pulseq-reports
+  supports each nucleus, also a nucleus with a negative gamma.
 
 The main goal of a report is still to describe the sequence. A report with
 no targets is complete. It has no verdicts and no check summary.
@@ -108,20 +117,32 @@ no targets is complete. It has no verdicts and no check summary.
    Then pypulseq uses its own default. A card does not: it mirrors R8 of the
    `pulseq-checks` design, and uses the raster of a target, or shows a note
    that names the missing raster.
-8. **Only the proton gamma.** pulseq-reports changes Hz into T, and Hz/m into
-   T/m, only with the proton gamma (`GAMMA`, 42.576 MHz/T). It does this also
-   where `pulseq-checks` uses the gamma of a target (R9). pulseq-reports does
-   not support other nuclei (decision P21):
-   - A target that gives a gamma other than `GAMMA` (`opts.gamma`): each card
-     leaves the target out, with a note. The check summary still shows the
-     results of that target, because `pulseq-checks` supports it.
-   - A `Sequence` object with a `seq.system.gamma` other than `GAMMA`:
-     `build_cards` raises `ValueError`. A file that `seq.read` reads has the
-     proton gamma of pypulseq, because a `.seq` file does not give a gamma.
+8. **The gamma of the target.** pulseq-reports changes Hz into T, and Hz/m
+   into T/m, with the gamma of a target, as `pulseq-checks` does (decisions
+   P33 and P35). Version 4 supported only the proton gamma (P21). Version 5
+   removes that rule.
+   - **The gamma of a target** is `target.make_opts().gamma`: the `opts.gamma`
+     of the profile, or the default of pypulseq (42.576 MHz/T) when the
+     profile does not give it. This is the one default, as in
+     `pulseq-checks`. Without targets, a card uses `seq.system.gamma`: the
+     default of pypulseq for a file that `seq.read` reads, or the gamma that a
+     Python caller gave to its `Sequence` object.
+   - **The sign.** A gamma can be negative (for example ¹⁵N or ²⁹Si). A
+     magnitude uses \|γ\|: a peak, a slew rate, an RMS, \|B1\|, an energy,
+     the spectrum, a PNS value and a percent of a limit. A signed value uses
+     γ: a gradient waveform, and the change of a `ppm` offset into Hz (as
+     pypulseq does). A value that needs no gamma does not use one: the RF
+     phase of the file, the Bloch simulation in Hz, and the frequencies.
+   - **A gamma that is 0 or not finite** is an error of the arguments:
+     `report_targets` and `build_cards` raise `ValueError`. `pulseq-checks`
+     `v0.1.0rc5` does not refuse it (section 3.5).
+   - **Sequence-only cards.** A card whose values depend only on the
+     sequence and one gamma (the diagram, the RF exposure card, the peaks of
+     the gradient limits card) shows them for one gamma. When the targets
+     give more than one gamma, a control on the card selects the target
+     (decision P36).
+   - Section 4.8 gives each conversion of the cards.
 
-   The item "Use the gyromagnetic ratio of the sequence" of `TODO.md` is the
-   list of the functions to change for other nuclei. A change that adds a
-   conversion with gamma adds its function to that list.
 9. **One source of the PNS.** In a report, the PNS of a target comes only
    from the analysis result `pns.safe.levels` in the result matrix. Without a
    result matrix, or without that analysis result, the PNS card and the PNS
@@ -136,12 +157,32 @@ no targets is complete. It has no verdicts and no check summary.
     the resonance bands is a comparison with target data. It comes only from
     the check `acoustic.resonance-energy` (principle 1, and decision L11 of the
     `pulseq-analysis` plan `docs/plans/series-coordinate.md`).
+11. **One role for each package.** pulseq-reports uses each package for its
+    role, and does not do the work of another package:
+    - **`pulseq-analysis` measures the sequence.** Its values have no gamma
+      and no data of a target. They are magnitudes in the units of the
+      `.seq` file: Hz/m, Hz/m/s, Hz/m/√Hz and Hz/T. Data of a target goes in
+      only as an explicit argument (`hardware`, `thresholds_hz_per_t`).
+    - **`pulseq-checks` applies a target.** It reads the profile, gives the
+      data of the target to the analyses (the bindings), converts with
+      \|γ\| of the target, and gives the verdicts and the findings. Its
+      result JSON does not repeat the data of the target, for example the
+      gamma.
+    - **pulseq-reports shows the results, and converts for the display.** It
+      reads the targets with `pulseq-checks`. It takes the verdicts, the
+      findings and each analysis result that needs a target from the result
+      matrix. It takes a value that needs no target from the matrix when the
+      analysis gives a series (`gradient.spectrum`, principle 10), and from
+      `pulseq-analysis` when the analysis gives no series (the peaks of
+      `gradient.limits`). It converts the units for the display with the
+      rule of principle 8.
 
 ## 3. The state of the code
 
 Sections 3.1 to 3.3 give the state at version 3, before phase 1 of the
 implementation plan. Section 3.4 gives the changes of the `v0.1.0rc4`
-releases. Where they do not agree, section 3.4 is correct.
+releases, and section 3.5 the changes of the `v0.1.0rc5` releases. Where
+they do not agree, the later section is correct.
 
 ### 3.1 pulseq-reports (`main` at `a322517`, version `0.2.0rc2`)
 
@@ -173,7 +214,7 @@ only the defaults of pypulseq:
 - B0 and gamma in the RF profile card (`cards/rf_profile.py`,
   `rf_profiles.py`), to change `freq_ppm` and `phase_ppm` into Hz.
 - Gamma in the diagram (`cards/diagram.py`) and in `grad_spectrum.py`, to
-  change Hz/m into mT/m. Only the proton gamma is supported (principle 8).
+  change Hz/m into mT/m. Only the proton gamma is supported (principle 8 of version 4).
 
 The rasters already follow principle 7 (#105, and #106 for the junction step
 of `gradient_limits`).
@@ -370,6 +411,66 @@ file): the fast checks together take 4.27 s, the check
 the `Result` of a check and a target from `results` by `check_id` and
 `target`.
 
+### 3.5 The changes of `v0.1.0rc5` (checked on 2026-10-04)
+
+`pulseq-analysis` `v0.1.0rc5` (tag commit `8043553`, plan
+`docs/plans/gamma-free-units.md`) and `pulseq-checks` `v0.1.0rc5` (tag commit
+`369fd65`, plan `docs/plans/pulseq-analysis-rc5.md`). `pulseq-checks`
+`v0.1.0rc5` pins `pulseq-analysis` `v0.1.0rc5`. All three repositories still
+pin the pypulseq fork commit `a74ab06`.
+
+**`pulseq-analysis`: no value uses a gamma.** Section 8 of its
+`docs/usage.md` gives the rule: each value is a magnitude, so divide it by
+\|γ\| in Hz/T to get the unit with tesla.
+
+| What | `v0.1.0rc4` | `v0.1.0rc5` |
+|---|---|---|
+| `seq_utils.GAMMA` | 42.576e6 Hz/T | removed: the package has no gamma value |
+| `gradient_limits`, `block_gradient_values` | argument `gamma`, values in mT/m and T/m/s | no `gamma`; values in Hz/m and Hz/m/s |
+| The names of `grad_limits` | `*_mt_per_m`, `*_t_per_m_per_s` | `*_hz_per_m`, `*_hz_per_m_per_s` (only the unit part changes) |
+| PNS values (`PnsLevels`, `PnsInterval`, `PnsPrediction`) | a fraction of the stimulation limit, with `seq.system.gamma` | Hz/T: the fraction times \|γ\|; names `*_hz_per_t` (`peak_hz_per_t`, `axis_peaks_hz_per_t`, `level_min_hz_per_t`, `level_max_hz_per_t`) |
+| PNS thresholds (an input) | `thresholds=(PNS_LIMIT,)` | `thresholds_hz_per_t=()`: no default threshold. For a fraction f, give `f * abs(gamma)` |
+| The series of `pns.safe.levels` | unit `"1"`, `pns_above_1` | unit `"Hz/T"`, `pns_above_<k>` by the position k of the threshold; `meta["threshold"]` gives it in Hz/T |
+| The analyses `gradient.limits`, `gradient.blocks` | parameter `gamma` | no parameters |
+| `PnsLevels`, `GradientSpectrum` | `==` by identity, or `ValueError` | `==` by value; arrays read-only |
+
+`PNS_LIMIT` stays 1.0, the limit as a fraction. `pns_prediction(seq, *,
+gradient_asc=None)` and `peak_tr_window` do not change their arguments.
+
+**`pulseq-checks`: \|γ\| of the target.**
+
+- `bindings.gamma(ctx)` stays signed. The new
+  `bindings.gamma_magnitude(ctx)` is `abs(gamma(ctx))`, and the checks
+  convert only with it. Both take a `RunContext`, so pulseq-reports cannot
+  call them. For a caller, `docs/usage.md` of `pulseq-checks` gives
+  `abs(target.make_opts().gamma)`.
+- `TargetProfile.hardware_limits` (mT/m, T/m/s) and the limits from a
+  `Sequence` object use \|γ\|. A negative gamma gives the results of its
+  magnitude (the fix of the false pass of `v0.1.0rc4`).
+- The binding of `pns.safe.levels` gives the one threshold
+  `PNS_LIMIT * |γ|` (`bindings.pns_threshold_hz_per_t`). Thus the series are
+  `pns_total` and `pns_above_0`. The percent of a value `v` of either series
+  is `100 * v / meta["threshold"]` of `pns_above_0` (`docs/usage.md` of
+  `pulseq-checks`, section 6).
+- The result JSON does not give the gamma of a target (its decision D3).
+- A result JSON of `v0.1.0rc4` still reads, because the format is 1, but its
+  PNS values are fractions (unit `"1"`) and its runs are `pns_above_1`.
+- The profile reader has no rule for the gamma. A gamma that is not finite
+  reads. A gamma of 0 reads when the profile does not give both limits;
+  with both limits, the division by 0 gives a `ProfileError`. A gamma of 0
+  gives the threshold 0, which `pulseq-analysis` refuses, so `pns.safe`
+  gives "error".
+- The results of the checks do not change for a positive gamma. Costs at
+  10⁶ blocks: the fast checks 4.27 s, all seven checks 37.18 s.
+
+**pulseq-reports at `2a516b4`.** It imports `GAMMA` in `registry.py`,
+`targets.py`, `diagram_data.py`, `waveforms.py`, `rf_exposure.py` and
+`cards/diagram.py`. It reads the `*_mt_per_m` names of `grad_limits` in
+`cards/gradient_limits.py`, and the fraction names of `pns` and `pns_levels`
+in `cards/pns.py` and `cards/diagram.py`. `cards/rf_profile.py` and
+`rf_profiles.py` change a `ppm` offset into Hz with `abs(seq.system.gamma)`,
+but pypulseq uses the signed gamma for it (`Sequence` and `write_seq`).
+
 ## 4. Design
 
 ### 4.1 The inputs of a report
@@ -411,9 +512,12 @@ each card. The card options `limits`, `gradient_asc`, `coil` and
   command runs no checks and shows the given matrix. The targets of the matrix
   must be the targets of the report. `ResultMatrix.from_json` of the pinned
   `pulseq-checks` reads the file. A file that it refuses (for example a
-  result of `v0.1.0rc3`) is an error of the run. A matrix without the
-  analysis `pns.safe.levels` gives no PNS (principle 9). A matrix without the
-  analysis `gradient.spectrum` gives no spectrum (principle 10).
+  result of `v0.1.0rc3`) is an error of the run. A file that it reads, but
+  that has a series of `pns.safe.levels` with a unit other than `"Hz/T"` (a
+  result of `v0.1.0rc4`), is also an error of the run (decision P39): no code
+  reads the older form. A matrix without the analysis `pns.safe.levels` gives
+  no PNS (principle 9). A matrix without the analysis `gradient.spectrum`
+  gives no spectrum (principle 10).
 - **Findings.** The report keeps at most 100 findings of each result
   (`with_max_findings`), and shows `findings_omitted`. `pulseq-report
   --max-findings N` changes the number, as in `pulseq-check`. A matrix from
@@ -460,12 +564,13 @@ Without targets and without results, the summary card is not on the page.
 | Card | Targets | Without a target that gives the value | With several targets |
 |---|---|---|---|
 | `timing` | All | The card is not on the page (it has no data). | One part for each target. The card shows only `pulseq-checks` results (section 4.5). |
-| `gradient-limits` | All (for the percent columns) | The peaks, with no percent columns. A note says that no target gives limits. | One percent column for each target that gives `max_grad` and `max_slew`, in the color of the target. The peaks are measured one time, with `pulseq_analysis.grad_limits`. |
-| `pns` | All that give SAFE parameters | No PNS. A note says that no target gives SAFE parameters, or that the matrix has no PNS (principle 9). | One part for each target, from its analysis result `pns.safe.levels`: the peak, its time, the axis peaks and the hardware name. |
-| `diagram` (PNS lane) | All that give SAFE parameters | No PNS lane. | One PNS lane. The envelope `pns_total` of each target is overlaid in the color of the target. The runs of `pns_above_1` are marked in the color of the target (decision P22). The exact PNS of a zoomed view uses the SAFE parameters of the target profile. |
-| `gradient-spectrum` | All (for the spectrum), all that give acoustic resonances (for the bands) | The spectrum, with no resonance bands. A note says that no target gives resonances. Without a matrix, or without the analysis `gradient.spectrum`: a note and no chart (principle 10). | One spectrum: the analysis result of the first supported target with the state "done" (decision P32). The bands of each supported target, in the color of the target. One line for each supported target with the result of `acoustic.resonance-energy` (decision P30). |
-| `rf-profile` | All that give B0 | A pulse with a `ppm` offset shows a note that its offset cannot be changed into Hz. The other pulses do not change. | The profiles of each target overlaid, in the color of the target. They differ only for pulses with a `ppm` offset. |
-| `rf-exposure` | None | No change. | No change. |
+| `gradient-limits` | All (for the percent columns) | The peaks, with no percent columns. A note says that no target gives limits. | One percent column for each target that gives `max_grad` and `max_slew`, in the color of the target. The peaks are measured one time, in Hz/m, with `pulseq_analysis.grad_limits`. Each percent column converts with \|γ\| of its target. The peaks show in the gamma of the selected target (P36). |
+| `pns` | All that give SAFE parameters | No PNS. A note says that no target gives SAFE parameters, or that the matrix has no PNS (principle 9). | One part for each target, from its analysis result `pns.safe.levels`: the peak, its time, the axis peaks and the hardware name, in percent of `meta["threshold"]` (P38). |
+| `diagram` (PNS lane) | All that give SAFE parameters | No PNS lane. | One PNS lane, in percent. The envelope `pns_total` of each target, in percent of its `meta["threshold"]` (P38), is overlaid in the color of the target. The runs of `pns_above_0` are marked in the color of the target (decision P22). The exact PNS of a zoomed view uses the SAFE parameters of the target profile and \|γ\| of the target. |
+| `diagram` (gradient and RF lanes) | All (for the gamma) | The gamma of `seq.system` (principle 8). | The gamma of the selected target (P36): the gradient lanes with γ, \|B1\| with \|γ\|. The RF phase does not change. |
+| `gradient-spectrum` | All (for the spectrum), all that give acoustic resonances (for the bands) | The spectrum, with no resonance bands. A note says that no target gives resonances. Without a matrix, or without the analysis `gradient.spectrum`: a note and no chart (principle 10). | One spectrum line for each group of targets with the same \|γ\| and the same spectrum, in mT/m/√Hz with that \|γ\| (decision P37). The bands of each target, in the color of the target. One line for each target with the result of `acoustic.resonance-energy` (decision P30). |
+| `rf-profile` | All (for the gamma), all that give B0 (for a `ppm` offset) | A pulse with a `ppm` offset shows a note that its offset cannot be changed into Hz. The other pulses do not change. | The profiles of each group of targets with the same γ and B0 overlaid, in the color of the first target of the group. A `ppm` offset changes into Hz with γ and B0. \|B1\| uses \|γ\|. |
+| `rf-exposure` | All (for the gamma) | The gamma of `seq.system` (principle 8). | \|B1\| and the energy in the gamma of the selected target (P36). |
 | `definitions` | None | No change. | No change. |
 | `blocks` | None | No change. | No change. |
 
@@ -492,12 +597,13 @@ Each mark comes from a check result, a finding or an analysis result
 | Check summary | The number of findings of each result, and the number that the report omitted. |
 | `timing` | A list of the findings of `timing.pypulseq` and `timing.rasters` for each target, with a "Show" button for each row (section 4.5). |
 | `gradient-limits` | A list of the findings of `gradient.amplitude.axis`, `gradient.slew.axis` and `gradient.amplitude.any-orientation` for each target, with a "Show" button for each row. |
-| `diagram` (PNS lane) | The runs of the series `pns_above_1` of each target, marked in the color of the target. They are complete: the findings limit does not apply to them. They use the threshold of `pns.safe` (1.0), so they agree with the check (decision P22). |
-| `gradient-spectrum` | For each supported target, the state, the value and the limit of `acoustic.resonance-energy`, or its reason. The card does not calculate a share of the energy or a peak in a band (decision P30). |
+| `diagram` (PNS lane) | The runs of the series `pns_above_0` of each target, marked in the color of the target. They are complete: the findings limit does not apply to them. They use the threshold of `pns.safe` (`PNS_LIMIT * |γ|`), so they agree with the check (decision P22). |
+| `gradient-spectrum` | For each target, the state, the value and the limit of `acoustic.resonance-energy`, or its reason. The card does not calculate a share of the energy or a peak in a band (decision P30). |
 
-The percent columns of the gradient limits card use the proton gamma, as all
-the cards do (principle 8). A target with another gamma is not in the card,
-so the card and the check cannot disagree on it.
+The percent columns of the gradient limits card convert the peak and the
+limit of a target with \|γ\| of that target, as the gradient checks do
+(decision D1 of the `pulseq-checks` plan `docs/plans/pulseq-analysis-rc5.md`).
+Thus the card and the check use the same numbers.
 
 ### 4.7 What goes away
 
@@ -519,15 +625,54 @@ so the card and the check cannot disagree on it.
   `pulseq-analysis` (decision P15).
 - `diagram_data.encode_tables`, if `pulseq_analysis.series.encode_array`
   gives the same text. The implementation plan confirms it.
+- The proton rule (P21, version 5): the `ValueError` of `build_cards` for a
+  `Sequence` object with another gamma, the "supported" targets, and the
+  imports of `pulseq_analysis.seq_utils.GAMMA`, which `pulseq-analysis`
+  `v0.1.0rc5` removed. The item "Use the gyromagnetic ratio of the sequence"
+  of `TODO.md` is done by this work.
+- `gradScale` of the PNS entry of the diagram. The browser divides by
+  \|γ\| of the target.
 
 `HardwareLimits` stays a public name of pulseq-reports. It is exported again
 from `pulseq-checks` (decision 8 of version 1).
 
+### 4.8 The gamma in the cards
+
+This table gives each conversion (principle 8). "Selected" is the gamma of
+the target that the control of the card selects (P36), or `seq.system.gamma`
+without targets.
+
+| Card | Value | Source unit | Gamma |
+|---|---|---|---|
+| `diagram` | Gradient lanes (mT/m) | Hz/m | selected γ (signed) |
+| `diagram` | RF magnitude (µT) | Hz | selected \|γ\| |
+| `diagram` | RF phase (rad) | the file | none |
+| `diagram` | PNS lane (%) | Hz/T | `meta["threshold"]` of each target (P38) |
+| `diagram` | Exact PNS of a zoomed view (%) | Hz/m samples, SAFE model in the browser | \|γ\| of each target |
+| `gradient-limits` | Peaks, slew rates, RMS | Hz/m, Hz/m/s | selected \|γ\| |
+| `gradient-limits` | Percent of a limit | Hz/m and `hardware_limits` | \|γ\| of each target |
+| `pns` | Peak and axis peaks (%) | Hz/T | `meta["threshold"]` of each target (P38) |
+| `gradient-spectrum` | Spectrum (mT/m/√Hz) | Hz/m/√Hz | \|γ\| of each group (P37) |
+| `rf-profile` | `ppm` offset (Hz) | ppm | γ (signed) and B0 of each target |
+| `rf-profile` | \|B1\| (µT) | Hz | \|γ\| of each target |
+| `rf-profile` | Bloch simulation | Hz, Hz/m | none |
+| `rf-exposure` | \|B1\| (µT), energy | Hz | selected \|γ\| |
+
+The control of P36 lists one entry for each value of the gamma that the
+values of the card depend on: the signed γ for the diagram, and \|γ\| for
+the RF exposure card and the peaks of the gradient limits card. The label of
+an entry names its targets. With one entry, the card shows no control. A
+chart card (the diagram) keeps the units of the file (Hz/m and Hz) in the
+data of the page, and the browser changes them with the selected gamma. A
+card with a table (the RF exposure card, the peaks of the gradient limits
+card) has one table for each entry, and the control shows the table of the
+selected entry.
+
 ## 5. Release
 
 One release does all of this work: `0.2.0rc3`. It depends on
-`pulseq-checks` `v0.1.0rc4` and on `pulseq-analysis` `v0.1.0rc4` (version 3:
-`v0.1.0rc3` and `v0.1.0rc2`, decision P29), by direct git references, as `pulseq-checks` does. The `pulseq-analysis` tag must be the
+`pulseq-checks` `v0.1.0rc5` and on `pulseq-analysis` `v0.1.0rc5` (decision
+P34; version 4: `v0.1.0rc4`, P29; version 3: `v0.1.0rc3` and `v0.1.0rc2`), by direct git references, as `pulseq-checks` does. The `pulseq-analysis` tag must be the
 tag that the pinned `pulseq-checks` pins, or the resolver cannot satisfy
 both. `uv.lock` records the commit of each tag. A tag of these repositories
 was moved once, so a relock that changes a commit of a pinned tag is a reason
@@ -555,7 +700,12 @@ Later, not in this work:
   `grad_spectrum` moved in `pulseq-analysis` `v0.1.0rc4`.
 - **One calculation for all targets.** `pulseq-checks` calculates
   `gradient.spectrum` one time for each target, also when the result is the
-  same for all targets. A change in `pulseq-checks` can share it.
+  same for all targets. A change in `pulseq-checks` can share it. Since
+  `v0.1.0rc5`, two targets with the same SAFE hardware and two gammas also
+  run the SAFE model two times.
+- **A gamma that is 0 or not finite** in a profile. `pulseq-checks`
+  `v0.1.0rc5` does not refuse it. pulseq-reports refuses it (principle 8).
+  A check of the profile reader of `pulseq-checks` is a separate change.
 - **Series of the gradient analyses.** When `gradient.blocks` gives `POINTS`
   series (section 8 of the `pulseq-analysis` design), the gradient limits card
   can read them from the matrix.
@@ -573,7 +723,7 @@ A high-level order. The implementation plan gives the phases.
    section 5. Delete the copies of the moved modules, and import the
    documented names. Make the dtype of the index columns in pulseq-reports.
 3. **The inputs and the matrix.** Add the target inputs (section 4.1), the
-   target colors and the legend, the proton rule (principle 8), and the
+   target colors and the legend, the gamma rule (principle 8), and the
    result matrix: `run_checks` in the command, `--check-config`,
    `--check-results` and `check_results=`.
 4. **The cards on targets.** Change each card as section 4.4 says. Remove
@@ -647,7 +797,7 @@ The user made these decisions on 2026-09-30. Do not open them again. Version
 | P18 | The number of findings in a report | At most 100 for each result, and the number omitted. `--max-findings N` changes it. A matrix from `--check-results` keeps its own limit, or gets the smaller one. | 4.2 |
 | P19 | Where the findings show | The summary gives the counts. The timing card lists the timing findings, and the gradient limits card lists the gradient findings, each with a "Show" button. Version 3: the PNS lane marks the analysis runs, not the findings (P22). | 4.6 |
 | P20 | Gamma in the percent columns of the gradient limits card | Replaced by P21. | 2 |
-| P21 | Other nuclei | pulseq-reports supports only the proton gamma, also where `pulseq-checks` supports other gammas. The cards leave out a target with another gamma, with a note. `build_cards` refuses a `Sequence` object with another gamma. `TODO.md` keeps the list of the functions to change for other nuclei. | 2 |
+| P21 | Other nuclei | Version 5: replaced by P35. pulseq-reports supports only the proton gamma, also where `pulseq-checks` supports other gammas. The cards leave out a target with another gamma, with a note. `build_cards` refuses a `Sequence` object with another gamma. `TODO.md` keeps the list of the functions to change for other nuclei. | 2 |
 
 ### 9.3 Decisions of version 3
 
@@ -655,7 +805,7 @@ The user made these decisions on 2026-10-04. Do not open them again.
 
 | # | Decision | Answer | Where |
 |---|---|---|---|
-| P22 | The marks of the PNS lane | The runs of the series `pns_above_1` of the analysis result `pns.safe.levels`. They are complete and exact, and use the threshold of `pns.safe`. Not the `pns.safe` findings, which the report limits to 100. | 4.4, 4.6 |
+| P22 | The marks of the PNS lane | Version 5: the series is `pns_above_0` (P34). The runs of the series `pns_above_1` of the analysis result `pns.safe.levels`. They are complete and exact, and use the threshold of `pns.safe`. Not the `pns.safe` findings, which the report limits to 100. | 4.4, 4.6 |
 | P23 | A report with targets and no result matrix | The PNS card and the PNS lane show a note: no analysis results were given. They do not run the SAFE model. The matrix is the only source of the PNS in a report. | 2, 4.2 |
 | P24 | The promise of a check in the summary | A closed element "What this check promises" for each check, with the three texts of its `CheckPromise`. | 4.3 |
 | P25 | The first step | Remove the verdicts and the defaults first, with no dependency on the other packages. | 7 |
@@ -669,10 +819,24 @@ The user made these decisions on 2026-10-04. Do not open them again.
 
 | # | Decision | Answer | Where |
 |---|---|---|---|
-| P29 | The pins | `pulseq-checks` `v0.1.0rc4` and `pulseq-analysis` `v0.1.0rc4`. The work continues from the phases that are done. It does not do them again. | 3.4, 5 |
+| P29 | The pins | Version 5: the tags are `v0.1.0rc5` (P34). `pulseq-checks` `v0.1.0rc4` and `pulseq-analysis` `v0.1.0rc4`. The work continues from the phases that are done. It does not do them again. | 3.4, 5 |
 | P30 | The gradient spectrum card for each target | The bands of the target in its color, and one line with the result of `acoustic.resonance-energy` (state, value and limit, or the reason). The card does not calculate band peaks or the share of the energy in the bands, because the check gives that comparison. This does not change P6: the gradient limits card keeps its percent columns. | 4.4, 4.6 |
 | P31 | The source of the spectrum | Only the analysis result `gradient.spectrum` in the result matrix. Without it, the card shows a note and no chart. A report has no default target: a default target, if one is added later, also goes through `pulseq-checks` and `pulseq-analysis`. | 2, 4.2, 4.4 |
-| P32 | The spectrum with several targets | One spectrum: the analysis result of the first supported target with the state "done". The bands of each supported target. If the spectrum of another target is different, a note names that target. | 4.4 |
+| P32 | The spectrum with several targets | Version 5: changed by P37. One spectrum: the analysis result of the first supported target with the state "done". The bands of each supported target. If the spectrum of another target is different, a note names that target. | 4.4 |
+
+### 9.5 Decisions of version 5
+
+The user made these decisions on 2026-10-04. Do not open them again.
+
+| # | Decision | Answer | Where |
+|---|---|---|---|
+| P33 | A negative gamma | Valid. Where a value is a magnitude, the conversion uses \|γ\|. A signed value uses γ. | 2 (principle 8), 4.8 |
+| P34 | The pins | `pulseq-checks` `v0.1.0rc5` and `pulseq-analysis` `v0.1.0rc5`. | 3.5, 5 |
+| P35 | Other nuclei (replaces P21) | Each card uses the gamma of each target. A target without `opts.gamma` has the default of pypulseq, as in `pulseq-checks`. Without targets, the cards use `seq.system.gamma`. `build_cards` accepts a `Sequence` object with any gamma that is finite and not 0. A gamma that is 0 or not finite is an error of the arguments. | 2 (principle 8), 4.7 |
+| P36 | Sequence-only cards with several gammas | A control on the card selects the target. It has one entry for each gamma that the values of the card depend on, and is not on the card when there is one entry. The units change in the browser: a chart keeps the data in Hz/m and Hz and rescales it, and a card with a table shows the table of the selected entry (section 4.8). | 2 (principle 8), 4.4, 4.8 |
+| P37 | The spectrum with several gammas (changes P32) | One line for each group of targets with the same \|γ\| and the same spectrum, in mT/m/√Hz with that \|γ\|. | 4.4 |
+| P38 | The PNS percent | `100 * v / meta["threshold"]` of `pns_above_0`, as `pulseq-checks` documents. The card reads no gamma for it, and the value agrees with `pns.safe`. | 4.4, 4.8 |
+| P39 | A result file of `pulseq-checks` `v0.1.0rc4` | An error of the run (status 1, no page) when a series of `pns.safe.levels` has a unit other than `"Hz/T"`. | 4.2 |
 
 ## 10. Terms
 
@@ -692,3 +856,5 @@ The user made these decisions on 2026-10-04. Do not open them again.
   the limits, the SAFE parameters, the acoustic resonances and B0.
 - **Verdict.** Pass, fail, not evaluated or error. Only a `pulseq-checks`
   result gives a verdict.
+- **Gamma of a target.** `target.make_opts().gamma`, in Hz/T. It can be
+  negative. \|γ\| is its magnitude.

@@ -11,12 +11,19 @@ Amendment 1, 2026-10-04: phases 1 to 4 are done (#111, #112, #113, #110).
 is now version 4 (section 3.4 of the design, decisions P29 to P32). This
 amendment adds phase 2b (the pins), rewrites phase 6 (the spectrum card),
 corrects the series names of phase 7, and adds the facts 14 to 18 and the
-decisions D12 to D15. Section 8.1 records it. Amendment 2 (a separate pull
-request) replaces the proton rule P21 with the gamma of each target.
+decisions D12 to D15. Section 8.1 records it.
 
-This is the implementation plan of `docs/plans/pulseq-checks.md`, version 4
+Amendment 2, 2026-10-04: `pulseq-analysis` and `pulseq-checks` released
+`v0.1.0rc5`, and the design is now version 5 (section 3.5 of the design,
+principles 8 and 11, decisions P33 to P39). This amendment moves the pins to
+`v0.1.0rc5` and replaces the proton rule P21 with the gamma of each target.
+It redefines phase 2b, adds the phases 2c and 7b, changes the phases 5 to 8
+and 11, and adds the facts 19 to 24 and the decisions D16 to D19. Section
+8.1 records it.
+
+This is the implementation plan of `docs/plans/pulseq-checks.md`, version 5
 (the design). The design gives the concepts, the principles and the
-decisions P1 to P32. This plan gives the phases, the tasks, the files, the
+decisions P1 to P39. This plan gives the phases, the tasks, the files, the
 workers and the order. Where this plan and the design do not agree, the
 design is correct: stop and ask the user.
 
@@ -27,7 +34,8 @@ Do steps 1 to 6 of section 7 of the design, and release `0.2.0rc3`:
 1. Remove the verdicts and the hidden defaults (design step 1, P25).
 2. Depend on `pulseq-checks` `v0.1.0rc3` and `pulseq-analysis` `v0.1.0rc2`,
    and delete the eight copied modules (design step 2). Then move both pins
-   to `v0.1.0rc4` (phase 2b, decision P29).
+   to `v0.1.0rc5` (phase 2b, decision P34), and use the gamma of each target
+   in every card (phase 2c, decision P35).
 3. Add the targets, the target colors and the result matrix to the report
    (design step 3).
 4. Change each card that needs scanner context to read the targets, and the
@@ -35,8 +43,8 @@ Do steps 1 to 6 of section 7 of the design, and release `0.2.0rc3`:
 5. Add the check summary card, and the findings in the cards (design step 5).
 6. The documents, the example report and the release (design step 6).
 
-Not in this plan: changes to `pulseq-checks` or `pulseq-analysis`, other
-nuclei (`TODO.md`), and the "later" items of section 6 of the design.
+Not in this plan: changes to `pulseq-checks` or `pulseq-analysis`, and the
+"later" items of section 6 of the design.
 
 ## 2. Read this first (context for the executing agent)
 
@@ -57,7 +65,7 @@ nuclei (`TODO.md`), and the "later" items of section 6 of the design.
 
 ### 2.2 Decisions that are already made
 
-The decisions of the design (sections 9.1 to 9.4) apply. Do not open them
+The decisions of the design (sections 9.1 to 9.5) apply. Do not open them
 again. The decisions that this plan uses most:
 
 | # | Decision |
@@ -66,18 +74,25 @@ again. The decisions that this plan uses most:
 | P14 | A page with an error card gives exit status 1. |
 | P15 | The old import paths of the moved modules go away. |
 | P18 | At most 100 findings for each result, `--max-findings N`. |
-| P21 | Only the proton gamma. |
-| P22 | The PNS lane marks the runs of `pns_above_1`. |
+| P21 | Replaced by P35 (amendment 2). |
+| P22 | The PNS lane marks the runs of `pns_above_1` (amendment 2: `pns_above_0`, P34). |
 | P23 | No result matrix: no PNS, with a note. |
 | P24 | The promise of each check in a closed element. |
 | P25 | The verdicts and the defaults go first. |
 | P26 | `build_cards` takes `check_results=` and never runs checks. |
 | P27 | The example report has two example targets. |
 | P28 | At most 6 targets. |
-| P29 | The pins are `v0.1.0rc4` (amendment 1). |
+| P29 | Replaced by P34 (amendment 2). |
 | P30 | The spectrum card: the bands and the `acoustic.resonance-energy` line of each target. No band peaks. |
 | P31 | The spectrum comes only from the analysis result `gradient.spectrum`. |
-| P32 | One spectrum: the first supported target with the state "done". |
+| P32 | Changed by P37 (amendment 2). |
+| P33 | A negative gamma is valid: \|γ\| for a magnitude, γ for a signed value. |
+| P34 | The pins are `v0.1.0rc5`. |
+| P35 | Each card uses the gamma of each target. Without targets: `seq.system.gamma`. A gamma that is 0 or not finite is an error. |
+| P36 | Sequence-only cards: a control selects the target when the gammas differ. |
+| P37 | The spectrum: one line for each group with the same \|γ\| and spectrum. |
+| P38 | The PNS percent is `100 * v / meta["threshold"]`. |
+| P39 | A result file with a PNS series not in `"Hz/T"` is an error of the run. |
 
 ### 2.3 Facts that this plan uses (verified on 2026-10-04)
 
@@ -88,7 +103,7 @@ Facts 1 to 13 give the state at `a435eb7`, before phase 1. Phases 1 to 4
 changed some of them: for example the signatures of fact 5, the options of
 fact 4 and the modes of `scripts/cards_scale.py` in fact 13. Before a phase
 uses a fact of 1 to 13, it checks the fact on `main`. Facts 14 to 18 give the
-state at amendment 1.
+state at amendment 1, and facts 19 to 24 the state at amendment 2.
 
 1. **The registry.** `CardSpec(name, order, build, options=(), publishes=(),
    subscribes=(), when=None)` (`registry.py:156`). `ReportContext(seq,
@@ -223,6 +238,61 @@ state at amendment 1.
     each band in one style. It does not read `data.bands`.
 18. **`TODO.md`.** The table of the places that change Hz into T has a row
     for `grad_spectrum.gradient_spectrum`.
+19. **The `v0.1.0rc5` tags** (design, section 3.5). `pulseq-checks`
+    `v0.1.0rc5` is the commit `369fd65`, and `pulseq-analysis` `v0.1.0rc5` is
+    the commit `8043553`. Both pin the pypulseq fork commit `a74ab06`.
+20. **The names that `v0.1.0rc5` changed, in pulseq-reports** (`main` at
+    `2a516b4`):
+    - `cards/gradient_limits.py:74-116` reads the `*_mt_per_m` and
+      `*_t_per_m_per_s` fields of `GradientLimits` and `AxisResult`, and
+      `:152` calls `gradient_limits(seq, window=window)`.
+    - `cards/pns.py:40-42` reads `PnsPrediction.peak` and `axis_peaks` as
+      fractions.
+    - `cards/diagram.py:61-68` reads `PnsLevels.peak`, `axis_peaks`,
+      `level_min` and `level_max` as fractions, and writes
+      `gradScale = GAMMA / seq.system.gamma`. `:104` calls
+      `pns_levels_for(seq, gradient_asc=...)` with no threshold.
+    - The `HardwareLimits` of `pulseq-checks` keeps its mT/m and T/m/s names.
+21. **The uses of `GAMMA`** (`pulseq_analysis.seq_utils`, removed in
+    `v0.1.0rc5`): `registry.py:22`, `targets.py:14`, `diagram_data.py:18`,
+    `waveforms.py:19`, `rf_exposure.py:24` and `cards/diagram.py:31`. Tests:
+    `synthetic.py`, `test_diagram_card.py`, `test_gradient_limits_card.py`,
+    `test_pns_lanes_golden.py`, `test_rf_exposure.py` (`seq_utils.GAMMA` at
+    `:15`), `test_rf_exposure_card.py`, `test_rf_profiles_golden.py`,
+    `test_targets.py`, `test_waveforms.py` and `tests/oracles/rf_exposure.py`.
+    The node tests `tests/js/test_seq_lanes.js` and `tests/js/test_rf_profiles.js:19`
+    use the proton factor 42576 of `seq_lanes.js`. (`test_grad_spectrum.py`
+    goes away in phase 6.)
+22. **The conversions with a gamma at `2a516b4`.**
+    - With `GAMMA`: `diagram_data.py:127` (the gradient values of the
+      diagram data, in mT/m), `waveforms.py:92` (\|B1\|, µT) and `:121`
+      (gradient lanes, mT/m), `rf_exposure.py:76` (\|B1\|, µT).
+    - `assets/seq_lanes.js:37` (`GRAD_HZ_PER_VALUE = 42576`, the proton
+      gamma times 1e-3) changes the mT/m values of the diagram data back into
+      Hz/m, and gives the factor as `gradHzPerValue` (`:402`), which
+      `assets/rf_profiles.js:827` reads. `assets/pns_lanes.js` multiplies the
+      values by `gradScale` (`:140`, `:219`).
+    - The lane domains and tick labels of the diagram are in mT/m and µT,
+      from Python (`waveforms._value_domain:187`, `diagram_data.lane_meta:192`).
+    - With `abs(seq.system.gamma)` and `seq.system.B0`:
+      `cards/rf_profile.py:149-150` (a `ppm` offset in Hz), `:231-232`
+      (`b0_t` and `gamma_hz_per_t` of the page data), and
+      `rf_profiles.py:916-917`. `assets/rf_profiles.js:994-1014` divides by
+      `gammaHzPerT` for \|B1\|. pypulseq changes a `ppm` offset with the
+      signed gamma.
+    - The proton rule: `registry.py:338-341` (`build_cards` refuses another
+      `seq.system.gamma`) and `targets.py:56-59` (`supported`).
+    - The RF exposure card has no card script. The gradient limits card has
+      the script `gradient-limits` only when it has a "Show" button.
+23. **What `pulseq-checks` `v0.1.0rc5` documents for a caller.** The gamma of
+    a target is `target.make_opts().gamma`, and its magnitude is
+    `abs(target.make_opts().gamma)` (`bindings.gamma_magnitude` needs a
+    `RunContext`). The PNS percent of a value `v` is `100 * v /
+    meta["threshold"]` of `pns_above_0`. A result JSON of `v0.1.0rc4` reads,
+    with PNS series in the unit `"1"`.
+24. **`TODO.md`, "Use the gyromagnetic ratio of the sequence".** Its table
+    lists the conversions of fact 22. Phase 2c closes the item: it removes
+    it, and section 4.8 of the design is the list.
 
 ### 2.4 Decisions of this plan (approved by the user on 2026-10-04)
 
@@ -234,22 +304,30 @@ Do not open these decisions again.
 | D2 | When the `coil` option goes away | In phase 1, with `PRISMA_AS82`. Without the default coil, the option has no value to choose. `gradient_spectrum` takes the resonances as (frequency, bandwidth) pairs in Hz, the form of `TargetProfile.acoustic_resonances`, and `AcousticResonance` goes away. Amendment 1: phase 6 deletes the `gradient_spectrum` of pulseq-reports (D12). | P8 and the design, section 4.7. |
 | D3 | The timing card from phase 1 to phase 10 | Phase 1 removes its `Check` and its "passed" and "failed" text. The card shows the number of errors of `check_timing` and the error table, with no verdict. Phase 10 makes it from the results. | No release comes between the phases. |
 | D4 | `encode_tables` | It goes away, with `decode_tables`. Each caller calls `pulseq_analysis.series.encode_array` (or `decode_array`) for each array. The JSON of the page does not change. | No duplicate code. `docs/usage.md` does not document `encode_tables`. |
-| D5 | The form of the pins | Direct references in `[project] dependencies`, as `pulseq-checks` does: `pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc3` and `pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc2`, with `[tool.hatch.metadata] allow-direct-references = true`. Amendment 1: the tags are `v0.1.0rc4` (P29, phase 2b). The form stays. | The tags of the design, section 5. `uv.lock` records the commits. |
+| D5 | The form of the pins | Direct references in `[project] dependencies`, as `pulseq-checks` does: `pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc3` and `pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc2`, with `[tool.hatch.metadata] allow-direct-references = true`. Amendment 1: the tags are `v0.1.0rc4` (P29, phase 2b). Amendment 2: the tags are `v0.1.0rc5` (P34). The form stays. | The tags of the design, section 5. `uv.lock` records the commits. |
 | D6 | The target colors | Six tokens `--target-1` to `--target-6` in `report.css`, light and dark. Phase 3 selects them with the `dataviz` skill. | P28. |
-| D7 | The targets in a card | `ReportContext.targets`: a tuple of `ReportTarget(profile, color, supported, reason)`, in the order of the targets. `supported` is false for a gamma other than `GAMMA`, with the reason. `ReportContext.check_results` is the matrix or `None`. | One place for the rules of P21 and P28. |
+| D7 | The targets in a card | `ReportContext.targets`: a tuple of `ReportTarget(profile, color, supported, reason)`, in the order of the targets. `supported` is false for a gamma other than `GAMMA`, with the reason. `ReportContext.check_results` is the matrix or `None`. Amendment 2: phase 2c changes it to `ReportTarget(profile, color, gamma)`, with no `supported` and no `reason` (P35). | One place for the rules of P21 and P28. |
 | D8 | The "Show" buttons | Phase 3 adds one helper for the button HTML and one card script, `show-buttons`, that wires each button to a `goto` message. The summary card, the timing card and the gradient limits card use them. The helper changes a block ID into the play index. | Phases 9 and 10 do not depend on each other. |
 | D9 | The chart support | Phase 4 adds series to a lane (several colored lines in one lane, one tooltip row for each) and marks in a lane (intervals with a color, drawn only in that lane). A lane without series draws as now. | The PNS lane, the spectrum bands and the RF profiles need them. |
 | D10 | The version during the work | `0.2.0rc3.dev0` from phase 1. Phase 12 sets `0.2.0rc3`. | A page written from `main` does not say that it is `0.2.0rc2`. |
 | D11 | The documents | Each phase updates `TESTS.md`. `docs/usage.md`, `README.md` and `CHANGELOG.md` change in phase 11 only. | As in `docs/plans/public-api.md`. |
-| D12 | Where the local spectrum module goes away (amendment 1) | In phase 6, not in phase 2b. Phase 2b changes only the pins, so its pages are equal byte for byte. | With P31, the card never calls a spectrum function. A change of the card to `pulseq_analysis.grad_spectrum` in phase 2b is work that phase 6 removes. |
+| D12 | Where the local spectrum module goes away (amendment 1) | In phase 6, not in phase 2b. Phase 2b changes only the pins, so its pages are equal byte for byte. Amendment 2: phase 2b is the refactor of section 4.2b, and its pages differ only as the row `2b` of section 3.5 says. | With P31, the card never calls a spectrum function. A change of the card to `pulseq_analysis.grad_spectrum` in phase 2b is work that phase 6 removes. |
 | D13 | The analyses that the command asks for (amendment 1) | `pns.safe.levels` as now, and `gradient.spectrum` when the `gradient-spectrum` card is on the page. | Principle 10 of the design. |
-| D14 | The unit of the spectrum card (amendment 1) | mT/m/√Hz, as now: the card multiplies the values of the series by `1e3 / GAMMA`. | Principle 8 of the design. Section 8.1 of the `pulseq-analysis` plan `docs/plans/gradient-spectrum.md`. |
+| D14 | The unit of the spectrum card (amendment 1) | mT/m/√Hz, as now: the card multiplies the values of the series by `1e3 / GAMMA`. Amendment 2: by `1e3 / |γ|` of each group (P37). | Principle 8 of the design. Section 8.1 of the `pulseq-analysis` plan `docs/plans/gradient-spectrum.md`. |
 | D15 | `fast_only` and the analyses (amendment 1) | The command asks for the analyses of the cards on the page also with `fast_only`, as `pulseq-checks` does. A caller that does not want the time uses `--skip` for the card. `docs/usage.md` gives the cost (phase 11). | The card on the page is the request. `fast_only` selects checks, not analyses. |
+| D16 | The order of the move to `v0.1.0rc5` (amendment 2) | Phase 2b is a refactor: the pins and the new names, with the proton rule still in force, and the comparison of section 3.5. Phase 2c then changes the gamma rule. | The comparison of phase 2b is a safety net for the change of the API. |
+| D17 | One module for the gamma (amendment 2) | `units.py` (new in phase 2b). Phase 2b gives it `PROTON_GAMMA = 42.576e6` (Hz/T, the default of pypulseq) in place of `GAMMA`, `gamma_magnitude(gamma)` (`abs`), and the conversion functions (Hz/m to mT/m, Hz/m/s to T/m/s, Hz to µT, each with the magnitude of its gamma argument). Phase 2c adds `target_gamma(profile)`, `check_gamma` and `gamma_entries`. Phase 7b removes `PROTON_GAMMA`, after its last use. The tests do not use `PROTON_GAMMA`: they have their own `GAMMA_1H = 42.576e6` in `tests/synthetic.py`, with a test that it is the default of pypulseq. After phase 8, no module but `units.py` writes `abs(` of a gamma. | As `gamma_magnitude` in `pulseq-checks`: `abs` in one place. |
+| D18 | The `ppm` offsets and the RF phase (amendment 2) | A `ppm` offset changes into Hz with the signed γ and B0 of the target, as pypulseq does. This changes `abs(seq.system.gamma)` of fact 22. The RF phase of the diagram stays the phase of the file. | P33: a `ppm` offset is a signed value. The phase of the file is what the interpreter plays. |
+| D19 | The control of P36 (amendment 2) | Phase 2c adds `markup.gamma_select_html(entries, card_id)` and `PulseqReport.gammaSelect(section, onChange)` in `lane_chart.js`. A card with a static table (the peaks of the gradient limits card, the RF exposure card) writes one table for each entry, and the control shows one (design, section 4.8). A chart card (the diagram) rescales its lanes in `onChange`. The control of a card does not change another card. Phase 2c also adds the card script `gamma-select` for a card that has no other script. A card with its own script (for example `gradient-limits` when it has a "Show" button) calls `gammaSelect` from that script. | One control for all the cards. A message between the cards is not necessary. |
 
 ### 2.5 Terms
 
 - **Target.** A `TargetProfile` that the caller gives to the report.
 - **Supported target.** A target whose gamma is the proton gamma (P21).
+  Amendment 2: from phase 2c, each target whose gamma is finite and not 0
+  is valid, and the term goes away (P35).
+- **Gamma of a target.** `target.make_opts().gamma`, in Hz/T. It can be
+  negative. \|γ\| is its magnitude.
 - **Result matrix.** A `ResultMatrix` of `pulseq-checks`.
 - **Play index.** The position of a block in play order, from 0. The `goto`
   message uses it.
@@ -299,9 +377,10 @@ that finds that the task and this plan do not agree stops and reports.
 Wave 1:  Phase 1 (verdicts and defaults)
 Wave 2:  Phase 2 (dependencies)
 Wave 3:  Phase 3 (targets and matrix)   Phase 4 (chart support)
-Wave 3b: Phase 2b (pins v0.1.0rc4)
+Wave 3b: Phase 2b (pins v0.1.0rc5, refactor), then Phase 2c (target gamma)
 Wave 4:  Phase 5 (gradient limits)   Phase 6 (spectrum)   Phase 7 (PNS)
          Phase 8 (RF profile), when one of phases 5 to 7 is merged
+         Phase 7b (diagram and RF exposure gamma), when phases 5 and 7 are merged
 Wave 5:  Phase 9 (check summary)   Phase 10 (findings in cards)
 Wave 6:  Phase 11 (documents and example)
 Wave 7:  Phase 12 (release)
@@ -310,9 +389,16 @@ Wave 7:  Phase 12 (release)
 - Phase 2 needs phase 1, because phase 1 removes the use of
   `_default_limits`.
 - Phase 3 and phase 4 share no file.
-- Phase 5 needs phase 3. Phases 6, 7 and 8 need phases 3 and 4. Phases 6
-  and 7 also need phase 2b, because they read series of `v0.1.0rc4`. Phase 5
-  can run at the same time as phase 2b.
+- Phase 5 needs phase 3. Phases 6, 7 and 8 need phases 3 and 4.
+- Amendment 2: phase 2c needs phase 2b. Phases 5, 6, 7, 7b and 8 need
+  phase 2c: they use the gamma of each target and `units.py`. Phase 7b
+  needs phase 7, because both edit `cards/diagram.py` and
+  `assets/cards/diagram.js`, and phase 5, because phase 7b removes
+  `PROTON_GAMMA` after its last use.
+- Amendment 2: from phase 2c to phase 7b, `build_cards` accepts each gamma,
+  but a card that a later phase changes keeps the gamma that it has (the
+  proton gamma of `PROTON_GAMMA`, or `seq.system.gamma`). No release comes
+  between the phases (D10).
 - Phase 9 needs phase 3. Phase 10 needs phases 3 and 5.
 - Phase 11 needs phases 5 to 10.
 
@@ -325,13 +411,15 @@ Wave 7:  Phase 12 (release)
 |---|---|---|
 | 1 | `feature/remove-verdicts` | `page.py`, `registry.py`, `cli.py`, `options.py`, `grad_spectrum.py`, `__init__.py` (also `__version__`), `pyproject.toml` (the version only), `uv.lock` (the version only), `cards/timing.py`, `cards/gradient_limits.py`, `cards/pns.py`, `cards/diagram.py`, `cards/spectrum.py`, `scripts/cards_scale.py` |
 | 2 | `refactor/use-pulseq-analysis` | `pyproject.toml`, `uv.lock`, the eight copied modules (deleted), each importing module of fact 7, `diagram_data.py`, `cards/diagram.py` and `cards/rf_profile.py` (the calls of `encode_tables` only), `scripts/diagram_scale.py`, `TODO.md` (the fork item) |
-| 2b | `chore/pin-upstream-rc4` | `pyproject.toml` (the two pins and their comment), `uv.lock` |
+| 2b | `refactor/pulseq-rc5` | `pyproject.toml` (the two pins and their comment), `uv.lock`, `units.py` (new), each module and Python test of facts 20 and 21 (the names and the imports only) |
+| 2c | `feature/target-gamma` | `units.py`, `targets.py`, `registry.py` (the gamma rule only), `markup.py` (`gamma_select_html`, and `target_legend_html` for `supported`), `assets/lane_chart.js` (`gammaSelect`), `assets/cards/gamma-select.js` (new), `TODO.md` (fact 24), `tests/profiles/example_c.toml` (new), `tests/test_targets.py`, `tests/test_registry.py`, `tests/test_markup.py` |
 | 3 | `feature/report-targets` | `registry.py`, `targets.py` (new), `markup.py`, `assets/report.css`, `assets/cards/show-buttons.js` (new), `cli.py`, `__init__.py` |
 | 4 | `feature/chart-series` | `assets/lane_chart.js`, `assets/chart_math.js` |
 | 5 | `feature/gradient-limits-targets` | `cards/gradient_limits.py`, `assets/cards/gradient-limits.js`, `options.py` (the `limits` option only), `cli.py` (only if the `limits` flags need it), `scripts/cards_scale.py` (the `limits` mode only) |
-| 6 | `feature/spectrum-targets` | `cards/spectrum.py`, `assets/cards/spectrum.js`, `grad_spectrum.py` (deleted), `tests/test_grad_spectrum.py` and `tests/oracles/grad_spectrum.py` (deleted), the imports of fact 16, `cli.py` (the `analyses` line only), `scripts/cards_scale.py` (the `spectrum` mode only), `TODO.md` (the row of fact 18) |
-| 7 | `feature/pns-targets` | `cards/pns.py`, `cards/diagram.py`, `assets/cards/pns.js`, `assets/cards/diagram.js`, `assets/pns_lanes.js`, `options.py` (the `gradient_asc` option only), `scripts/cards_scale.py` (the `pns` and `diagram` modes only) |
-| 8 | `feature/rf-profile-targets` | `cards/rf_profile.py`, `rf_profiles.py`, `assets/cards/rf-profile.js`, `assets/rf_profiles.js` |
+| 6 | `feature/spectrum-targets` | `cards/spectrum.py`, `assets/cards/spectrum.js`, `grad_spectrum.py` (deleted), `tests/test_grad_spectrum.py` and `tests/oracles/grad_spectrum.py` (deleted), the imports of fact 16, `cli.py` (the `analyses` line only), `scripts/cards_scale.py` (the `spectrum` mode only). Amendment 2: not `TODO.md` (phase 2c removes the item of fact 18) |
+| 7 | `feature/pns-targets` | `cards/pns.py`, `cards/diagram.py`, `assets/cards/pns.js`, `assets/cards/diagram.js`, `assets/pns_lanes.js`, `options.py` (the `gradient_asc` option only), `scripts/cards_scale.py` (the `pns` and `diagram` modes only), `cli.py` and `registry.py` (the check of P39 only) |
+| 7b | `feature/diagram-gamma` | `units.py` (`PROTON_GAMMA` removed), `diagram_data.py`, `waveforms.py`, `rf_exposure.py`, `cards/diagram.py` (the gradient and RF lanes only), `cards/rf_exposure.py`, `assets/seq_lanes.js`, `assets/pns_lanes.js` (the Hz/m samples only), `assets/rf_profiles.js` (the line of fact 22 only), `assets/chart_math.js` (the lane domain function), `assets/cards/diagram.js` (the control and the domains only), `tests/js/test_seq_lanes.js`, `tests/js/test_rf_profiles.js` (the factor only), `scripts/diagram_scale.py` (only if the data format needs it) |
+| 8 | `feature/rf-profile-targets` | `cards/rf_profile.py`, `rf_profiles.py`, `assets/cards/rf-profile.js`, `assets/rf_profiles.js`, `scripts/rf_references.py` (the arguments of `block_pulse`, amendment 2) |
 | 9 | `feature/check-summary` | `cards/checks.py` (new), `assets/cards/checks.js` (new, if `show-buttons` is not enough), `cards/__init__.py`, `pyproject.toml` (the card entry point only), `cli.py` (`--max-findings`, `--fail-on-check`) |
 | 10 | `feature/findings-in-cards` | `cards/timing.py`, `cards/gradient_limits.py` (the findings list only) |
 | 11 | `docs/reports-on-checks` | `docs/usage.md`, `README.md`, `CHANGELOG.md`, `examples/gre_report.py`, `examples/targets/` (new), `docs/examples/gre.html`, `tests/test_rf_profiles_golden.py` (only if the example change needs it) |
@@ -341,9 +429,10 @@ Rules:
 
 1. A phase edits only its files. If it must edit a different file, it stops
    and asks the executing agent.
-2. `options.py`, `cli.py`, `scripts/cards_scale.py`, `tests/test_cli.py`,
-   `tests/test_registry.py`, `tests/test_extensions.py` and
-   `tests/test_file_rasters.py`: several phases edit different parts. Rebase
+2. `options.py`, `cli.py`, `scripts/cards_scale.py`, `units.py`,
+   `assets/rf_profiles.js`, `tests/test_cli.py`, `tests/test_registry.py`,
+   `tests/test_extensions.py` and `tests/test_file_rasters.py`: several
+   phases edit different parts. Rebase
    the later phase and keep both edits.
 3. `TESTS.md`: each phase edits only the sections of its test files. If a
    conflict occurs, keep both sides.
@@ -360,6 +449,10 @@ Rules:
    - The command pages of three synthetic `.seq` files: the spin echo and the
      GRE of `tests/synthetic.py` and `build_repeating(1000)` of
      `scripts/diagram_scale.py`, with the options that the phase still has.
+   - Amendment 2, until phase 7: the page of the GRE with `--gradient-asc`
+     and a synthetic `.asc` file (`write_gradient_asc` of
+     `tests/conftest.py`) and `--pns-lane`, so that the comparison covers
+     the PNS.
    - Compare with the masked page diff of `docs/plans/public-api.md`, section
      9.2: every difference, with the text of each script that the phase
      changes masked.
@@ -369,10 +462,12 @@ Rules:
    |---|---|
    | 1 | The version in the subtitle (`0.2.0rc3.dev0`, D10). The timing card has no "passed" or "failed" text. Without `limits`, the gradient limits card has no percent columns. Without `gradient_asc`, the PNS card has no PNS and the diagram has no PNS lane. The spectrum card has no bands. |
    | 2 | None. The pages are equal byte for byte. |
-   | 2b | None. The pages are equal byte for byte. |
+   | 2b | Amendment 2: the PNS values of the PNS card and of the PNS entry of the diagram data, to the float rounding, on a page with a gradient `.asc` file (the SAFE model runs on Hz/m, and the card divides after it). The level arrays are float32: a value can differ by 1 unit in the last place of float32 (relative 2⁻²³). Nothing else: the other parts of the pages are equal byte for byte. |
+   | 2c | None without targets. |
    | 3 | None without targets. |
    | 4 | The text of `lane_chart.js` and `chart_math.js` only. The browser shows each chart as on the baseline. |
-   | 5 to 10 | The cards of the phase. Each page without targets is as in phase 1, but in phase 6 the spectrum card of a page without targets has a note and no chart (principle 10 of the design). |
+   | 5 to 10 | The cards of the phase. Each page without targets is as in phase 1, with these exceptions (amendment 2): in phase 6, the spectrum card has a note and no chart (principle 10 of the design); in phase 7, the diagram data of each page has the new format number and no PNS entry; in phase 8, the data of the RF profile card of each page has the new format. In phases 7 and 8, the browser shows the same values as on the baseline. |
+   | 7b | The diagram data (Hz/m and Hz, a new format number) and the HTML of the RF exposure card. Without targets, the browser shows the same values, domains and tick labels as on the baseline. |
 
 ### 3.6 The browser checks
 
@@ -452,24 +547,83 @@ The console must have no error.
    now. A change of the pin changes the three repositories.
 7. **The comparison** (section 3.5): the pages are equal byte for byte.
 
-### 4.2b Phase 2b: the pins of `v0.1.0rc4` (amendment 1)
+### 4.2b Phase 2b: the move to `v0.1.0rc5` (amendment 2)
 
-1. **The pins (P29).** Change the two direct references to
-   `pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc4`
-   and `pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc4`.
+Amendment 2 rewrote this section (P34, D16, D17). It is a refactor: the
+proton rule P21 stays in force until phase 2c.
+
+1. **The pins (P34).** Change the two direct references to
+   `pulseq-checks @ git+https://github.com/mdtisdall/pulseq-checks@v0.1.0rc5`
+   and `pulseq-analysis @ git+https://github.com/mdtisdall/pulseq-analysis@v0.1.0rc5`.
    Run `nix develop --command uv lock`. Then confirm in `uv.lock`:
-   `pulseq-checks` at `e38bf5c`, `pulseq-analysis` at `0afc759`, scipy as a
+   `pulseq-checks` at `369fd65`, `pulseq-analysis` at `8043553`, scipy as a
    dependency of `pulseq-analysis`, and one pypulseq at `a74ab06`. If a
    commit is different, stop and ask the user (design, section 5).
-2. **No other change.** No module of `src/` reads a `Series` field (fact
-   14), and `encode_array` did not change (fact 15). If `scripts/check`
-   fails for a reason other than a test that names the checks or the
-   analyses of `pulseq-checks`, stop and ask the user. A test that lists the
-   installed checks or analyses gets the new ID, with its `TESTS.md` entry.
-3. **The comparison** (section 3.5): the pages are equal byte for byte. Each
-   run of `run_checks` with the test profiles now also runs
-   `acoustic.resonance-energy`. The pages of section 3.5 have no targets, so
-   this does not change them.
+2. **`units.py` (new, D17).** `PROTON_GAMMA = 42.576e6` (Hz/T, the default
+   of pypulseq), `gamma_magnitude(gamma)`, and the conversion functions:
+   Hz/m to mT/m, Hz/m/s to T/m/s and Hz to µT, each with the magnitude of
+   its gamma argument. Each import of `GAMMA` in `src` (fact 21) becomes
+   `units.PROTON_GAMMA`, or a call of a conversion function. Keep each
+   expression in the order of `v0.1.0rc4` (`value / gamma * 1e3`), so that a
+   positive gamma gives the same float. The Python tests of fact 21 use
+   `GAMMA_1H = 42.576e6` of `tests/synthetic.py` (D17), with a test that it
+   equals `pp.Opts().gamma`.
+3. **The names (fact 20).**
+   - `cards/gradient_limits.py`: the `*_hz_per_m` and `*_hz_per_m_per_s`
+     fields, converted with `PROTON_GAMMA`.
+   - `cards/pns.py`: `peak_hz_per_t` and `axis_peaks_hz_per_t`, divided by
+     `units.gamma_magnitude(seq.system.gamma)`. This is the gamma that
+     `v0.1.0rc4` used.
+   - `cards/diagram.py`: the level arrays and the summary divided by
+     `units.gamma_magnitude(seq.system.gamma)`, so the data format of the
+     diagram does not change. `pns_levels_for` needs no threshold: the diagram does not read
+     `above`.
+4. **No other change.** If `scripts/check` fails for a reason other than a
+   name of fact 20 or 21, stop and ask the user.
+5. **The comparison** (section 3.5): the expected differences of the row
+   `2b`, with the page with a gradient `.asc` file. Decode the PNS level
+   arrays and compare them with the baseline to 1 unit in the last place of
+   float32. Compare the other PNS values (the summary, the percent text)
+   with a relative tolerance of 1e-6. List each value that differs.
+
+### 4.2c Phase 2c: the gamma of each target (amendment 2)
+
+P33, P35, D7, D17, D19.
+
+1. **`units.py`.** `target_gamma(profile)` gives `profile.make_opts().gamma`
+   (signed). `check_gamma(gamma, where)` raises `ValueError` for a gamma
+   that is 0 or not finite. `gamma_entries(targets, seq, *, signed)` gives
+   the entries of the control of P36: one entry for each distinct γ
+   (`signed=True`) or \|γ\| (`signed=False`), in the order of the first
+   target of each entry, with the names of its targets. Without targets, one
+   entry with `seq.system.gamma`. `PROTON_GAMMA` stays: the cards that use
+   it change in phases 5 and 7b, and phase 7b removes it (D17).
+2. **`targets.py` (D7).** `ReportTarget(profile, color, gamma)`.
+   `report_targets` calls `check_gamma` for each target. `supported` and
+   `reason` go away, and each module that reads them uses every target
+   (`markup.target_legend_html:114`). No card reads them at `2a516b4`.
+3. **`registry.py`.** `build_cards` calls `check_gamma(seq.system.gamma)` in
+   place of the proton rule (P35). `ReportContext` does not change.
+4. **The control (D19).** `markup.gamma_select_html(entries, card_id)`: a
+   group of buttons with `aria-pressed`, as the scale buttons of the
+   spectrum card, or nothing for one entry. `PulseqReport.gammaSelect(section,
+   onChange)` in `lane_chart.js`: it wires the buttons, shows the block of
+   the selected entry (`data-gamma-entry`), and calls `onChange(entry)`.
+   `assets/cards/gamma-select.js` registers the card script `gamma-select`,
+   which only calls `gammaSelect`.
+5. **`TODO.md`.** Remove the item "Use the gyromagnetic ratio of the
+   sequence" (fact 24). Section 4.8 of the design is the list now.
+6. **The tests and a profile.** `tests/profiles/example_c.toml` (new): an
+   example target with a negative gamma (-11.777e6 Hz/T, as ¹²⁹Xe), a
+   comment that it is not a real scanner, and the other values of
+   `example_a.toml`. The browser checks of phases 5, 7, 7b and 8 use it
+   with `example_a.toml`. A negative gamma is valid. A gamma of 0, `inf`
+   and `nan` each give `ValueError` in `report_targets` and in
+   `build_cards`.
+   `build_cards` accepts a `Sequence` object with another gamma. The entries
+   of `gamma_entries` for two targets with γ and -γ: two entries with
+   `signed=True`, one with `signed=False`. A test of the control in the
+   browser comes with the first card that uses it.
 
 ### 4.3 Phase 3: the targets and the matrix
 
@@ -532,20 +686,31 @@ The console must have no error.
 
 ### 4.5 Phase 5: the gradient limits card on targets
 
+Amendment 2 changed items 2 and 3 and added item 5.
+
 1. Remove the option `limits`, its flags `--max-grad` and `--max-slew`, and
    its configuration table.
 2. `gradient_limits_card(seq, *, windows=None, targets=(), card_id=...)`. The
-   peaks are measured one time, with `gamma=GAMMA`.
-3. One percent column for each supported target that has
-   `profile.hardware_limits`, with the color of the target in its heading.
-   A note names each target without limits, and each target that is not
-   supported.
+   peaks are measured one time, in Hz/m and Hz/m/s
+   (`gradient_limits(seq, window=...)`).
+3. One percent column for each target that has `profile.hardware_limits`,
+   with the color of the target in its heading. The percent converts the
+   peak with \|γ\| of that target (`units`), and divides it by the mT/m or
+   T/m/s limit, as the gradient checks do (design, section 4.6). A note
+   names each target without limits.
 4. The "Show" buttons stay.
+5. **The peaks in the gamma of a target (P36).** The table of the peaks
+   shows mT/m and T/m/s for one \|γ\|. With more than one entry of
+   `gamma_entries(..., signed=False)`, the card writes one table for each
+   entry and the control of phase 2c. With a "Show" button, the card script
+   `gradient-limits` calls `gammaSelect`. Without one, the card has the card
+   script `gamma-select` (D19). Without targets, the card uses
+   `seq.system.gamma`, not `PROTON_GAMMA`.
 
 ### 4.6 Phase 6: the spectrum card on targets
 
 Amendment 1 rewrote this section (design principle 10, P30 to P32, D12 to
-D14).
+D14). Amendment 2 changed items 3, 5, 6, 7 and 10 (P33, P35, P37).
 
 1. **The local module goes away (D12).** Delete `grad_spectrum.py`,
    `tests/test_grad_spectrum.py`, `tests/oracles/grad_spectrum.py` and
@@ -559,29 +724,30 @@ D14).
    card_id=...)`. It keeps `refuse_rotations(seq)`, so a file with the
    rotation extension still gives an error card, as the other cards do. It
    does not call a spectrum function.
-3. **The spectrum (P31, P32).** Of the supported targets, in their order,
-   the first whose `AnalysisResult` of `gradient.spectrum` has the state
-   "done". The card reads its series `gradient_spectrum`: the frequency
-   `k` is `coord_start + k * coord_step`, and the arrays `value` (the RSS),
-   `x`, `y` and `z` are in Hz/m/√Hz. The card multiplies each value by
-   `1e3 / GAMMA` (D14) and draws the four lanes as now. The text of the
+3. **The spectrum (P31, P37).** The targets whose `AnalysisResult` of
+   `gradient.spectrum` has the state "done". The card reads each series
+   `gradient_spectrum`: the frequency `k` is `coord_start + k * coord_step`,
+   and the arrays `value` (the RSS), `x`, `y` and `z` are in Hz/m/√Hz. The
+   card makes groups of the targets with the same \|γ\| and the same series
+   (item 5). Each group is one series in each of the four lanes (phase 4),
+   in mT/m/√Hz with `1e3 / |γ|` of the group (D14), in the color of its
+   first target, with the names of its targets in the tooltip. The text of the
    method takes the window from `meta["window_s"]` and the maximum frequency
    from `meta["max_frequency_hz"]`, not from constants. A result "done" with
    no series is a sequence with no gradient event: the card says so, as now.
 4. **No spectrum.** The card shows a note and no chart when: there is no
-   target, there is no matrix, no supported target has an analysis result
+   target, there is no matrix, no target has an analysis result
    `gradient.spectrum`, or no such result is "done". The note gives the
    reason of each result that is not "done".
-5. **Different spectra (P32).** For each other supported target with a
-   result "done", the card compares its four arrays and `coord_start` and
-   `coord_step` with those of the drawn result, exactly. If one differs, a
-   note names the target.
-6. **The bands.** For each supported target with `acoustic_resonances`: its
-   bands `[f - bw/2, f + bw/2]` in the color of the target, in the form
+5. **The same spectrum (P37).** Two results are the same when their four
+   arrays and `coord_start` and `coord_step` are equal, exactly (in
+   Hz/m/√Hz). With one \|γ\| and one spectrum, the card draws one series in
+   each lane, as before.
+6. **The bands.** For each target with `acoustic_resonances`: its bands
+   `[f - bw/2, f + bw/2]` in the color of the target, in the form
    `{lo, hi, color}` of phase 4 (section 4.4, item 3). The tooltip names the
-   target of a band. A note names each target without resonances, and each
-   target that is not supported (P21).
-7. **The check line (P30).** For each supported target: the `Result` of
+   target of a band. A note names each target without resonances.
+7. **The check line (P30).** For each target: the `Result` of
    `acoustic.resonance-energy` from `check_results.results` (by `check_id`
    and `target`, section 3.4 of the design). The line gives the state, and the
    value and the limit with the unit, or the reason. Without that result
@@ -594,50 +760,102 @@ D14).
    select=[], analyses=["gradient.spectrum"])` with
    `tests/profiles/example_a.toml`, and gives the matrix to the card. It
    gives the time of `run_checks` and the time of the card separately.
-10. **`TODO.md`.** The row of fact 18 names `cards/spectrum.py` and `GAMMA`.
+10. **`TODO.md`.** Amendment 2: no change. Phase 2c removed the item of
+    fact 18.
 
 ### 4.7 Phase 7: the PNS card and the PNS lane
 
+Amendment 2 changed items 2 to 4 and 6, and added item 7 (P33, P38, P39).
+
 1. Remove the option `gradient_asc`, its flag and its configuration key.
-2. **The PNS card.** For each supported target: its `AnalysisResult` of
+2. **The PNS card.** For each target: its `AnalysisResult` of
    `pns.safe.levels` from the matrix. With the state "done": the peak, its
    time, the axis peaks and the hardware name, from the `meta` of
-   `pns_total`, and the button to the TR of the peak
+   `pns_total`, in percent: `100 * v / meta["threshold"]` of `pns_above_0`
+   (P38). The button goes to the TR of the peak
    (`pulseq_analysis.pns.peak_tr_window`). With another state: its reason.
    Without a matrix, or without the analysis: a note (P23). The card does
    not call the SAFE model.
-3. **The PNS lane.** `file.pns` becomes a list, one entry for each supported
-   target with the state "done": the target name, its color, `hw` (from
-   `profile.models["pns.safe"]`), `dtS`, `binSamples`, `gradScale` (1.0,
-   P21), the summary, `levels` (the `min` and `max` arrays of `pns_total`,
+3. **The PNS lane.** `file.pns` becomes a list, one entry for each target
+   with the state "done": the target name, its color, `hw` (from
+   `profile.models["pns.safe"]`), `dtS`, `binSamples`, `gammaMagnitude`
+   (\|γ\| of the target, `units`), `threshold` (`meta["threshold"]`), the
+   summary, `levels` (the `min` and `max` arrays of `pns_total` in Hz/T,
    encoded as now), and `runs` (the arrays `start` and `end` of
-   `pns_above_1`, in s: its `coord_unit` is `"s"`). The time of a sample of
+   `pns_above_0`, in s: its `coord_unit` is `"s"`). The time of a sample of
    `pns_total` comes from `coord_start` and `coord_step`, not from the names
-   `t0_s` and `step_s` of `v0.1.0rc2` (amendment 1).
+   `t0_s` and `step_s` of `v0.1.0rc2` (amendment 1). `gradScale` goes away.
    The data format of the diagram changes, and its number goes up.
 4. **The JavaScript.** `diagram.js` decodes one model for each entry. The PNS
-   lane has one series for each target (section 4.4), one domain for all,
-   and the runs as marks in the color of the target (P22). The status text
-   gives the peak of each target.
+   lane has one series for each target, in percent of its `threshold`
+   (section 4.4), one domain for all, and the runs as marks in the color of
+   the target (P22). The status text gives the peak of each target.
+   `pns_lanes.js` runs the SAFE model of a zoomed view on the gradient
+   samples in Hz/m, and divides the result by `gammaMagnitude`. Until phase
+   7b, the samples are the mT/m values of the diagram data (made with
+   `PROTON_GAMMA`) times `gradHzPerValue` of `SeqLanes` (fact 22).
 5. `scripts/cards_scale.py`: the `pns` and `diagram --pns-lanes` modes run
    `run_checks(..., select=[], analyses=["pns.safe.levels"])` with
    `tests/profiles/example_a.toml`, and give the matrix to the card. They
    give the time of `run_checks` and the time of the card separately.
 6. `tests/test_pns_lanes_golden.py` stays: it compares the exact PNS of the
-   JavaScript with `pulseq_analysis.pns_levels`.
+   JavaScript with `pulseq_analysis.pns_levels`, both in percent of
+   \|γ\|. It also runs with a negative gamma.
+7. **The older result form (P39).** One function (in `registry.py`) raises
+   `ValueError` for a matrix that has a series of `pns.safe.levels` with a
+   unit other than `"Hz/T"`. `build_cards` calls it. The command calls it
+   after it reads a `--check-results` file, and gives status 1 and no page.
+
+### 4.7b Phase 7b: the diagram and the RF exposure card in the gamma of a target (amendment 2)
+
+P33, P36, D18, D19. Design, section 4.8.
+
+1. **The diagram data in the units of the file.** `diagram_data.py` keeps
+   the gradient values in Hz/m and the RF magnitude in Hz, with no gamma.
+   `waveforms.py` gives the exact lanes of a window in Hz/m and Hz.
+   `seq_lanes.js` reads Hz/m: `GRAD_HZ_PER_VALUE` and `gradHzPerValue` go
+   away, and `pns_lanes.js` and `rf_profiles.js:827` use the Hz/m values.
+   The data format of the diagram changes, and its number goes up. Remove
+   `units.PROTON_GAMMA`: its last uses are here.
+2. **The control.** The diagram has the control of phase 2c with
+   `gamma_entries(..., signed=True)`. The gradient lanes show `value / γ *
+   1e3` (mT/m) and the RF lane `|value| / |γ| * 1e6` (µT) for the selected
+   entry. The RF phase does not change (D18). A change of the entry rescales
+   the lanes and keeps the view.
+3. **The domains and the tick labels.** Python gives the peak of each lane
+   in the units of the file. A pure function of `chart_math.js` (the form
+   of `waveforms._value_domain`) gives the domain, the ticks and the labels
+   for the selected gamma, with node tests. For `seq.system.gamma` of a
+   file, it gives the domains and labels of the baseline.
+4. **The RF exposure card.** `rf_exposure.py` takes the gamma as an
+   argument (its magnitude, `units`). The card writes one table for each
+   entry of `gamma_entries(..., signed=False)`, and the control of phase 2c,
+   with the card script `gamma-select`.
+5. Without targets, each card shows the values of `seq.system.gamma`, as on
+   the baseline.
+6. The tests: the values for a negative gamma are the values of its
+   magnitude for \|B1\| and the energy, and the negative of the gradient
+   values. The golden tests of the diagram (`test_seq_lanes_golden.py`,
+   `test_pns_lanes_golden.py`) read Hz/m.
 
 ### 4.8 Phase 8: the RF profile card on targets
 
+Amendment 2 changed items 2 to 4 (P33, P35, D18).
+
 1. The Python side sends the `ppm` terms of each RF event (`freq_ppm` and
    `phase_ppm`), and no B0 and no gamma.
-2. The browser calculates `freq_hz = freq_offset + freq_ppm * 1e-6 * GAMMA *
-   B0` (and the same for the phase) for the B0 of each supported target, and
-   overlays the profiles, one series for each target.
+2. The browser calculates `freq_hz = freq_offset + freq_ppm * 1e-6 * γ * B0`
+   (and the same for the phase) with the signed γ and the B0 of each target
+   (D18), and \|B1\| with \|γ\|. It overlays the profiles, one series for
+   each group of targets with the same γ and B0, in the color of the first
+   target of the group.
 3. Without a target that gives B0: a pulse with a `ppm` offset has a note,
-   and the other pulses draw as now.
-4. `rf_profiles.py`: the Python reference takes `b0_t` as an argument, not
-   `seq.system.B0`, and uses `GAMMA`. The golden tests compare the
-   JavaScript and Python for two values of B0.
+   and the other pulses draw as now. Without targets, \|B1\| uses
+   `seq.system.gamma`.
+4. `rf_profiles.py`: the Python reference takes `b0_t` and `gamma_hz_per_t`
+   as arguments, not `seq.system.B0` and `seq.system.gamma`, and uses the
+   signed gamma for a `ppm` offset. The golden tests compare the JavaScript
+   and Python for two values of B0, and for a gamma and its negative.
 5. The data format of the card changes, and its number goes up.
 
 ### 4.9 Phase 9: the check summary card
@@ -673,13 +891,19 @@ D14).
 1. `docs/usage.md`: each section that names a check, an option that went
    away, an old module path or the exit status (sections 2 to 8, and
    "Rotation extension"). The new inputs, the summary card, the targets in
-   the cards, and the lane format of phase 4. The table of the times of the
+   the cards, and the lane format of phase 4. Amendment 2: the gamma of a
+   target in the cards (design, section 4.8), a negative gamma, the control
+   of P36, and the refusal of a result file of `pulseq-checks` `v0.1.0rc4`
+   (P39). The table of the times of the
    cards: the PNS and spectrum rows give the time of their analysis in
    `run_checks` and the time of the card (section 4.6, item 9, and section
    4.7, item 5). The cost of the analyses with `fast_only` (D15).
 2. `README.md`: the questions of "What it is for" and the list of cards.
 3. `CHANGELOG.md`: the entry `0.2.0rc3` with "Breaking changes", "Added" and
    "Fixed". Each removed name or option, with what replaces it.
+   Amendment 2: under "Added", each card uses the gamma of each target, and
+   a negative gamma is valid. The proton rule was not in a release (it came
+   in phase 3), so it is not a breaking change.
    `pulseq_reports.grad_spectrum` is one of them: `gradient_spectrum` and
    `GradientSpectrum` are in `pulseq_analysis.grad_spectrum` (in Hz/m/√Hz),
    and the check `acoustic.resonance-energy` replaces `band_peaks` and
@@ -755,17 +979,56 @@ Checks:
 - [ ] The pages are equal byte for byte.
 - [ ] `scripts/check` passes.
 
-### Phase 2b: the pins of `v0.1.0rc4`
+### Phase 2b: the move to `v0.1.0rc5`
 
-Branch: `chore/pin-upstream-rc4`. Wave 3b. Section 4.2b. Amendment 1.
+Branch: `refactor/pulseq-rc5`. Wave 3b. Section 4.2b. Amendment 2.
 
-**Task 2b.1.** Tier X. All of section 4.2b: the pins, `uv.lock`, the
-comparison, and the review.
+**Task 2b.1.** Tier X. The pins and `uv.lock` (item 1), and `units.py`
+(item 2).
+
+**Task 2b.2.** Tier M. Items 2 and 3: the imports and the names in `src`,
+`tests` and `scripts`, with `TESTS.md` where a test changes.
+
+**Task 2b.3.** Tier X. The comparison (item 5) and the review.
+
+Task 2b.1 comes first.
 
 Checks:
 
 - [ ] `uv.lock` has the three commits of section 4.2b, item 1.
-- [ ] The pages are equal byte for byte.
+- [ ] `rg 'seq_utils\.GAMMA|import[^\n]*\bGAMMA\b' src tests scripts` finds
+      nothing.
+- [ ] `rg '\.(peak|rms|whole_rms|vector_peak)_mt_per_m|\.(max_slew|slew|junction)_t_per_m_per_s' src tests scripts`
+      finds nothing. (`max_grad_mt_per_m` and `max_slew_t_per_m_per_s` of
+      `HardwareLimits` stay.)
+- [ ] `rg 'abs\(.*gamma' src --glob '*.py'` finds only `units.py`,
+      `cards/rf_profile.py` and `rf_profiles.py` (phase 8 changes them).
+- [ ] The pages differ only as the row `2b` of section 3.5 says.
+- [ ] `scripts/check` passes.
+
+### Phase 2c: the gamma of each target
+
+Branch: `feature/target-gamma`. Wave 3b, after phase 2b. Section 4.2c.
+Amendment 2.
+
+**Task 2c.1.** Tier X. `units.py`, `targets.py` and `registry.py` (items 1
+to 3).
+
+**Task 2c.2.** Tier H. The control (item 4), with node tests of any pure
+function.
+
+**Task 2c.3.** Tier M. Items 5 and 6: `TODO.md`, the tests and `TESTS.md`.
+
+**Task 2c.4.** Tier X. The comparison and the review.
+
+Task 2c.1 comes first. Tasks 2c.2 and 2c.3 run at the same time.
+
+Checks:
+
+- [ ] `rg '\.supported|supported=' src --glob '*.py'` finds nothing.
+- [ ] `rg 'abs\(.*gamma' src --glob '*.py'` finds only `units.py`,
+      `cards/rf_profile.py` and `rf_profiles.py` (phase 8 changes them).
+- [ ] A page without targets is equal to the baseline.
 - [ ] `scripts/check` passes.
 
 ### Phase 3: the targets and the matrix
@@ -821,23 +1084,26 @@ Branch: `feature/gradient-limits-targets`. Wave 4. Section 4.5.
 
 Checks:
 
-- [ ] A target without limits and a target with another gamma have no
-      percent column.
+- [ ] A target without limits has no percent column.
+- [ ] A target with a negative gamma has the percent of its magnitude, and
+      the same percent as the gradient checks (amendment 2).
+- [ ] With two \|γ\|, the control shows the table of each (amendment 2).
 - [ ] `scripts/check` passes.
 
 ### Phase 6: the spectrum card on targets
 
-Branch: `feature/spectrum-targets`. Wave 4, after phase 2b. Section 4.6
-(amendment 1).
+Branch: `feature/spectrum-targets`. Wave 4, after phase 2c. Section 4.6
+(amendments 1 and 2).
 
 **Task 6.1.** Tier M. Item 1 of section 4.6: the deletions and the imports,
 with `TESTS.md`.
 
 **Task 6.2.** Tier H. Items 2 to 10 of section 4.6 (Python and
 `spectrum.js`), with the tests and `TESTS.md`. Test with hand-made
-`ResultMatrix` objects: two targets with the same spectrum, two with
-different spectra, a target without resonances, a target with another gamma,
-a result that is not "done", a matrix without the analysis, and no matrix.
+`ResultMatrix` objects: two targets with the same spectrum and gamma, two
+with different spectra, two with γ and -γ (one group), two with different
+\|γ\| (two groups), a target without resonances, a result that is not
+"done", a matrix without the analysis, and no matrix.
 
 **Task 6.3.** Tier X. The data format of the card first (before task 6.2),
 the browser check with two targets, and the review.
@@ -847,8 +1113,9 @@ both are done.
 
 Checks:
 
-- [ ] Each supported target with resonances has its bands, in its color.
-- [ ] Each supported target has its line of `acoustic.resonance-energy`.
+- [ ] Each target with resonances has its bands, in its color.
+- [ ] Each target has its line of `acoustic.resonance-energy`.
+- [ ] Each group of P37 has one series in each lane (amendment 2).
 - [ ] `rg 'grad_spectrum|band_peaks|BandPeak' src scripts` finds nothing (the
       card imports no spectrum module). `rg 'pulseq_reports\.grad_spectrum' tests`
       finds nothing.
@@ -857,9 +1124,10 @@ Checks:
 
 ### Phase 7: the PNS card and the PNS lane
 
-Branch: `feature/pns-targets`. Wave 4. Section 4.7.
+Branch: `feature/pns-targets`. Wave 4, after phase 2c. Section 4.7
+(amendment 2).
 
-**Task 7.1.** Tier H. Items 1, 2, 3 and 5 (Python), with the tests and
+**Task 7.1.** Tier H. Items 1, 2, 3, 5 and 7 (Python), with the tests and
 `TESTS.md`.
 
 **Task 7.2.** Tier H. Item 4 (JavaScript), with node tests of the new pure
@@ -873,13 +1141,39 @@ Checks:
 
 - [ ] No card calls `pns_levels`, `pns_levels_for` or `pns_prediction`.
 - [ ] Without a matrix, the card and the lane have no PNS.
-- [ ] `test_pns_lanes_golden.py` passes.
+- [ ] Each PNS percent is `100 * v / meta["threshold"]` (amendment 2).
+- [ ] A `--check-results` file with a PNS series in the unit `"1"` gives
+      status 1 and no page (amendment 2).
+- [ ] `rg 'gradScale|pns_above_1' src tests` finds nothing (amendment 2).
+- [ ] `test_pns_lanes_golden.py` passes, also with a negative gamma.
+- [ ] `scripts/check` passes.
+
+### Phase 7b: the diagram and the RF exposure card in the gamma of a target
+
+Branch: `feature/diagram-gamma`. Wave 4, after phase 7. Section 4.7b.
+Amendment 2.
+
+**Task 7b.1.** Tier H. Items 1, 4 and 5 (Python, and the data format), with
+the tests and `TESTS.md`.
+
+**Task 7b.2.** Tier H. Items 1 to 3 (JavaScript), with node tests of the
+new pure functions.
+
+**Task 7b.3.** Tier X. The data format first, the comparison, the browser
+check with two targets of γ and -γ (the control, the sign of the gradient
+lanes, the same \|B1\|), and the review.
+
+Checks:
+
+- [ ] `rg 'PROTON_GAMMA|42\.576e6|\b42576\b|GRAD_HZ_PER_VALUE|gradHzPerValue' src tests/js`
+      finds nothing.
+- [ ] Without targets, the browser shows the values of the baseline.
 - [ ] `scripts/check` passes.
 
 ### Phase 8: the RF profile card on targets
 
-Branch: `feature/rf-profile-targets`. Wave 4, when one of phases 5 to 7 is
-merged. Section 4.8.
+Branch: `feature/rf-profile-targets`. Wave 4, after phase 2c, when one of
+phases 5 to 7 is merged. Section 4.8 (amendment 2).
 
 **Task 8.1.** Tier H. Items 1, 4 and 5 (Python), with the tests.
 
@@ -887,12 +1181,16 @@ merged. Section 4.8.
 the golden tests.
 
 **Task 8.3.** Tier X. The data format first, the browser check with two
-targets of different B0 and a pulse with a `ppm` offset, and the review.
+targets of different B0, a target with a negative gamma, and a pulse with a
+`ppm` offset, and the review.
 
 Checks:
 
-- [ ] No module reads `seq.system.B0`. The RF profile card does not read
-      `seq.system.gamma`.
+- [ ] No module reads `seq.system.B0`. The RF profile card reads
+      `seq.system.gamma` only without targets (amendment 2).
+- [ ] A `ppm` offset uses the signed γ (D18).
+- [ ] `rg 'abs\(.*gamma' src --glob '*.py'` finds only `units.py`
+      (amendment 2).
 - [ ] `scripts/check` passes.
 
 ### Phase 9: the check summary card
@@ -968,15 +1266,17 @@ Checks:
 | 1 | 1 | This plan is merged. |
 | 2 | 2 | Phase 1 merged. |
 | 3 | 3, 4 | Phase 2 merged. |
-| 3b | 2b | Amendment 1 merged. |
-| 4 | 5, 6, 7, then 8 | Phase 3 merged (phase 5). Phases 3, 4 and 2b merged (phases 6 and 7). Phases 3 and 4 merged (phase 8). At most three open. |
+| 3b | 2b, then 2c | Amendment 2 merged (phase 2b). Phase 2b merged (phase 2c). |
+| 4 | 5, 6, 7, then 7b and 8 | Phase 2c merged (all). Phase 7 merged (phase 7b). One of phases 5 to 7 merged (phase 8). At most three open. |
 | 5 | 9, 10 | Phase 3 merged (phase 9). Phases 3 and 5 merged (phase 10). |
 | 6 | 11 | Phases 5 to 10 merged. |
 | 7 | 12 | Phase 11 merged. |
 
 ## 7. Questions still open
 
-None. The user decided D1 to D11 on 2026-10-04. The user chose the
+None. The user decided D1 to D11 on 2026-10-04, and P33 to P39 for
+amendment 2. D16 to D19 follow from them, and the approval of amendment 2
+approves them. The user chose the
 alternative for D4 (remove `encode_tables`) and D10 (`0.2.0rc3.dev0` from
 phase 1), and the proposal for the others.
 
@@ -1002,3 +1302,12 @@ phase 1), and the proposal for the others.
   decided to replace P21 with the gamma of each target, in all cards, in
   `0.2.0rc3`. That is amendment 2 and design version 5, in a separate pull
   request. Until then, the text of amendment 1 keeps P21.
+- 2026-10-04, amendment 2: `pulseq-analysis` `v0.1.0rc5` gives no value with
+  a gamma, and `pulseq-checks` `v0.1.0rc5` converts with \|γ\| of the
+  target (and fixed a false pass of its gradient checks for a negative
+  gamma). The user decided P33 to P39: a negative gamma is valid, the pins
+  are `v0.1.0rc5`, each card uses the gamma of each target, a control for
+  the sequence-only cards, the spectrum by \|γ\| group, the PNS percent
+  from `meta["threshold"]`, and the refusal of a result file of
+  `v0.1.0rc4`. Phase 2b became the refactor to `v0.1.0rc5`. Phases 2c and
+  7b are new. Phases 5 to 8 and 11 changed.
