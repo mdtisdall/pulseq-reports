@@ -1,12 +1,13 @@
 // The Node half of the golden test of task 4.5 of docs/plans/diagram-lanes.md:
 // tests/test_pns_lanes_golden.py (the Python half) writes a JSON file with one
-// sequence's encoded diagram tables and its `pns` object (plan section 4.4);
-// this script decodes both, builds a `PnsLanes` model, asks `exactView` for the
-// whole file (forced to the "samples" kind by a bin count far larger than the
-// sample count, so every sample comes back, never a minimum/maximum
-// reduction), and writes the sample times, the sample totals and the decoded
-// pyramid (`model.levels`) as JSON, so the Python side can compare them
-// against its own pns_levels pipeline.
+// sequence's encoded diagram tables and one entry of the `file.pns` list of the diagram
+// data (docs/plans/pulseq-checks-implementation.md, section 4.7); this script decodes
+// both, builds a `PnsLanes` model (with `SeqLanes.GRAD_HZ_PER_VALUE`), asks `exactView`
+// for the whole file (forced to the "samples" kind by a bin count far larger than the
+// sample count, so every sample comes back, never a minimum/maximum reduction), and
+// writes the sample times, the totals as percent of the threshold of the entry
+// (`PnsLanes.percent`) and the decoded pyramid (`model.levels`) as JSON, so the Python
+// side can compare them against its own pns_levels pipeline.
 //
 // Not named `test_*.js`, so `node --test` (`scripts/check`) does not try to
 // run it on its own: it is a helper program, run once per sequence by
@@ -16,14 +17,15 @@
 // Usage: node golden_pns_lanes.js IN.json OUT.json
 //
 // IN.json: {"tables": <pulseq_analysis.series.encode_array of each table>,
-//           "pns": {"hardware", "example", "asc_file", "hw", "dtS",
-//                    "gradScale", "binSamples", "summary",
-//                    "levels": {"min": <pulseq_analysis.series.encode_array output>, "max": ...}},
-//           "numSamples": <int>}
+//           "pns": {"target", "color", "hardware", "asc_file", "hw", "dtS", "binSamples",
+//                    "threshold", "summary",
+//                    "levels": {"min": <pulseq_analysis.series.encode_array output>, "max": ...},
+//                    "runs": {"start": ..., "end": ...}}}
 //
 // OUT.json: {"numSamples": <int>, "onRaster": <bool>,
-//            "t": [<sample time, s>, ...], "total": [<PNS total, fraction>, ...],
+//            "t": [<sample time, s>, ...], "percent": [<PNS total, % of the threshold>, ...],
 //            "levels": [{"binSamples": <int>, "min": [...], "max": [...]}, ...]}
+// (the levels are in Hz/T, as float32, as the matrix has them)
 //
 // Any error (a bad argument, an unknown dtype, a decoded length that does not
 // match the declared length, or an error from PnsLanes itself, for example a
@@ -37,14 +39,14 @@ const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
 
-const PnsLanes = require(
-  path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets", "pns_lanes.js")
-);
+const assets = path.join(__dirname, "..", "..", "src", "pulseq_reports", "assets");
+const PnsLanes = require(path.join(assets, "pns_lanes.js"));
+const SeqLanes = require(path.join(assets, "seq_lanes.js"));
 
 // The typed array constructor for each dtype that `pulseq_analysis.series.encode_array`
 // can produce for the tables this script reads: the diagram tables themselves
 // (uint8/uint16/uint32 index columns, float64 offsets and values) and the
-// `pns.levels` min/max arrays (float32, plan section 4.4). Any other dtype
+// `pns.levels` min/max arrays (float32). Any other dtype
 // name is a bug in the caller, not a case this script should paper over.
 const TYPED_ARRAY_CTORS = {
   uint8: Uint8Array,
@@ -94,20 +96,17 @@ function main() {
 
   const pnsIn = input.pns;
   const pns = {
-    hardware: pnsIn.hardware,
-    example: pnsIn.example,
-    asc_file: pnsIn.asc_file,
     hw: pnsIn.hw,
     dtS: pnsIn.dtS,
-    gradScale: pnsIn.gradScale,
     binSamples: pnsIn.binSamples,
+    threshold: pnsIn.threshold,
     levels: {
       min: decodeTable("levels.min", pnsIn.levels.min),
       max: decodeTable("levels.max", pnsIn.levels.max),
     },
   };
 
-  const model = PnsLanes.decode(tables, pns);
+  const model = PnsLanes.decode(tables, pns, SeqLanes.GRAD_HZ_PER_VALUE);
 
   const numSamples = model.numSamples;
   // A range and a bin count that together force exactView's "samples" kind
@@ -138,7 +137,7 @@ function main() {
       numSamples,
       onRaster: model.onRaster,
       t: Array.from(view.t),
-      total: Array.from(view.total),
+      percent: Array.from(view.total, (v) => PnsLanes.percent(v, model.threshold)),
       levels,
     })
   );

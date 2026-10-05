@@ -4,28 +4,38 @@
 // global `PnsLanes`, `module.exports = PnsLanes` in Node.
 //
 // `decode` builds a model from the decoded diagram tables (as
-// `SeqLanes.decode` takes them) and the file entry's `pns` object (plan
-// section 4.4). `exactView` answers the exact PNS of a time range from that
-// model, using the block maps of the prototype,
+// `SeqLanes.decode` takes them), one entry of the diagram data's `file.pns` list
+// (docs/plans/pulseq-checks-implementation.md, section 4.7) and the factor from the
+// gradient values of the tables to Hz/m. A file with several targets has one model for
+// each target, on the same tables. `exactView` answers the exact PNS of a time range from
+// that model, using the block maps of the prototype,
 // `prototypes/pns_lanes/pns_lanes.js` and its README in the tag
 // `archive/pns-lanes-prototype` (README section "Block maps": a scan with a
 // checkpoint every `GROUP_BLOCKS` blocks), not a per-sample recursion over
 // the whole file. `levels` builds the coarser pyramid levels (plan section
-// 4.5) that `lanesFor` reads for a zoomed-out view. `laneMeta` and
-// `statusText` are the two pure helpers the diagram card script
-// (assets/cards/diagram.js, phase 4) uses to draw the lane and its part of
-// the status line: `laneMeta` builds the lane object without "segments",
-// and `statusText` turns one `lanesFor` result into the sentence that says
-// which data drew the render.
+// 4.5) that `lanesFor` reads for a zoomed-out view. `laneMeta`, `runMarks`, `overlay`,
+// `statusText` and `peaksText` are the pure helpers the diagram card script
+// (assets/cards/diagram.js) uses to draw the lane and its part of the status line:
+// `laneMeta` builds the lane object without its lines, `runMarks` the marks of the runs
+// at or above the limit, `overlay` the lane with one line for each target, `statusText`
+// turns one `lanesFor` result into the sentence that says which data drew the render,
+// and `peaksText` gives the peak of each target.
+//
+// Units: the model runs on gradient samples in Hz/m, so its totals are in Hz/T: the
+// stimulation as a fraction of the limit, times |gamma| (the unit of the PNS series of
+// pulseq-checks). The stored levels are in Hz/T too, and `pns.threshold` is the
+// stimulation limit of the target in Hz/T. Every value of the lane is a percent of the
+// limit, `percent(v, threshold)`, made from the Hz/T value in float64 when the lane is
+// made, so the stored bounds still bound the exact values (the division is monotone).
 //
 // The model (unchanged from the prototype, `prototypes/pns_lanes/pns_lanes.js`
 // and its README in the tag `archive/pns-lanes-prototype`): each block `i`
 // holds `n_i = round(duration_i / dt)` gradient-raster samples, at the local
 // times `(j + 0.5) * dt` from the block start. The gradient of one axis in a
 // block is the event's points at `grad_delay + grad_offset` (s, from the
-// block start), with values `grad_value / 1000 * gradScale` (T/m; `gradScale`
-// is the file's `pns.gradScale`, 1.0 for a proton sequence, plan section 4.4,
-// decision 14), linear between points, 0 before the first point and after
+// block start), with values `grad_value * gradHzPerValue` (Hz/m;
+// `SeqLanes.GRAD_HZ_PER_VALUE` changes the mT/m of the tables back into Hz/m), linear
+// between points, 0 before the first point and after
 // the last, 0 for a block with no event on the axis. This
 // agrees with pypulseq for a sequence that pypulseq accepts: pypulseq's own
 // `get_gradients` draws a line across the gap between two events (0 to the
@@ -58,13 +68,13 @@ const PnsLanes = (() => {
 
   // ---- Per-event data (the README's section "Data layout of the model" in
   // the tag `archive/pns-lanes-prototype`, the item for each unique gradient
-  // event): the samples g[j] (T/m) of one gradient event, for a
+  // event): the samples g[j] (Hz/m) of one gradient event, for a
   // block of `n` samples starting where the event's own delay/offset times
   // are measured from (the block start). Linear interpolation between the
-  // event's points (delay + offset[p], value[p] mT/m / 1000 * scale), 0
-  // before the first point and after the last. `scale` is the file's
-  // `pns.gradScale` (plan section 4.4, decision 14; 1.0 for a proton
-  // sequence), passed in as a plain argument (a local, not an object
+  // event's points (delay + offset[p], value[p] * scale), 0
+  // before the first point and after the last. `scale` is `gradHzPerValue`
+  // (the factor from the mT/m of the tables to Hz/m), passed in as a plain
+  // argument (a local, not an object
   // property read inside the loop). Sample times and point times are both
   // non-decreasing, so one sequential merge (not a binary search per
   // sample) computes all n samples in O(n + point count). Reads only
@@ -87,12 +97,12 @@ const PnsLanes = (() => {
       const t0 = delay + offset[offAt + p];
       if (t < t0) { g[j] = 0; continue; }
       if (p + 1 >= nPts) {
-        g[j] = t <= t0 ? value[valAt + p] / 1000 * scale : 0;
+        g[j] = t <= t0 ? value[valAt + p] * scale : 0;
         continue;
       }
       const t1 = delay + offset[offAt + p + 1];
-      const v0 = value[valAt + p] / 1000 * scale;
-      const v1 = value[valAt + p + 1] / 1000 * scale;
+      const v0 = value[valAt + p] * scale;
+      const v1 = value[valAt + p + 1] * scale;
       // The `while` above stops with t0 <= t < t1, so t1 > t0.
       g[j] = v0 + (v1 - v0) / (t1 - t0) * (t - t0);
     }
@@ -137,7 +147,7 @@ const PnsLanes = (() => {
     const cache = model._eventCache;
     let entry = cache.get(key);
     if (entry !== undefined) return entry;
-    const g = _eventSamples(model.tables, model.dt, eventIdx, n, model.gradScale);
+    const g = _eventSamples(model.tables, model.dt, eventIdx, n, model.gradHzPerValue);
     const h = _zeroStateResponse(model, axis, g, n);
     entry = { g, h };
     cache.set(key, entry);
@@ -207,16 +217,22 @@ const PnsLanes = (() => {
   // Only duration_index, durations, gx, gy, gz, grad_delay, grad_n,
   // grad_offset_at, grad_at, grad_offset and grad_value are read; an unknown
   // or missing table is not refused here (`SeqLanes.decode` owns that
-  // rule). `pns`: the file entry's `pns` object (plan section 4.4), with
-  // its levels already decoded by the caller: {dtS, binSamples, hw: {x, y,
+  // rule). `pns`: one entry of the diagram data's `file.pns`, with
+  // its levels already decoded by the caller: {dtS, binSamples, threshold, hw: {x, y,
   // z: {tau1, tau2, tau3, a1, a2, a3, stim_limit, g_scale}}, levels: {min,
-  // max}}. `pns.gradScale` (plan section 4.4, decision 14) defaults to 1.0
-  // when the key is missing; every gradient sample is multiplied by it
-  // (`_eventSamples`) before the SAFE model, so a non-proton sequence's PNS
-  // agrees with Python's.
-  function decode(tables, pns) {
+  // max}}. The levels and `threshold` are in Hz/T. `gradHzPerValue` is the factor from
+  // the gradient values of the tables to Hz/m (`SeqLanes.GRAD_HZ_PER_VALUE`): every
+  // gradient sample is multiplied by it (`_eventSamples`) before the SAFE model, which
+  // then gives totals in Hz/T, as pulseq-analysis does. Throws when `threshold` is not
+  // a number above 0, or `gradHzPerValue` is not a finite number.
+  function decode(tables, pns, gradHzPerValue) {
     const dt = pns.dtS;
-    const gradScale = pns.gradScale === undefined ? 1.0 : pns.gradScale;
+    if (!(pns.threshold > 0) || !Number.isFinite(pns.threshold)) {
+      throw new Error(`PnsLanes.decode: threshold must be a number above 0, not ${pns.threshold}`);
+    }
+    if (!Number.isFinite(gradHzPerValue)) {
+      throw new Error(`PnsLanes.decode: gradHzPerValue must be a number, not ${gradHzPerValue}`);
+    }
     const numBlocks = tables.duration_index.length;
     const numGradEvents = tables.grad_n.length;
 
@@ -249,7 +265,8 @@ const PnsLanes = (() => {
     const model = {
       numBlocks,
       dt,
-      gradScale,
+      gradHzPerValue,
+      threshold: pns.threshold,
       groupBlocks: GROUP_BLOCKS,
       numGradEvents,
       alpha, c, aCoef, axisFactor, powCache,
@@ -522,15 +539,25 @@ const PnsLanes = (() => {
 
   // ---- lanesFor ----
 
-  // The PNS lane for the view `viewMs` (ms) with `bins` plot columns
+  // `v` (Hz/T) as a percent of `threshold` (Hz/T), the stimulation limit:
+  // `100 * v / threshold`, as pulseq-checks documents it. A division by the same positive
+  // number keeps the order of two values, so a stored bound of the totals is still a bound
+  // of the percents.
+  function percent(v, threshold) {
+    return 100 * v / threshold;
+  }
+
+  // The PNS lane of one model for the view `viewMs` (ms) with `bins` plot columns
   // (plan section 4.5, item 1). `meta` is the lane object
   // without "segments" (id, title, unit, color, kind, domain, ticks,
-  // tick_labels, ...), built by the card script (phase 4). Values in the
-  // lane are percent (100 * fraction); times are ms. Each result also holds
-  // `onRaster` (`model.onRaster`), which `statusText` reads.
+  // tick_labels, ...), built by the card script (`laneMeta`). Values in the
+  // lane are percent of the model's `threshold` (`percent`); times are ms. Each result
+  // also holds `onRaster` (`model.onRaster`), which `statusText` reads. `overlay` puts
+  // the results of several models in one lane.
   function lanesFor(model, meta, viewMs, bins) {
     const t0 = viewMs[0] / 1000, t1 = viewMs[1] / 1000;
     const span = t1 - t0;
+    const threshold = model.threshold;
 
     if (model.numSamples === 0) {
       // An empty file: no exact data and no stored level either.
@@ -545,16 +572,16 @@ const PnsLanes = (() => {
       if (view.kind === "samples") {
         const segments = view.t.length === 0
           ? []
-          : [Array.from(view.t, (tSec, idx) => [tSec * 1000, view.total[idx] * 100])];
+          : [Array.from(view.t, (tSec, idx) => [tSec * 1000, percent(view.total[idx], threshold)])];
         return {
           lane: { ...meta, segments }, exact: true, binMs: null, gap: false,
           onRaster: model.onRaster,
         };
       }
-      // The lane's values are percent, so `binAt` scales them by 100.
       const segments = ChartMath.minMaxSegments(view.edges, bins, k => {
         const hi = view.max[k];
-        return hi === -Infinity ? null : [view.min[k] * 100, hi * 100];
+        return hi === -Infinity
+          ? null : [percent(view.min[k], threshold), percent(hi, threshold)];
       });
       return {
         lane: { ...meta, segments, minmax: true }, exact: true, binMs: null, gap: false,
@@ -596,7 +623,7 @@ const PnsLanes = (() => {
         if (level.min[m] < mn) mn = level.min[m];
         if (level.max[m] > mx) mx = level.max[m];
       }
-      return mx === -Infinity ? null : [mn * 100, mx * 100];
+      return mx === -Infinity ? null : [percent(mn, threshold), percent(mx, threshold)];
     });
 
     return {
@@ -610,19 +637,21 @@ const PnsLanes = (() => {
 
   // ---- laneMeta (the diagram card's lane_chart.js hook, plan section 4.5) ----
 
-  // The PNS lane object without "segments" (the `lane_meta` form of
+  // The PNS lane object without its lines (the `lane_meta` form of
   // `diagram_data.py`, so `laneChart` draws it like the other lanes):
   // `id`, `title`, `unit`, `color` (a token of `report.css`; "ink-2", as the
   // old PNS card's chart used), `kind`, `domain`, `ticks`, `tick_labels`,
   // `empty` (always false: this lane is built only for a file that has PNS
   // data) and `fill` (the tooltip's fallback value outside every segment, as
-  // the gradient lanes have). `summary` is the file entry's `pns.summary`
-  // (plan section 4.4): `peak` is a fraction of the limit (1 = 100%), so the
-  // domain's `100 * summary.peak` is the peak in percent, and the domain is
-  // never narrower than [0, 110] (`Math.max(100, ...)`), as the PNS card's
-  // own chart had it.
-  function laneMeta(summary) {
-    const peakPercent = 100 * summary.peak;
+  // the gradient lanes have). `entries` is the diagram data's `file.pns` list, with
+  // `summary.peak` and `threshold` (Hz/T) in each. There is one lane and one domain for
+  // all the targets: the domain is never narrower than [0, 110] (`Math.max(100, ...)`),
+  // as the PNS card's own chart had it, and it is 1.1 times the largest peak percent of
+  // the targets when that is above 100.
+  function laneMeta(entries) {
+    const peakPercent = Math.max(
+      ...entries.map(entry => percent(entry.summary.peak, entry.threshold))
+    );
     return {
       id: "pns",
       title: "PNS",
@@ -635,6 +664,50 @@ const PnsLanes = (() => {
       empty: false,
       fill: 0.0,
     };
+  }
+
+  // The marks of the runs of one target for the `marks` of a lane: one {lo, hi, color} in
+  // ms for each run of `runs` ({start, end}, arrays of times in s: the time of the first
+  // and of the last sample of the run, as the series `pns_above_0` has them). `color` is the
+  // color token of the target. A run of one sample has lo == hi; the chart widens it.
+  function runMarks(runs, color) {
+    const marks = [];
+    for (let i = 0; i < runs.start.length; i++) {
+      marks.push({ lo: runs.start[i] * 1000, hi: runs.end[i] * 1000, color });
+    }
+    return marks;
+  }
+
+  // The lane with one line for each target: `meta` (`laneMeta`), `entries` (the
+  // `file.pns` list, for the `target` name and the `color` of each line), `results` (the
+  // `lanesFor` result of the model of each entry, same view and same bins, in the order of
+  // `entries`) and `marks` (the runs of every target, `runMarks`, or none). The lane has
+  // `series` ({label: the target name, color, segments}, one for each entry, in order), so
+  // the tooltip has one row for each target, and `minmax` when the results are
+  // minimum/maximum bins. All the models are on the same tables, so their results are all
+  // exact values or all bins.
+  function overlay(meta, entries, results, marks) {
+    const lane = {
+      ...meta,
+      series: entries.map((entry, k) => ({
+        label: entry.target,
+        color: entry.color,
+        segments: results[k].lane.segments,
+      })),
+      marks,
+    };
+    if (results.some(result => result.lane.minmax)) lane.minmax = true;
+    return lane;
+  }
+
+  // The peak of each target for the status line: "PNS peak: <name> <percent> %; ..." with the
+  // peak in percent of the threshold of the target (`entry.summary.peak`, `entry.threshold`),
+  // to 1 decimal.
+  function peaksText(entries) {
+    const parts = entries.map(
+      entry => `${entry.target} ${percent(entry.summary.peak, entry.threshold).toFixed(1)} %`
+    );
+    return `PNS peak: ${parts.join("; ")}.`;
   }
 
   // The PNS part of the diagram's status line (plan section 4.5, item 2),
@@ -665,8 +738,12 @@ const PnsLanes = (() => {
     decode,
     levels,
     exactView,
+    percent,
     lanesFor,
     laneMeta,
+    runMarks,
+    overlay,
+    peaksText,
     statusText,
     _internal: {
       eventEntry: _eventEntry,

@@ -221,8 +221,10 @@ def _read_profiles(paths: Sequence[Path]) -> list[TargetProfile]:
 
 def _read_matrix(path: Path) -> ResultMatrix:
     try:
-        return ResultMatrix.from_json(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:  # from_json and the JSON and UTF-8 errors
+        matrix = ResultMatrix.from_json(path.read_text(encoding="utf-8"))
+        registry.check_result_units(matrix)
+        return matrix
+    except (OSError, ValueError) as error:  # from_json, check_result_units, JSON and UTF-8
         raise _CliError(f"the result file {str(path)!r} could not be used: {error}") from error
 
 

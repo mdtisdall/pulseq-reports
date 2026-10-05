@@ -4,8 +4,13 @@
 // are no lane sets and no point budget: cards/diagram.py sends the compressed block and
 // event tables of the sequence (diagram_data.diagram_tables), and this script decodes
 // them (base64 -> gzip -> typed arrays -> SeqLanes.decode) into one model, once, at
-// start. A "pns" key in the card's file entry also gets its two stored-level tables
-// decoded and a PnsLanes.decode model built from them, next to the SeqLanes model.
+// start. The "pns" key of the card's file entry is a list with one entry for each target
+// that has a PNS result (docs/plans/pulseq-checks-implementation.md, section 4.7): each
+// entry gets its stored-level tables and its run tables decoded and a PnsLanes.decode
+// model built from them (with SeqLanes.GRAD_HZ_PER_VALUE, the factor from the gradient
+// values of the tables to Hz/m), next to the SeqLanes model. The PNS lane is one lane
+// for all the targets, with one line for each (PnsLanes.overlay) in the color of the
+// target, and the runs of every target at or above the limit as marks in its color.
 //
 // The chart's `lanesFor` hook (lane_chart.js) asks SeqLanes.lanesFor for the six
 // waveform lanes of the current view on every render (the exact waveform when the view
@@ -18,11 +23,12 @@
 // sequence with very many gradient events, or no memory) removes only the |G| lane
 // instead of stopping the whole card from drawing, and is not retried on a later
 // render. And, when the PNS group is visible and the card has PNS data, appends the PNS
-// lane from PnsLanes.lanesFor after that. A hidden PNS group costs no PNS computation:
-// `lanesFor` never calls PnsLanes.lanesFor for it. The status line under the chart
-// (`{card_id}-mode`) says which data drew the waveform lanes, then, when the |G| lane
-// failed to build, why it is not drawn, then, when the PNS lane is drawn,
-// PnsLanes.statusText's sentence for it.
+// lane, made from PnsLanes.lanesFor of each target's model, after that. A hidden PNS group
+// costs no PNS computation: `lanesFor` never calls PnsLanes.lanesFor for it. The status
+// line under the chart (`{card_id}-mode`) says which data drew the waveform lanes, then,
+// when the |G| lane failed to build, why it is not drawn, then, when the PNS lane is
+// drawn, PnsLanes.statusText's sentence for it and the peak of each target
+// (PnsLanes.peaksText).
 //
 // The tables can be large (up to 10^7 blocks), so while they decode the status line
 // shows "Loading..." and the window buttons are disabled. Table decoding
@@ -47,9 +53,9 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // The version of the card's own data (cards/diagram.py `_diagram_data`). A page with
   // data of a later version (for example a rotation table) fails loudly instead of
   // drawing wrong waveforms with an old script.
-  if (data.format !== 2) {
+  if (data.format !== 3) {
     throw new Error(
-      `diagram card: unsupported data format ${data.format} (only format 2 is known)`
+      `diagram card: unsupported data format ${data.format} (only format 3 is known)`
     );
   }
   // The version of the tables that `SeqLanes.decode` reads: not the card's data version.
@@ -59,26 +65,31 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     for (const button of buttons) button.disabled = disabled;
   }
 
-  // `pnsResult` is the return of `PnsLanes.lanesFor` when the PNS lane was drawn this
-  // render, else null (the PNS group is hidden, or the card has no PNS data):
-  // then the status line is the SeqLanes sentence alone. `gError` is `current.g.error`
+  // `pnsResults` is the list of the returns of `PnsLanes.lanesFor` (one for each target)
+  // when the PNS lane was drawn this render, else null (the PNS group is hidden, or the
+  // card has no PNS data): then the status line is the SeqLanes sentence alone. All the
+  // models are on the same tables, so the first result tells which data drew the lane. `gError` is `current.g.error`
   // when the Gradients group is visible and `buildGLane` (below) caught a `GLanes.decode`
   // failure, else null: then the sentence "The |G| lane is not
   // drawn: <message>" (decision 13 of docs/plans/review-bugs.md) is added, so the
   // card explains why the chart has one fewer lane instead of leaving it unsaid.
-  function showStatus(exact, bins, pnsResult, gError) {
+  function showStatus(exact, bins, pnsResults, gError) {
     let text = exact
       ? "Exact waveform."
       : `Minimum and maximum in each of ${bins} time bins. Zoom in to see the exact waveform.`;
     if (gError) text += ` The |G| lane is not drawn: ${gError.message || String(gError)}`;
-    if (pnsResult) text += ` ${PnsLanes.statusText(pnsResult)}`;
+    if (pnsResults) {
+      text += ` ${PnsLanes.statusText(pnsResults[0])} ${PnsLanes.peaksText(current.pns.entries)}`;
+    }
     statusEl.textContent = text;
   }
 
   // The decoded model: `{seq, pns, g, view}`, `seq` the SeqLanes model, `pns` either
-  // null (the file entry has no "pns" key) or `{model, laneMeta}`, the PnsLanes model
-  // and its lane object without segments (PnsLanes.laneMeta(file.pns.summary), built
-  // once here so a render never rebuilds it), `g` the |G| lane's own `{model, laneMeta,
+  // null (the file entry has no "pns" key) or `{entries, models, laneMeta, marks}`: the
+  // `file.pns` list, the PnsLanes model of each entry, the lane object without lines
+  // (PnsLanes.laneMeta(file.pns)) and the marks of the runs of every entry
+  // (PnsLanes.runMarks), built once here so a render never rebuilds them, `g` the |G|
+  // lane's own `{model, laneMeta,
   // error}` (`buildGLane`, defined near the chart below), built lazily by `lanesFor`
   // the first time a render needs it: `g` starts null here, unlike `pns`, because
   // GLanes.decode needs no data beyond the diagram tables already decoded below, so
@@ -87,10 +98,10 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // pay for. Once built, `g` stays in the model even when `GLanes.decode` failed
   // (`model` and `laneMeta` null, `error` the caught exception), so a later render
   // does not try again: the |G| lane is left out, and the status line says why.
-  // Decodes every one of the diagram tables, and, when the file entry has PNS data,
-  // its two stored-level tables, all in parallel; the diagram tables are reused for
-  // both SeqLanes.decode and PnsLanes.decode (a PNS model reads grad_*/duration_* out
-  // of the same tables, module doc of pns_lanes.js).
+  // Decodes every one of the diagram tables, and, when the file entry has PNS data, the
+  // two stored-level tables and the two run tables of each entry, all in parallel; the
+  // diagram tables are reused for SeqLanes.decode and for every PnsLanes.decode (a PNS
+  // model reads grad_*/duration_* out of the same tables, module doc of pns_lanes.js).
   //
   // `view` is `SeqLanes.sequenceView(seqModel)` (docs/plans/rf-profiles.md, section
   // 4.1): built once here because it is exactly the payload the `sequence` message
@@ -101,25 +112,33 @@ PulseqReport.registerCard("diagram", async (section, data) => {
     const tablesPromise = Promise.all(
       names.map(name => PulseqReport.decodeTable(file.tables[name]))
     );
-    const pnsLevelsPromise = file.pns
-      ? Promise.all([
-        PulseqReport.decodeTable(file.pns.levels.min),
-        PulseqReport.decodeTable(file.pns.levels.max),
-      ])
-      : null;
-    const [arrays, pnsLevels] = await Promise.all([tablesPromise, pnsLevelsPromise]);
+    const pnsEntries = file.pns || [];
+    const pnsTablesPromise = Promise.all(pnsEntries.map(entry => Promise.all([
+      PulseqReport.decodeTable(entry.levels.min),
+      PulseqReport.decodeTable(entry.levels.max),
+      PulseqReport.decodeTable(entry.runs.start),
+      PulseqReport.decodeTable(entry.runs.end),
+    ])));
+    const [arrays, pnsTables] = await Promise.all([tablesPromise, pnsTablesPromise]);
     const tables = {};
     names.forEach((name, i) => {
       tables[name] = arrays[i];
     });
     const seqModel = SeqLanes.decode(TABLE_FORMAT, tables, file.lanes);
     let pns = null;
-    if (file.pns) {
-      const [levelMin, levelMax] = pnsLevels;
-      const pnsData = { ...file.pns, levels: { min: levelMin, max: levelMax } };
+    if (pnsEntries.length > 0) {
       pns = {
-        model: PnsLanes.decode(tables, pnsData),
-        laneMeta: PnsLanes.laneMeta(file.pns.summary),
+        entries: pnsEntries,
+        models: pnsEntries.map((entry, k) => {
+          const [levelMin, levelMax] = pnsTables[k];
+          const pnsData = { ...entry, levels: { min: levelMin, max: levelMax } };
+          return PnsLanes.decode(tables, pnsData, SeqLanes.GRAD_HZ_PER_VALUE);
+        }),
+        laneMeta: PnsLanes.laneMeta(pnsEntries),
+        marks: pnsEntries.flatMap((entry, k) => {
+          const [, , start, end] = pnsTables[k];
+          return PnsLanes.runMarks({ start, end }, entry.color);
+        }),
       };
     }
     return { seq: seqModel, pns, g: null, view: SeqLanes.sequenceView(seqModel) };
@@ -144,7 +163,7 @@ PulseqReport.registerCard("diagram", async (section, data) => {
   // when the file entry has PNS data. All visible at start, so the PNS group (when
   // present) is on by default. `groups` never changes after `laneChart` is called
   // (lane_chart.js), matching that the PNS data is fixed once the card is built.
-  const hasPns = Boolean(file.pns);
+  const hasPns = Array.isArray(file.pns) && file.pns.length > 0;
   const groups = [
     { id: "rf", label: "RF", laneIds: ["rf_mag", "rf_phase"], visible: true },
     { id: "adc", label: "ADC", laneIds: ["adc"], visible: true },
@@ -250,12 +269,13 @@ PulseqReport.registerCard("diagram", async (section, data) => {
           );
         }
       }
-      let pnsResult = null;
+      let pnsResults = null;
       if (current.pns && visibleGroupIds.has("pns")) {
-        pnsResult = PnsLanes.lanesFor(current.pns.model, current.pns.laneMeta, view, bins);
-        lanes = lanes.concat([pnsResult.lane]);
+        const {entries, models, laneMeta, marks} = current.pns;
+        pnsResults = models.map(model => PnsLanes.lanesFor(model, laneMeta, view, bins));
+        lanes = lanes.concat([PnsLanes.overlay(laneMeta, entries, pnsResults, marks)]);
       }
-      showStatus(r.exact, bins, pnsResult, gError);
+      showStatus(r.exact, bins, pnsResults, gError);
       return lanes;
     },
     xDomain: windows[0].view_ms,
