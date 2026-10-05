@@ -339,7 +339,11 @@ def _run(argv: Sequence[str]) -> int:
             raise _CliError(str(error)) from error
         pns_lane_on = values.get("pns_lane", options.pns_lane.default)
         wants_pns = any(s.name == "pns" or (s.name == "diagram" and pns_lane_on) for s in selected)
-        run_options["analyses"] = ("pns.safe.levels",) if wants_pns else ()
+        wants_spectrum = any(s.name == "gradient-spectrum" for s in selected)
+        run_options["analyses"] = (
+            *(("gradient.spectrum",) if wants_spectrum else ()),
+            *(("pns.safe.levels",) if wants_pns else ()),
+        )
 
         outputs = _output_paths(args.files, args.output)
         return _write_pages(args.files, outputs, cards, skip, values, profiles, matrix, run_options)

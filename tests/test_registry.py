@@ -282,7 +282,7 @@ _BUILDERS = {
     "blocks": blocks_card,
 }
 # The keywords that the command line does not set (section 4.4, item 3 of the plan).
-_NOT_OPTIONS = {"card_id", "windows", "targets"}
+_NOT_OPTIONS = {"card_id", "windows", "targets", "check_results"}
 
 
 def test_the_options_of_each_spec_are_the_keywords_of_its_builder():
@@ -331,7 +331,7 @@ def test_a_report_without_targets_has_no_targets_and_no_check_results(seen):
 
 # The library cards that use the targets: their cards change with targets. A phase that makes
 # a card use the targets adds its name.
-_USE_TARGETS = {"gradient-limits"}
+_USE_TARGETS = {"gradient-limits", "gradient-spectrum"}
 
 
 def test_targets_do_not_change_the_cards_that_are_built(plugin, make_profile):
