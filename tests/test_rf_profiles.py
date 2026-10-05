@@ -27,6 +27,9 @@ from rf_sequences import (
     _sinc,
     _trap,
     _turning_gradients,
+    combined_of,
+    pulse_of,
+    pulses_of,
 )
 from synthetic import SYSTEM as _SYNTHETIC_SYSTEM
 
@@ -104,7 +107,7 @@ def test_gradient_kind_none_for_a_block_pulse():
     "profile" view is df around the frequency offset."""
     seq = _new()
     seq.add_block(_hard("excitation", freq_offset=150.0))
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.gradient_kind == "none"
     assert pulse.select_kind is None and pulse.direction is None
     assert pulse.select_gradient_hz_per_m is None and pulse.slice_centre_m is None
@@ -124,7 +127,7 @@ def test_gradient_kind_one_on_a_logical_axis():
     rf, gz, _ = _sinc("excitation")
     seq = _new()
     seq.add_block(rf, gz)
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.gradient_kind == "one" and pulse.select_kind == "z"
     np.testing.assert_array_equal(pulse.direction, [0.0, 0.0, 1.0])
     assert pulse.constant_gradient is True
@@ -145,7 +148,7 @@ def test_gradient_kind_one_oblique_on_two_axes():
     angle = math.radians(30)
     seq = _new()
     seq.add_block(rf, _on_axis(gz, "x", math.cos(angle)), _on_axis(gz, "y", math.sin(angle)))
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.gradient_kind == "one" and pulse.select_kind == "select"
     np.testing.assert_allclose(pulse.direction, [math.cos(angle), math.sin(angle), 0], atol=1e-12)
     assert pulse.select_gradient_hz_per_m == pytest.approx(gz.amplitude, rel=1e-12)
@@ -158,7 +161,7 @@ def test_gradient_kind_changing_for_a_turning_gradient():
     gx, gy = _turning_gradients()
     seq = _new()
     seq.add_block(_hard("excitation", duration=0.8e-3), gx, gy)
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.gradient_kind == "changing"
     assert pulse.select_kind is None and pulse.direction is None
     assert rp.view_spec(pulse, "profile") == (None, rp.DIRECTION_CHANGES)
@@ -203,7 +206,7 @@ def test_oversampled_gradient_that_ends_before_the_rf_is_not_a_gradient_of_the_p
     seq = pp.Sequence(_SYNTHETIC_SYSTEM)
     seq.add_block(rf, g_os)
     seq.add_block(adc)
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.gradient_kind == "none"
     np.testing.assert_array_equal(pulse.grad_hz_per_m, 0.0)
     assert pulse.key[2] == (0, 0, 0)
@@ -229,7 +232,7 @@ def test_interval_values_of_a_trapezoid_equal_the_hand_means():
     )
     seq = _new(system=system)
     seq.add_block(rf, g)
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     dt = pulse.dt_s
     assert dt == pytest.approx(3e-6, rel=1e-12)
     values = pulse.grad_hz_per_m[:, 2]
@@ -284,7 +287,7 @@ def _moved_and_plain_difference(raster, centre_m):
     moved.add_block(rf, gz)
     rf.freq_offset = 0.0
     plain.add_block(rf, gz)
-    p_moved, p_plain = rp.block_pulse(moved, 0), rp.block_pulse(plain, 0)
+    p_moved, p_plain = pulse_of(moved, 0), pulse_of(plain, 0)
     assert p_moved.freq_offset_hz == gz.amplitude * centre_m
     assert p_moved.slice_centre_m == pytest.approx(centre_m, rel=1e-12)
     spec, _ = rp.view_spec(p_moved, "profile", n=81)
@@ -320,24 +323,23 @@ def test_as_played_profile_is_the_profile_moved_by_f_over_g():
     assert 3 <= coarse / fine <= 5
 
 
-def test_freq_ppm_adds_to_the_total_frequency_offset():
-    """The total offsets are freq_offset + freq_ppm * 1e-6 * |gamma| * B0 (and the same
-    for the phase), and the RF as played is the baseband times exp(1j * (phase + 2*pi*f
-    * t)) with t at the centre of each hold interval. Relative 1e-12: the same formula,
-    so only float rounding."""
-    system = pp.Opts(rf_raster_time=5e-6, rf_dead_time=100e-6, B0=2.89)
-    rf = _hard(
-        "saturation",
-        system=system,
-        freq_offset=100.0,
-        freq_ppm=-3.45,
-        phase_offset=0.3,
-        phase_ppm=0.7,
-    )
-    seq = _new(system=system)
+@pytest.mark.parametrize(
+    ("b0", "gamma"),
+    [(1.5, 42.576e6), (3.0, 42.576e6), (3.0, -42.576e6), (2.89, -11.777e6)],
+    ids=["1.5T", "3T", "3T_negative_gamma", "2.89T_xenon"],
+)
+def test_freq_ppm_adds_to_the_total_frequency_offset(b0, gamma):
+    """The total offsets are freq_offset + freq_ppm * 1e-6 * gamma * B0 (and the same for
+    the phase) with the B0 and the signed gamma of the arguments, not those of the
+    system of the sequence (as pypulseq changes a ppm offset), and the RF as played is the
+    baseband times exp(1j * (phase + 2*pi*f * t)) with t at the centre of each hold
+    interval. Relative 1e-12: the same formula, so only float rounding. The peak B1 uses
+    the magnitude of the gamma. A negative gamma flips the sign of the ppm part only."""
+    rf = _hard("saturation", freq_offset=100.0, freq_ppm=-3.45, phase_offset=0.3, phase_ppm=0.7)
+    seq = _new()
     seq.add_block(rf)
-    pulse = rp.block_pulse(seq, 0)
-    ppm_hz = 1e-6 * abs(system.gamma) * 2.89
+    pulse = rp.block_pulse(seq, 0, b0, gamma)
+    ppm_hz = 1e-6 * gamma * b0
     f = 100.0 - 3.45 * ppm_hz
     assert pulse.freq_offset_hz == pytest.approx(f, rel=1e-12)
     n = pulse.signal_hz.size
@@ -345,6 +347,50 @@ def test_freq_ppm_adds_to_the_total_frequency_offset():
     amplitude = (math.pi / 2) / (2 * math.pi * 0.5e-3)
     expected = amplitude * np.exp(1j * (0.3 + 0.7 * ppm_hz + 2 * np.pi * f * t))
     np.testing.assert_allclose(pulse.signal_hz, expected, rtol=1e-12, atol=0)
+    assert pulse.peak_b1_ut == pytest.approx(amplitude / abs(gamma) * 1e6, rel=1e-12)
+
+    positive = rp.block_pulse(seq, 0, b0, abs(gamma))
+    negative = rp.block_pulse(seq, 0, b0, -abs(gamma))
+    assert positive.freq_offset_hz - 100.0 == pytest.approx(
+        -(negative.freq_offset_hz - 100.0), rel=1e-12
+    )
+    assert positive.peak_b1_ut == negative.peak_b1_ut
+
+
+def test_a_ppm_offset_needs_b0_and_the_other_pulses_do_not():
+    """`block_pulse` and `combined_profile` raise ValueError for a pulse with a ppm offset
+    when `b0_t` is None. A pulse with an offset in Hz only gives the same pulse for any B0,
+    and `pulse_list` (which needs no B0) lists the ppm pulse."""
+    ppm = _new()
+    ppm.add_block(_hard("saturation", freq_ppm=-3.45))
+    with pytest.raises(ValueError, match="b0_t"):
+        rp.block_pulse(ppm, 0, None, SYSTEM.gamma)
+    assert len(rp.pulse_list(ppm, SYSTEM.gamma)) == 1
+
+    def spin_echo(**offsets):
+        rf_ex, gz_ex, _ = _sinc("excitation", **offsets)
+        rf_ref, gz_ref, _ = _sinc("refocusing", math.pi, phase_offset=math.pi / 2)
+        gz_ref.channel = "y"
+        gx, adc, _ = _readout()
+        seq = _new()
+        seq.add_block(rf_ex, gz_ex)
+        seq.add_block(rf_ref, gz_ref)
+        seq.add_block(gx, adc)
+        return seq
+
+    seq = spin_echo(freq_offset=300.0)
+    assert rp.combined_profile(seq, rp.period(seq, 0), None, SYSTEM.gamma).reason is None
+    seq = spin_echo(freq_ppm=-3.45)
+    with pytest.raises(ValueError, match="b0_t"):
+        rp.combined_profile(seq, rp.period(seq, 0), None, SYSTEM.gamma)
+
+    plain = _new()
+    plain.add_block(_hard("excitation", freq_offset=200.0))
+    assert rp.block_pulse(plain, 0, None, SYSTEM.gamma).freq_offset_hz == 200.0
+    np.testing.assert_array_equal(
+        rp.block_pulse(plain, 0, None, SYSTEM.gamma).signal_hz,
+        rp.block_pulse(plain, 0, 3.0, SYSTEM.gamma).signal_hz,
+    )
 
 
 # ---- 4. The pulse key ----
@@ -384,7 +430,7 @@ def test_pulse_key_ignores_gradients_outside_the_rf(after_rf, tmp_path):
     read = pp.Sequence(SYSTEM)
     read.read(str(path))
     for s in (seq, read):
-        pulses = [rp.block_pulse(s, i) for i in range(0, 10, 2)]
+        pulses = [pulse_of(s, i) for i in range(0, 10, 2)]
         assert len({p.key for p in pulses}) == 1
         assert all(p.gradient_kind == "none" for p in pulses)
 
@@ -394,14 +440,14 @@ def test_pulse_key_ignores_the_phase_offset():
     have one key, and one distinct pulse in each period."""
     seq = _gre(4, rf_spoiling=True)
     assert len({seq.block_events[b][1] for b in (1, 5, 9, 13)}) == 4  # four RF events
-    keys = {rp.block_pulse(seq, i).key for i in (0, 4, 8, 12)}
+    keys = {pulse_of(seq, i).key for i in (0, 4, 8, 12)}
     assert len(keys) == 1
 
 
 def test_pulse_key_differs_for_different_frequency_offsets():
     """Blocks with different frequency offsets (three slices) have different keys."""
     seq = _gre(1, slices=(-5e-3, 0.0, 5e-3))
-    keys = [rp.block_pulse(seq, i).key for i in (0, 4, 8)]
+    keys = [pulse_of(seq, i).key for i in (0, 4, 8)]
     assert len(set(keys)) == 3
 
 
@@ -415,7 +461,7 @@ def test_echo_pathway_of_a_gre():
     seq = _gre(2)
     rf, gz, _ = _sinc("excitation")
     _, _, to_centre = _readout()
-    pulse = rp.block_pulse(seq, 4)
+    pulse = pulse_of(seq, 4)
     assert pulse.echo_reason is None
     echo = pulse.echo
     assert echo.adc_block == 6 and echo.sign == 1
@@ -433,7 +479,7 @@ def test_echo_pathway_of_a_spin_echo_with_crushers():
     seq = _spin_echo("y")
     rf, gz, _ = _sinc("excitation")
     _, _, to_centre = _readout()
-    echo = rp.block_pulse(seq, 0).echo
+    echo = pulse_of(seq, 0).echo
     assert echo.adc_block == 5 and echo.sign == -1
     half = _half_moment(rf, gz)
     # With the sign -1, the echo phase is -(dephasing) + moment: the moment must be +half.
@@ -447,19 +493,19 @@ def test_echo_pathway_without_an_adc():
     file, and a walk longer than `max_blocks`: no pathway, reason NO_ADC. The pathway of
     the last excitation before the ADC is found."""
     seq = _gre(1, dummies=1)
-    dummy = rp.block_pulse(seq, 0)
+    dummy = pulse_of(seq, 0)
     assert dummy.echo is None and dummy.echo_reason == rp.NO_ADC
-    assert rp.block_pulse(seq, 4).echo.adc_block == 6
-    assert rp.block_pulse(seq, 4, max_blocks=1).echo_reason == rp.NO_ADC
+    assert pulse_of(seq, 4).echo.adc_block == 6
+    assert pulse_of(seq, 4, max_blocks=1).echo_reason == rp.NO_ADC
 
     end = _new()
     rf, gz, gzr = _sinc("excitation")
     end.add_block(rf, gz)
     end.add_block(gzr)
-    last = rp.block_pulse(end, 0)
+    last = pulse_of(end, 0)
     assert last.echo is None and last.echo_reason == rp.NO_ADC
     # Only excitation pulses get a pathway.
-    refocusing = rp.block_pulse(_spin_echo("y"), 3)
+    refocusing = pulse_of(_spin_echo("y"), 3)
     assert refocusing.echo is None and refocusing.echo_reason is None
 
 
@@ -479,7 +525,7 @@ def test_echo_pathway_of_a_tse_like_merged_rephaser_and_crusher():
     seq.add_block(rf_ref, gz_ref)
     seq.add_block(_trap("z", CRUSHER_AREA))
     seq.add_block(gx, adc)
-    echo = rp.block_pulse(seq, 0).echo
+    echo = pulse_of(seq, 0).echo
     half = _half_moment(rf, gz)
     assert echo.sign == -1
     assert abs(echo.moment_per_m[2] - half) <= REPHASING_TOL * half
@@ -500,7 +546,7 @@ def test_echo_pathway_stops_at_a_saturation_pulse():
     seq.add_block(gzr)
     seq.add_block(_hard("saturation"))
     seq.add_block(gx, adc)
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.echo is None and pulse.echo_reason == rp.OTHER_RF_BEFORE_ADC
 
 
@@ -522,7 +568,7 @@ def test_period_of_a_gre_is_one_tr():
         4,
         1,
     )
-    assert pulse.key == rp.block_pulse(seq, 4).key
+    assert pulse.key == pulse_of(seq, 4).key
     assert (rp.period(seq, 11).first_block, rp.period(seq, 11).last_block) == (8, 11)
 
 
@@ -661,10 +707,10 @@ def test_rf_uses_labeled_and_unlabeled_sequences():
     assert not rp.rf_uses_labeled(seq)
     per = rp.Period(0, 3, (), 2, False)
     for call in (
-        lambda: rp.block_pulse(seq, 0),
+        lambda: pulse_of(seq, 0),
         lambda: rp.period(seq, 0),
-        lambda: rp.combined_profile(seq, per),
-        lambda: rp.pulse_list(seq),
+        lambda: combined_of(seq, per),
+        lambda: pulses_of(seq),
     ):
         with pytest.raises(ValueError, match="rf_uses_labeled"):
             call()
@@ -680,11 +726,11 @@ def test_combined_profile_one_direction():
     holds each pulse's block and those same values (exact). The signal kept is below 1,
     and the numbers follow their definitions (exact or 1e-15: the same formulas)."""
     seq = _spin_echo("z", 1.5 * W)
-    combined = rp.combined_profile(seq, rp.period(seq, 0))
+    combined = combined_of(seq, rp.period(seq, 0))
     assert combined.reason is None
     assert (combined.excitation_block, combined.refocusing_blocks) == (0, (3,))
     assert combined.directions == ("z",) and combined.maps == ()
-    exc, ref = rp.block_pulse(seq, 0), rp.block_pulse(seq, 3)
+    exc, ref = pulse_of(seq, 0), pulse_of(seq, 3)
     exc_profile, ref_profile = _profile(exc), _profile(ref)
     np.testing.assert_array_equal(exc_profile.grid[0], ref_profile.grid[0])
     mxy = rp.quantity(exc_profile, "mxy_abs")
@@ -718,11 +764,11 @@ def test_combined_profile_two_logical_directions():
     MAP_POINTS map axes (exact)."""
     seq = _spin_echo("y")
     per = rp.period(seq, 0)
-    combined = rp.combined_profile(seq, per, view="2d")
+    combined = combined_of(seq, per, view="2d")
     assert combined.reason is None and combined.line is None
     assert combined.line_pulses == ()
     assert combined.directions == ("z", "y")
-    exc, ref = rp.block_pulse(seq, 0), rp.block_pulse(seq, 3)
+    exc, ref = pulse_of(seq, 0), pulse_of(seq, 3)
     z_profile, y_profile = _profile(exc), _profile(ref)
     assert z_profile.grid[0].size == 401
     z, mxy = z_profile.grid[0], rp.quantity(z_profile, "mxy_abs")
@@ -763,10 +809,10 @@ def test_combined_profile_three_directions():
         seq.add_block(rf_ref, _on_axis(gz_ref, axis))
         seq.add_block(_trap(axis, CRUSHER_AREA))
     seq.add_block(gx, adc)
-    combined = rp.combined_profile(seq, rp.period(seq, 0), view="2d", n=n)
+    combined = combined_of(seq, rp.period(seq, 0), view="2d", n=n)
     assert combined.reason is None
     assert combined.directions == ("x", "y", "z")
-    pulses = [rp.block_pulse(seq, i) for i in (0, 3, 6)]
+    pulses = [pulse_of(seq, i) for i in (0, 3, 6)]
     lines = []
     for p in pulses:
         prof = _profile(p, n)
@@ -813,13 +859,13 @@ def test_combined_profile_oblique_direction():
         rf_ref, _on_axis(gz_ref, "x", math.cos(angle)), _on_axis(gz_ref, "y", math.sin(angle))
     )
     seq.add_block(gx, adc)
-    combined = rp.combined_profile(seq, rp.period(seq, 0), view="2d", n=n)
+    combined = combined_of(seq, rp.period(seq, 0), view="2d", n=n)
     assert combined.reason is None
     assert combined.directions == ("x", "select")
     (cmap,) = combined.maps
     s1_axis, s2_axis = cmap.axes
     assert (s1_axis.kind, s2_axis.kind, s1_axis.n, s2_axis.n) == ("s1", "s2", n, n)
-    exc, ref = rp.block_pulse(seq, 0), rp.block_pulse(seq, 2)
+    exc, ref = pulse_of(seq, 0), pulse_of(seq, 2)
     ref_axis = rp.view_spec(ref, "profile", n=n)[0].axes[0]
     # On s1 = 0 the coordinate along the refocusing direction is s2 * sin(60 degrees).
     assert s2_axis.lo * math.sin(angle) == pytest.approx(ref_axis.lo, rel=1e-12)
@@ -837,14 +883,14 @@ def test_combined_profile_non_selective_refocusing_is_a_factor():
     The line is the excitation |Mxy| times that factor (exact: the same product), and
     `line_pulses` has the excitation only: the factor is not on the line."""
     seq = _spin_echo("y", hard_ref=True)
-    combined = rp.combined_profile(seq, rp.period(seq, 0))
+    combined = combined_of(seq, rp.period(seq, 0))
     assert combined.reason is None and combined.directions == ("z",)
-    ref = rp.block_pulse(seq, 3)
+    ref = pulse_of(seq, 3)
     assert ref.gradient_kind == "none"
     factor = float(rp.quantity(rp.simulate(ref, rp.ProfileSpec(())), "beta_sq"))
     assert combined.factor == factor
     assert factor == pytest.approx(1.0, abs=1e-12)  # a hard 180 at r = 0, df = 0: sin(90)^2
-    exc_profile = _profile(rp.block_pulse(seq, 0))
+    exc_profile = _profile(pulse_of(seq, 0))
     _, values = combined.line
     np.testing.assert_array_equal(values, rp.quantity(exc_profile, "mxy_abs") * factor)
     ((block, exc_values),) = combined.line_pulses
@@ -915,7 +961,7 @@ def test_no_combined_profile_reasons(build, reason):
     pulse between the excitation and the ADC, and a refocusing pulse without an
     excitation before the ADC."""
     seq = build()
-    combined = rp.combined_profile(seq, rp.period(seq, 0))
+    combined = combined_of(seq, rp.period(seq, 0))
     assert combined.reason == reason
     assert combined.excitation_block is None and combined.refocusing_blocks == ()
     assert combined.line is None and combined.maps == () and combined.numbers == {}
@@ -930,7 +976,7 @@ def test_fat_saturation_before_the_excitation_does_not_take_part():
     seq = _spin_echo("y", before=fat_sat)
     per = rp.period(seq, 2)
     assert per.first_block == 0
-    combined = rp.combined_profile(seq, per)
+    combined = combined_of(seq, per)
     assert combined.reason is None
     assert (combined.excitation_block, combined.refocusing_blocks) == (2, (5,))
 
@@ -948,7 +994,7 @@ def test_profile_view_for_each_kind():
     rf.freq_offset = gz.amplitude * 1e-3
     with_w = _new()
     with_w.add_block(rf, gz)
-    pulse = rp.block_pulse(with_w, 0)
+    pulse = pulse_of(with_w, 0)
     assert pulse.notes == ()
     (axis,) = rp.view_spec(pulse)[0].axes
     assert (axis.kind, axis.n) == ("z", rp.NUM_POSITIONS)
@@ -963,7 +1009,7 @@ def test_profile_view_for_each_kind():
 
     without_w = _new(thickness=None)
     without_w.add_block(rf, gz)
-    pulse = rp.block_pulse(without_w, 0)
+    pulse = pulse_of(without_w, 0)
     assert pulse.nominal_m is None and pulse.notes == (rp.NO_SLICE_THICKNESS,)
     (axis,) = rp.view_spec(pulse, n=51)[0].axes
     half = 2 * spectrum_fwhm(pulse.signal_hz, pulse.dt_s) / abs(gz.amplitude)
@@ -973,7 +1019,7 @@ def test_profile_view_for_each_kind():
 
     hard = _new()
     hard.add_block(_hard("excitation", freq_offset=-200.0))
-    pulse = rp.block_pulse(hard, 0)
+    pulse = pulse_of(hard, 0)
     (axis,) = rp.view_spec(pulse)[0].axes
     b = spectrum_fwhm(pulse.signal_hz, pulse.dt_s)
     assert axis.kind == "df"
@@ -994,7 +1040,7 @@ def test_z_df_grid_lines_equal_1d_profiles():
     short = pp.make_trapezoid("z", amplitude=gz.amplitude, flat_time=1e-3, system=SYSTEM)
     seq = _new()
     seq.add_block(rf, short)
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.gradient_kind == "one" and not pulse.constant_gradient
     spec, _ = rp.view_spec(pulse, "z_df", n=15)
     z_axis, df_axis = spec.axes
@@ -1025,7 +1071,7 @@ def test_z_df_shear_equals_the_full_grid(sign):
     rf.freq_offset = 300.0
     seq = _new()
     seq.add_block(rf, _on_axis(gz, "z", sign))
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     spec, _ = rp.view_spec(pulse, "z_df", n=25)
     sheared = rp.simulate(pulse, spec)
     z, df = np.meshgrid(*sheared.grid, indexing="ij")
@@ -1043,7 +1089,7 @@ def test_2d_view():
     gx, gy = _turning_gradients()
     seq = _new()
     seq.add_block(_hard("excitation", duration=0.8e-3), gx, gy)
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert rp.view_spec(pulse, "2d") == (None, rp.NO_FOV)
     spec, reason = rp.view_spec(pulse, "2d", plane=("y", "z"), extent_m=0.1)
     assert reason is None
@@ -1052,14 +1098,14 @@ def test_2d_view():
         rp.ProfileAxis("z", -0.05, 0.05, rp.MAP_POINTS),
     )
     seq.set_definition("FOV", [0.2, 0.25, 0.005])
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     spec, reason = rp.view_spec(pulse, "2d", n=9)
     assert spec.axes == (rp.ProfileAxis("x", -0.1, 0.1, 9), rp.ProfileAxis("y", -0.125, 0.125, 9))
     assert rp.simulate(pulse, spec).a.shape == (9, 9)
     rf, gz, _ = _sinc("excitation")
     one = _new()
     one.add_block(rf, gz)
-    assert rp.view_spec(rp.block_pulse(one, 0), "2d", extent_m=0.1)[0] is None
+    assert rp.view_spec(pulse_of(one, 0), "2d", extent_m=0.1)[0] is None
 
 
 # ---- 10. The quantities and the widths ----
@@ -1093,7 +1139,7 @@ def test_quantities_and_widths_for_each_use(use, flip):
     seq.add_block(gx, adc)
     if use == "other":
         seq.rf_library.type[seq.block_events[1][1]] = "o"
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     assert pulse.use == use
     profile = _profile(pulse, 201)
     a, b = profile.a, profile.b
@@ -1145,7 +1191,7 @@ def test_rephasing_error_of_a_1_5x_rephaser():
         seq.add_block(rf, gz)
         seq.add_block(pp.scale_grad(gzr, scale), _trap("x", -to_centre))
         seq.add_block(gx, adc)
-        pulse = rp.block_pulse(seq, 0)
+        pulse = pulse_of(seq, 0)
         profile = _profile(pulse)
         numbers = rp.widths(pulse, profile)
         errors.append(numbers["rephasing_error_rad"])
@@ -1162,14 +1208,14 @@ def _pulse_on_z():
     rf, gz, _ = _sinc("excitation")
     seq = _new()
     seq.add_block(rf, gz)
-    return rp.block_pulse(seq, 0)
+    return pulse_of(seq, 0)
 
 
 def _pulse_oblique():
     rf, gz, _ = _sinc("excitation")
     seq = _new()
     seq.add_block(rf, _on_axis(gz, "x", 0.6), _on_axis(gz, "y", 0.8))
-    return rp.block_pulse(seq, 0)
+    return pulse_of(seq, 0)
 
 
 _Z = rp.ProfileAxis("z", -0.01, 0.01, 11)
@@ -1222,7 +1268,7 @@ def test_argument_errors():
     gx, gy = _turning_gradients()
     seq = _new()
     seq.add_block(_hard("excitation", duration=0.8e-3), gx, gy)
-    changing = rp.block_pulse(seq, 0)
+    changing = pulse_of(seq, 0)
     for kwargs in (
         {"view": "3d"},
         {"view": "2d", "plane": ("x", "x"), "extent_m": 0.1},
@@ -1234,10 +1280,10 @@ def test_argument_errors():
             rp.view_spec(changing, **kwargs)
     spin_echo = _spin_echo("y")
     with pytest.raises(ValueError, match="view"):
-        rp.combined_profile(spin_echo, rp.period(spin_echo, 0), view="z_df")
+        combined_of(spin_echo, rp.period(spin_echo, 0), view="z_df")
     for block in (-1, 6):
         with pytest.raises(IndexError):
-            rp.block_pulse(spin_echo, block)
+            pulse_of(spin_echo, block)
         with pytest.raises(IndexError):
             rp.period(spin_echo, block)
 
@@ -1250,8 +1296,8 @@ def test_pulse_list_rf_spoiling_and_slices_give_one_entry():
     frequency offsets): one entry with all 12 RF blocks, the numbers of its first block
     (exact: the same computation)."""
     seq = _gre(4, rf_spoiling=True, slices=(-5e-3, 0.0, 5e-3))
-    (entry,) = rp.pulse_list(seq)
-    first = rp.block_pulse(seq, 0)
+    (entry,) = pulses_of(seq)
+    first = pulse_of(seq, 0)
     assert (entry.first_block, entry.num_blocks, entry.use) == (0, 12, "excitation")
     assert entry.gradient_kind == "one"
     assert (entry.flip_deg, entry.peak_b1_ut, entry.energy_ut2_ms) == (
@@ -1273,14 +1319,14 @@ def test_pulse_list_mprage_like_blocks_give_one_entry(after_rf, tmp_path):
     read = pp.Sequence(SYSTEM)
     read.read(str(path))
     for s in (seq, read):
-        (entry,) = rp.pulse_list(s)
+        (entry,) = pulses_of(s)
         assert (entry.first_block, entry.num_blocks, entry.gradient_kind) == (0, 5, "none")
-    entries = rp.pulse_list(_spin_echo("y"))
+    entries = pulses_of(_spin_echo("y"))
     assert [(e.first_block, e.use, e.num_blocks) for e in entries] == [
         (0, "excitation", 1),
         (3, "refocusing", 1),
     ]
-    assert rp.pulse_list(_new()) == []
+    assert pulses_of(_new()) == []
 
 
 # ---- 13. Rotations ----
@@ -1295,10 +1341,10 @@ def test_rotations_are_refused():
     seq.rotation_library.insert(1, (0.9238795325112867, 0.0, 0.0, 0.3826834323650898))
     per = rp.Period(0, 3, (), 2, False)
     for call in (
-        lambda: rp.block_pulse(seq, 0),
+        lambda: pulse_of(seq, 0),
         lambda: rp.period(seq, 0),
-        lambda: rp.combined_profile(seq, per),
-        lambda: rp.pulse_list(seq),
+        lambda: combined_of(seq, per),
+        lambda: pulses_of(seq),
     ):
         with pytest.raises(NotImplementedError, match="rotation extension"):
             call()
@@ -1314,7 +1360,7 @@ def test_peak_b1_of_another_nucleus():
     system = pp.Opts(gamma=11.262e6, rf_raster_time=5e-6, rf_dead_time=100e-6)
     seq = _new(system=system)
     seq.add_block(_hard("excitation", math.pi / 2, duration=0.5e-3, system=system))
-    pulse = rp.block_pulse(seq, 0)
+    pulse = pulse_of(seq, 0)
     b1_ut = (math.pi / 2) / (2 * math.pi * 0.5e-3) / 11.262e6 * 1e6
     assert pulse.peak_b1_ut == pytest.approx(b1_ut, rel=1e-9)
     assert pulse.energy_ut2_ms == pytest.approx(b1_ut**2 * 0.5, rel=1e-9)

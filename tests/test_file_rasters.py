@@ -68,7 +68,7 @@ def test_rf_samples_use_the_file_rf_raster(seq_file):
     assert table["dt"][0] == pytest.approx(FILE_SYSTEM.rf_raster_time, abs=1e-12)
     assert table["shape_n"][0] == 250
 
-    pulse = rp.block_pulse(seq, 0)
+    pulse = rp.block_pulse(seq, 0, seq.system.B0, seq.system.gamma)
     assert pulse.dt_s == pytest.approx(FILE_SYSTEM.rf_raster_time, abs=1e-12)
     assert pulse.signal_hz.size == 250
 

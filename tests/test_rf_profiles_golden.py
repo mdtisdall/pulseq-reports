@@ -23,12 +23,12 @@ Tolerances, each with its reason (also see the module-level constants below):
    `last_block`, `count`); a block pulse's `use`, `gradient_kind`, `select_kind`,
    `constant_gradient`, `dt_s`, `freq_offset_hz`, `nominal_m`, `fov_m`, `notes`,
    `echo_reason`, the echo `sign` and `adc_block`; every reason text; the kinds and `n`
-   of each spec axis; a combined profile's `reason`, blocks and `directions`. `dt_s` and
-   `freq_offset_hz` are exact (not merely close) because both languages read them
-   straight from the RF table's `dt` and `freq_hz` columns, which `rf_profiles.py`'s own
-   `_pulse_core` computes with the same formula in the same order as
-   `cards.rf_profile._rf_table`, so the two Python computations already agree bit for bit
-   before either one is ever sent to JavaScript.
+   of each spec axis; a combined profile's `reason`, blocks and `directions`. `dt_s` is
+   exact (not merely close) because both languages read it straight from the RF table's
+   `dt` column. `freq_offset_hz` is exact because both languages compute it from the same
+   terms (`freq_offset`, `freq_ppm`, the gamma and the B0 of the group) with the same
+   operations in the same order: freq_offset + freq_ppm * (1e-6 * gamma * B0), with the
+   signed gamma.
 2. **The pulse key partition** (`_check_key_map`): a Python key is a tuple and a
    JavaScript key is a string, so they are never compared by value. Instead, every block
    this file asks about (every "pulse" query) builds a bijection between the two
@@ -419,8 +419,15 @@ def _compare_period(
         _check_key_map(key_map, rev_map, pyp.key, jp["key"], where)
 
 
-def _compare_pulse(seq, block: int, js: dict, key_map: dict, rev_map: dict, where: str) -> None:
-    p = rp.block_pulse(seq, block)
+def _py_pulse(seq, block: int, group: dict):
+    """`rf_profiles.block_pulse` with the gamma and the B0 of `group`."""
+    return rp.block_pulse(seq, block, group["b0_t"], group["gamma_hz_per_t"])
+
+
+def _compare_pulse(
+    seq, block: int, group: dict, js: dict, key_map: dict, rev_map: dict, where: str
+) -> None:
+    p = _py_pulse(seq, block, group)
     assert p is not None, f"{where}: python block_pulse is None, js returned a pulse"
 
     _assert_exact(js["use"], p.use, "use", where)
@@ -472,8 +479,8 @@ def _compare_pulse(seq, block: int, js: dict, key_map: dict, rev_map: dict, wher
     _rel_scalar(js["energyUt2Ms"], p.energy_ut2_ms, "energy_ut2_ms", where)
 
 
-def _compare_view(seq, query: dict, js: dict, where: str) -> None:
-    pulse = rp.block_pulse(seq, query["block"])
+def _compare_view(seq, query: dict, group: dict, js: dict, where: str) -> None:
+    pulse = _py_pulse(seq, query["block"], group)
     view = query["view"]
     spec, reason = rp.view_spec(pulse, view, n=query.get("n"))
     _assert_exact(js["reason"], reason, "view.reason", where)
@@ -531,9 +538,11 @@ def _compare_view(seq, query: dict, js: dict, where: str) -> None:
         )
 
 
-def _compare_combined(seq, query: dict, js: dict, where: str) -> None:
+def _compare_combined(seq, query: dict, group: dict, js: dict, where: str) -> None:
     per = rp.period(seq, query["block"])
-    c = rp.combined_profile(seq, per, view=query["view"], n=query.get("n"))
+    c = rp.combined_profile(
+        seq, per, group["b0_t"], group["gamma_hz_per_t"], view=query["view"], n=query.get("n")
+    )
     _assert_exact(js["reason"], c.reason, "combined.reason", where)
     if c.reason is not None:
         assert js["reason"] is not None, f"{where}: js has no reason, python does"
@@ -704,24 +713,33 @@ def _another_nucleus_seq():
     return seq
 
 
-_PPM_SYSTEM = pp.Opts(
-    max_grad=30,
-    grad_unit="mT/m",
-    max_slew=150,
-    slew_unit="T/m/s",
-    rf_dead_time=100e-6,
-    rf_ringdown_time=30e-6,
-    adc_dead_time=10e-6,
-    rf_raster_time=5e-6,
-    B0=2.89,  # a system with B0 set, for freq_ppm (item 9)
-)
-
-
 def _freq_ppm_seq():
-    rf = cases._hard("saturation", system=_PPM_SYSTEM, freq_ppm=-3.45, phase_ppm=0.7)
-    seq = cases._new(system=_PPM_SYSTEM)
+    rf = cases._hard("saturation", freq_ppm=-3.45, phase_ppm=0.7)
+    seq = cases._new()
     seq.add_block(rf)
     return seq
+
+
+def _group(gamma: float, b0: float | None) -> dict:
+    """A group of the file entry (`cards.rf_profile._groups`) for a gamma and a B0."""
+    return {"gamma_hz_per_t": gamma, "b0_t": b0, "names": [], "color": None}
+
+
+# The groups of the sequences with a `ppm` offset: two values of B0 and a gamma and its
+# negative (the offsets in Hz flip sign, |B1| does not change).
+_PPM_GROUPS = [
+    _group(pp.Opts().gamma, 1.5),
+    _group(pp.Opts().gamma, 3.0),
+    _group(-pp.Opts().gamma, 3.0),
+]
+
+
+def _groups_of(name: str, seq) -> list[dict]:
+    """The groups that the queries of the sequence `name` use. A sequence without a `ppm`
+    offset has one group: the gamma and the B0 of its system."""
+    if name in _PPM_SEQUENCES:
+        return _PPM_GROUPS
+    return [_group(float(seq.system.gamma), float(seq.system.B0))]
 
 
 def _load_gre_report_module():
@@ -762,6 +780,9 @@ _SEQUENCES = {
 }
 
 
+_PPM_SEQUENCES = ("freq_ppm_with_b0", "fat_sat_se")  # the sequences that use _PPM_GROUPS
+
+
 # ---- Building the queries for one sequence -------------------------------------------
 
 
@@ -778,7 +799,13 @@ def _period_starts(seq, nblocks: int) -> list[int]:
     return sorted({rp.period(seq, b).first_block for b in range(nblocks)})
 
 
-def _build_queries(seq, nblocks: int, *, full_size: bool, echo_moment_added: list) -> list[dict]:
+def _build_queries(
+    seq, nblocks: int, groups: list[dict], *, full_size: bool, echo_moment_added: list
+) -> list[dict]:
+    """The queries of one sequence. The periods do not depend on the group. A pulse is
+    queried in each group. The views of a pulse and its combined profile are queried in the
+    first group, and in another group only when the group gives another offset in Hz (a
+    `ppm` offset) to the pulse: the views do not depend on the gamma or the B0 otherwise."""
     queries: list[dict] = []
 
     for b in range(nblocks):
@@ -787,34 +814,39 @@ def _build_queries(seq, nblocks: int, *, full_size: bool, echo_moment_added: lis
     for b in sorted({0, nblocks // 2, nblocks - 1}):
         queries.append({"kind": "period", "block": b, "maxBlocks": 1})
 
-    for b in _rf_blocks(seq):
-        queries.append({"kind": "pulse", "block": b})
+    for k in range(len(groups)):
+        for b in _rf_blocks(seq):
+            queries.append({"kind": "pulse", "block": b, "group": k})
 
     starts = _period_starts(seq, nblocks)
     for s in starts:
         per = rp.period(seq, s)
         for pulse_row in per.pulses:
             b0 = pulse_row.first_block
-            pulse = rp.block_pulse(seq, b0)
-            for view in ("profile", "z_df", "2d"):
-                q = {"kind": "view", "block": b0, "view": view}
+            pulse = _py_pulse(seq, b0, groups[0])
+            for k, group in enumerate(groups):
+                if k > 0 and _py_pulse(seq, b0, group).freq_offset_hz == pulse.freq_offset_hz:
+                    continue
+                for view in ("profile", "z_df", "2d"):
+                    q = {"kind": "view", "block": b0, "view": view, "group": k}
+                    if not full_size:
+                        q["n"] = _SMALL_N[view]
+                    if (
+                        view == "profile"
+                        and not echo_moment_added[0]
+                        and pulse_row.use == "excitation"
+                        and pulse.gradient_kind == "one"
+                    ):
+                        vector = (-pulse.select_gradient_hz_per_m * 1e-3) * pulse.direction
+                        q["echoMomentPerM"] = [float(v) for v in vector]
+                        echo_moment_added[0] = True
+                    queries.append(q)
+        for k in range(len(groups)):
+            for view in ("profile", "2d"):
+                q = {"kind": "combined", "block": s, "view": view, "group": k}
                 if not full_size:
-                    q["n"] = _SMALL_N[view]
-                if (
-                    view == "profile"
-                    and not echo_moment_added[0]
-                    and pulse_row.use == "excitation"
-                    and pulse.gradient_kind == "one"
-                ):
-                    vector = (-pulse.select_gradient_hz_per_m * 1e-3) * pulse.direction
-                    q["echoMomentPerM"] = [float(v) for v in vector]
-                    echo_moment_added[0] = True
+                    q["n"] = _SMALL_COMBINED_N
                 queries.append(q)
-        for view in ("profile", "2d"):
-            q = {"kind": "combined", "block": s, "view": view}
-            if not full_size:
-                q["n"] = _SMALL_COMBINED_N
-            queries.append(q)
     return queries
 
 
@@ -838,13 +870,14 @@ def test_rf_profiles_js_matches_python_reference(name, tmp_path):
     builder, full_size = _SEQUENCES[name]
     seq = builder()
     nblocks = _num_blocks(seq)
-    queries = _build_queries(seq, nblocks, full_size=full_size, echo_moment_added=[False])
+    groups = _groups_of(name, seq)
+    queries = _build_queries(seq, nblocks, groups, full_size=full_size, echo_moment_added=[False])
     tables = diagram_data.diagram_tables(seq)
     payload = {
         "format": 1,
         "tables": {name: encode_array(a) for name, a in tables.items()},
         "lanes": diagram_data.lane_meta(seq, tables=tables),
-        "file": _rf_profile_data(seq),
+        "file": _rf_profile_data(seq, groups),
         "queries": queries,
     }
     in_path = tmp_path / "in.json"
@@ -861,11 +894,11 @@ def test_rf_profiles_js_matches_python_reference(name, tmp_path):
         if q["kind"] == "period":
             _compare_period(seq, q["block"], q.get("maxBlocks"), r, key_map, rev_map, where)
         elif q["kind"] == "pulse":
-            _compare_pulse(seq, q["block"], r, key_map, rev_map, where)
+            _compare_pulse(seq, q["block"], groups[q["group"]], r, key_map, rev_map, where)
         elif q["kind"] == "view":
-            _compare_view(seq, q, r, where)
+            _compare_view(seq, q, groups[q["group"]], r, where)
         elif q["kind"] == "combined":
-            _compare_combined(seq, q, r, where)
+            _compare_combined(seq, q, groups[q["group"]], r, where)
         else:
             raise AssertionError(f"unknown query kind {q['kind']!r}")
     print(f"\n{name}: {len(queries)} queries")

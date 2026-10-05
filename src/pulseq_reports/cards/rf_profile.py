@@ -25,7 +25,7 @@ from pulseq_analysis.seq_utils import hold_samples
 from pulseq_analysis.series import encode_array
 
 from pulseq_reports import options
-from pulseq_reports.markup import fmt
+from pulseq_reports.markup import fmt, gamma_select_html
 from pulseq_reports.page import Card, card_asset
 from pulseq_reports.registry import CardSpec, ReportContext
 from pulseq_reports.rf_profiles import (
@@ -38,6 +38,8 @@ from pulseq_reports.rf_profiles import (
     pulse_list,
     rf_uses_labeled,
 )
+from pulseq_reports.targets import ReportTarget
+from pulseq_reports.units import GammaEntry, gamma_entries
 
 VIEWS = ("profile", "z_df", "2d")
 PUBLISHES = ("goto",)
@@ -115,8 +117,11 @@ def _rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
     - `dt` (float64): the hold interval of `seq_utils.hold_samples`.
     - `shape_at`, `shape_n` (uint32): the start and the length of this event's baseband
       samples in the pools.
-    - `freq_hz`, `phase_rad` (float64): the total frequency and phase offsets, computed
-      as `rf_profiles._pulse_core` computes them.
+    - `freq_offset_hz`, `freq_ppm`, `phase_offset_rad`, `phase_ppm` (float64): the terms of
+      the frequency and the phase offset of the event (`rf.freq_offset`, `rf.freq_ppm`,
+      `rf.phase_offset`, `rf.phase_ppm`; a `ppm` term is 0 when the event has none). The
+      table does not add them: a `ppm` term changes into Hz with the gamma and the B0 of
+      each group of targets (`_groups`), in the browser.
     - `shape_re`, `shape_im` (float64): the pools, the real and imaginary parts of the
       baseband samples (`hold_samples`, before any offset). A baseband array is stored
       one time: two events whose arrays have the same exact complex128 bytes share
@@ -143,11 +148,11 @@ def _rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
     dt = np.zeros(n, dtype=np.float64)
     shape_at = np.zeros(n, dtype=np.uint32)
     shape_n = np.zeros(n, dtype=np.uint32)
-    freq_hz = np.zeros(n, dtype=np.float64)
-    phase_rad = np.zeros(n, dtype=np.float64)
+    freq_offset_hz = np.zeros(n, dtype=np.float64)
+    freq_ppm = np.zeros(n, dtype=np.float64)
+    phase_offset_rad = np.zeros(n, dtype=np.float64)
+    phase_ppm = np.zeros(n, dtype=np.float64)
 
-    gamma = abs(float(seq.system.gamma))
-    ppm_hz = 1e-6 * gamma * float(seq.system.B0)
     use_index = {name: i for i, name in enumerate(USES)}
     keys: dict[tuple, int] = {}
     pool = _ShapePool()
@@ -174,8 +179,10 @@ def _rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
         dt[i] = float(sample_dt)
         shape_at[i] = pool.add(baseband)
         shape_n[i] = baseband.size
-        freq_hz[i] = float(rf.freq_offset) + float(getattr(rf, "freq_ppm", 0.0)) * ppm_hz
-        phase_rad[i] = float(rf.phase_offset) + float(getattr(rf, "phase_ppm", 0.0)) * ppm_hz
+        freq_offset_hz[i] = float(rf.freq_offset)
+        freq_ppm[i] = float(getattr(rf, "freq_ppm", 0.0))
+        phase_offset_rad[i] = float(rf.phase_offset)
+        phase_ppm[i] = float(getattr(rf, "phase_ppm", 0.0))
 
     shape_re, shape_im = pool.arrays()
     return {
@@ -187,22 +194,65 @@ def _rf_table(seq: pp.Sequence) -> dict[str, np.ndarray]:
         "dt": dt,
         "shape_at": shape_at,
         "shape_n": shape_n,
-        "freq_hz": freq_hz,
-        "phase_rad": phase_rad,
+        "freq_offset_hz": freq_offset_hz,
+        "freq_ppm": freq_ppm,
+        "phase_offset_rad": phase_offset_rad,
+        "phase_ppm": phase_ppm,
         "shape_re": shape_re,
         "shape_im": shape_im,
     }
 
 
-def _rf_profile_data(seq: pp.Sequence) -> dict:
+def _target_b0(target: ReportTarget) -> float | None:
+    """The B0 (T) of `target`: its `opts.B0`, or None when the profile does not give it."""
+    profile = target.profile
+    return float(profile.opts["B0"]) if profile.has_value("opts.B0") else None
+
+
+def _groups(seq: pp.Sequence, targets: Sequence[ReportTarget]) -> list[dict]:
+    """The groups of the targets with the same (signed gamma, B0 or None), in the order of
+    the first target of each group: `{"gamma_hz_per_t", "b0_t", "names", "color"}`, with the
+    gamma of the target (signed), its B0 (T, or None), the names of its targets and the
+    color of the first one. The browser draws the profiles of each group in one series.
+
+    Without targets, one group with `seq.system.gamma`, no B0 (a `ppm` offset has no Hz
+    then: the file gives no B0), no names and no color. The card does not read the B0 of
+    the system of the sequence: B0 comes from a target (principle 7 of the design)."""
+    if not targets:
+        return [
+            {
+                "gamma_hz_per_t": float(seq.system.gamma),
+                "b0_t": None,
+                "names": [],
+                "color": None,
+            }
+        ]
+    groups: dict[tuple[float, float | None], dict] = {}
+    for target in targets:
+        b0 = _target_b0(target)
+        group = groups.setdefault(
+            (target.gamma, b0),
+            {
+                "gamma_hz_per_t": float(target.gamma),
+                "b0_t": b0,
+                "names": [],
+                "color": target.color,
+            },
+        )
+        group["names"].append(target.profile.name)
+    return list(groups.values())
+
+
+def _rf_profile_data(seq: pp.Sequence, groups: Sequence[dict]) -> dict:
     """The file entry of the RF profile card data. `refuse_rotations(seq)` first.
+    `groups` is `_groups(seq, targets)`.
 
     For a sequence where `rf_profiles.rf_uses_labeled(seq)` is True: `labeled`
     True; `slice_thickness_m` (the `SliceThickness` definition, or None);
-    `fov_m` (the `FOV` definition as [x, y, z], or None); `b0_t`; `gamma_hz_per_t`
-    (`abs(seq.system.gamma)`); `first_rf_block` (the play index of the first RF block,
-    or None without RF); `rf` (`_rf_table(seq)`, each array encoded with `encode_array`);
-    `pulses` (`rf_profiles.pulse_list(seq)`, each pulse as `dataclasses.asdict`).
+    `fov_m` (the `FOV` definition as [x, y, z], or None); `groups` (as given); `first_rf_block`
+    (the play index of the first RF block, or None without RF); `rf` (`_rf_table(seq)`, each
+    array encoded with `encode_array`); `pulses` (`rf_profiles.pulse_list` with the gamma of
+    the first group, each pulse as `dataclasses.asdict`).
 
     For a sequence where it is False: `labeled` False; `unlabeled_rf_events` (the
     number of RF events whose use letter is not a key of `rf_profiles._USE_OF_LETTER`);
@@ -228,11 +278,10 @@ def _rf_profile_data(seq: pp.Sequence) -> dict:
         "labeled": True,
         "slice_thickness_m": None if thickness is None else float(thickness[0]),
         "fov_m": None if fov is None else [float(v) for v in fov],
-        "b0_t": float(seq.system.B0),
-        "gamma_hz_per_t": abs(float(seq.system.gamma)),
+        "groups": [dict(group) for group in groups],
         "first_rf_block": int(index.rf_first[0]) if index.rf_first.size else None,
         "rf": {name: encode_array(array) for name, array in _rf_table(seq).items()},
-        "pulses": [dataclasses.asdict(p) for p in pulse_list(seq)],
+        "pulses": [dataclasses.asdict(p) for p in pulse_list(seq, groups[0]["gamma_hz_per_t"])],
     }
 
 
@@ -287,7 +336,35 @@ def _pulse_table(rows: list[list]) -> str:
     return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
-def _body_html(card_id: str, entry: dict) -> str:
+def _pulse_rows(pulses: list[dict]) -> list[list]:
+    """The rows of the "Distinct pulses" table of `pulses` (`rf_profiles.pulse_list`, each
+    pulse as `dataclasses.asdict`)."""
+    return [
+        [
+            p["use"],
+            _GRADIENT_KIND_LABEL[p["gradient_kind"]],
+            p["first_block"],
+            p["num_blocks"],
+            fmt(p["flip_deg"]),
+            fmt(p["peak_b1_ut"]),
+            fmt(p["energy_ut2_ms"]),
+            f'<button type="button" data-block="{p["first_block"]}">Show</button>',
+        ]
+        for p in pulses
+    ]
+
+
+def _body_html(
+    card_id: str,
+    entry: dict,
+    seq: pp.Sequence | None = None,
+    entries: Sequence[GammaEntry] = (),
+) -> str:
+    """The body of the card. The "Distinct pulses" table gives |B1| and the energy in µT
+    for |gamma| of one entry of `entries` (`units.gamma_entries(targets, seq,
+    signed=False)`): with more than one entry, one table for each in a `data-gamma-entry`
+    block (all but the first hidden) and the control of `markup.gamma_select_html`, as the
+    gradient limits card does. Without `entries`, one table of `entry["pulses"]`."""
     parts = [] if entry["labeled"] else [_unlabeled_note(entry)]
     parts.append(
         f'<p class="muted" id="{card_id}-status" aria-live="polite">Move the cursor over '
@@ -301,24 +378,22 @@ def _body_html(card_id: str, entry: dict) -> str:
     )
     parts.append("<h3>Distinct pulses</h3>")
     if entry["labeled"]:
-        pulses = entry["pulses"]
-        if not pulses:
+        if not entry["pulses"]:
             parts.append('<p class="muted">No RF pulses.</p>')
+        elif len(entries) < 2:
+            pulses = (
+                [dataclasses.asdict(p) for p in pulse_list(seq, entries[0].gamma)]
+                if entries
+                else entry["pulses"]
+            )
+            parts.append(_pulse_table(_pulse_rows(pulses)))
         else:
-            rows = [
-                [
-                    p["use"],
-                    _GRADIENT_KIND_LABEL[p["gradient_kind"]],
-                    p["first_block"],
-                    p["num_blocks"],
-                    fmt(p["flip_deg"]),
-                    fmt(p["peak_b1_ut"]),
-                    fmt(p["energy_ut2_ms"]),
-                    f'<button type="button" data-block="{p["first_block"]}">Show</button>',
-                ]
-                for p in pulses
-            ]
-            parts.append(_pulse_table(rows))
+            parts.append(gamma_select_html(entries, card_id))
+            for k, gamma_entry in enumerate(entries):
+                hidden = "" if k == 0 else " hidden"
+                pulses = [dataclasses.asdict(p) for p in pulse_list(seq, gamma_entry.gamma)]
+                table = _pulse_table(_pulse_rows(pulses))
+                parts.append(f'<div data-gamma-entry="{k}"{hidden}>{table}</div>')
     return "\n".join(parts)
 
 
@@ -328,6 +403,7 @@ def rf_profile_card(
     views: Sequence[str] = ("profile",),
     plane: tuple[str, str] | None = None,
     extent_m: float | None = None,
+    targets: Sequence[ReportTarget] = (),
     card_id: str = "rf-profile",
 ) -> Card:
     """The "RF pulse profiles" card (`docs/plans/rf-profiles.md`, section 4.5): the RF
@@ -342,6 +418,14 @@ def rf_profile_card(
     spatial axes). `plane` picks the two logical axes of the "2d" view of a pulse whose
     gradient direction changes during the RF (else the two axes with the largest RMS
     gradient); `extent_m` picks the extent of that view (else the `FOV` definition).
+
+    `targets` are the `ReportTarget`s of the report. The card groups them by gamma and B0
+    (`_groups`): the browser changes a `ppm` offset into Hz and an RF amplitude into µT
+    with the values of each group, and draws one series of each profile for each group (with
+    several groups). Without targets, the card has one group with `seq.system.gamma` and no
+    B0. A pulse with a `ppm` offset has a note in a group without B0, and the card does not
+    draw it for that group. The "Distinct pulses" table gives |B1| and the energy for each
+    distinct |gamma| of the targets, with the gamma control when there is more than one.
 
     The card's `scripts` has `assets/cards/rf-profile.js`. It publishes `PUBLISHES` (`goto`)
     and subscribes to `SUBSCRIBES` (`sequence`, `cursor` and `anchor`).
@@ -375,15 +459,15 @@ def rf_profile_card(
     _check_extent(extent_m)
     refuse_rotations(seq)
 
-    file = _rf_profile_data(seq)
+    file = _rf_profile_data(seq, _groups(seq, targets))
     data = {
-        "format": 2,
+        "format": 3,
         "views": list(views),
         "plane": None if plane is None else list(plane),
         "extent_m": None if extent_m is None else float(extent_m),
         "file": file,
     }
-    body = _body_html(card_id, file)
+    body = _body_html(card_id, file, seq, gamma_entries(targets, seq, signed=False))
     return Card(
         id=card_id,
         title="RF pulse profiles",
@@ -408,6 +492,7 @@ def _build(ctx: ReportContext) -> Card:
         views=ctx.option(options.views),
         plane=ctx.option(options.plane),
         extent_m=ctx.option(options.extent_m),
+        targets=ctx.targets,
         card_id=SPEC.name,
     )
 

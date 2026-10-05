@@ -93,7 +93,7 @@ def _pulse(name: str) -> rp.BlockPulse:
         path.write_bytes(gzip.decompress(base64.b64decode(fixture["seq_gzip_base64"])))
         seq = pp.Sequence(system)
         seq.read(str(path))
-    return rp.block_pulse(seq, fixture["block"])
+    return rp.block_pulse(seq, fixture["block"], system.B0, system.gamma)
 
 
 def _spec(entry: dict) -> rp.ProfileSpec:
@@ -264,7 +264,7 @@ def _hs_profile(duration_s: float):
             "hypsec", duration=duration_s, delay=100e-6, system=system, use="inversion"
         )
     )
-    pulse = rp.block_pulse(seq, 0)
+    pulse = rp.block_pulse(seq, 0, system.B0, system.gamma)
     profile = rp.simulate(pulse, rp.ProfileSpec((rp.ProfileAxis("df", -1500.0, 1500.0, 601),)))
     w1_max = 2 * np.pi * float(np.abs(pulse.signal_hz).max())
     return profile.grid[0], rp.quantity(profile, "mz"), w1_max

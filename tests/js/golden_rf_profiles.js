@@ -19,11 +19,13 @@
 //           "lanes": <diagram_data.lane_meta(...) output>,
 //           "file": <cards.rf_profile.rf_profile_data(...) output, "rf" still encoded>,
 //           "queries": [{"kind": "period", "block": b, "maxBlocks"?: m},
-//                       {"kind": "pulse", "block": b},
+//                       {"kind": "pulse", "block": b, "group"?: k},
 //                       {"kind": "view", "block": b, "view": v, "plane"?, "extentM"?,
-//                        "n"?, "echoMomentPerM"?: [x, y, z]},
+//                        "n"?, "echoMomentPerM"?: [x, y, z], "group"?: k},
 //                       {"kind": "combined", "block": b, "view": "profile" | "2d",
-//                        "n"?}, ...]}
+//                        "n"?, "group"?: k}, ...]}
+//
+// "group" is the index (default 0) of one of the groups of the file entry (gamma and B0).
 //
 // OUT.json: {"results": [<one JSON value per query, see the *Json functions below>]}
 //
@@ -169,11 +171,11 @@ function runPeriod(view, file, q) {
 }
 
 function runPulse(view, file, q) {
-  return pulseJson(RfProfiles.blockPulse(view, file, q.block));
+  return pulseJson(RfProfiles.blockPulse(view, file, q.block, {group: q.group ?? 0}));
 }
 
 function runView(view, file, q) {
-  const pulse = RfProfiles.blockPulse(view, file, q.block);
+  const pulse = RfProfiles.blockPulse(view, file, q.block, {group: q.group ?? 0});
   const opts = {};
   if (q.plane !== undefined && q.plane !== null) opts.plane = q.plane;
   if (q.extentM !== undefined && q.extentM !== null) opts.extentM = q.extentM;
@@ -203,7 +205,7 @@ function runView(view, file, q) {
 
 function runCombined(view, file, q) {
   const per = RfProfiles.period(view, file, q.block, {});
-  const opts = {view: q.view};
+  const opts = {view: q.view, group: q.group ?? 0};
   if (q.n !== undefined && q.n !== null) opts.n = q.n;
   const work = RfProfiles.combinedProfile(view, file, per, opts);
   work.step(Infinity);
