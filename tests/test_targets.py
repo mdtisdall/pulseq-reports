@@ -1,7 +1,9 @@
 import dataclasses
+from pathlib import Path
 
+import pypulseq as pp
 import pytest
-from synthetic import GAMMA_1H
+from pulseq_checks import read_profile
 
 from pulseq_reports.targets import MAX_TARGETS, ReportTarget, report_targets
 
@@ -43,36 +45,33 @@ def test_an_item_that_is_not_a_target_profile_raises(make_profile):
         report_targets([make_profile("a"), "b.toml"])
 
 
-def test_a_gamma_that_is_not_the_proton_gamma_is_not_supported(make_profile):
-    sodium = make_profile("sodium", "gamma = 11.262e6")
+def test_a_negative_gamma_is_valid_and_kept_signed(make_profile):
+    (target,) = report_targets([make_profile("xenon", "gamma = -11.777e6")])
 
-    (target,) = report_targets([sodium])
-
-    assert target.supported is False
-    assert target.reason is not None
-    assert target.color == "target-1"
+    assert target.gamma == -11.777e6
 
 
-def test_the_proton_gamma_and_no_gamma_are_supported(make_profile):
-    proton = make_profile("proton", f"gamma = {GAMMA_1H!r}")
+def test_a_profile_with_no_gamma_gets_the_default_gamma_of_pypulseq(make_profile):
     no_gamma = make_profile("no-gamma", "max_grad = 30")
     no_opts = make_profile("no-opts")
-    assert no_opts.opts is None or "gamma" not in no_opts.opts
 
-    targets = report_targets([proton, no_gamma, no_opts])
+    targets = report_targets([no_gamma, no_opts])
 
-    assert [target.supported for target in targets] == [True, True, True]
-    assert [target.reason for target in targets] == [None, None, None]
+    assert [target.gamma for target in targets] == [pp.Opts().gamma] * 2
 
 
-def test_an_unsupported_target_does_not_change_the_colors_of_the_others(make_profile):
-    profiles = [
-        make_profile("a"),
-        make_profile("b", "gamma = 11.262e6"),
-        make_profile("c"),
-    ]
+@pytest.mark.parametrize("gamma", ["0", "inf", "nan"])
+def test_a_gamma_that_is_0_or_not_finite_raises(make_profile, gamma):
+    profile = make_profile("bad", f"gamma = {gamma}")
 
-    targets = report_targets(profiles)
+    with pytest.raises(ValueError, match="bad"):
+        report_targets([make_profile("ok"), profile])
 
-    assert [target.color for target in targets] == ["target-1", "target-2", "target-3"]
-    assert [target.supported for target in targets] == [True, False, True]
+
+def test_the_example_profile_with_a_negative_gamma_is_read():
+    (target,) = report_targets(
+        [read_profile(Path(__file__).parent / "profiles" / "example_c.toml")]
+    )
+
+    assert target.gamma == -11.777e6
+    assert target.profile.opts["B0"] == 3.0

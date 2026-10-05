@@ -348,7 +348,7 @@ def test_the_context_has_the_report_targets_in_order_with_their_colors(seen, mak
     assert all(isinstance(target, ReportTarget) for target in ctx.targets)
     assert [target.profile for target in ctx.targets] == profiles
     assert [target.color for target in ctx.targets] == ["target-1", "target-2"]
-    assert [target.supported for target in ctx.targets] == [True, False]
+    assert [target.gamma for target in ctx.targets] == [pp.Opts().gamma, 11.262e6]
     assert ctx.check_results is None
 
 
@@ -362,11 +362,21 @@ def test_the_context_has_the_result_matrix_that_the_caller_gave(seen, make_profi
     assert ctx.check_results is matrix
 
 
-def test_a_sequence_with_another_gamma_raises(plugin):
-    sodium = pp.Sequence(pp.Opts(gamma=11.262e6))
+@pytest.mark.parametrize("gamma", [11.262e6, -11.777e6])
+def test_a_sequence_with_another_gamma_is_accepted(plugin, gamma):
+    seq = pp.Sequence(pp.Opts(gamma=gamma))
+
+    cards = build_cards(seq, cards=["plugin-demo"])
+
+    assert _ids(cards) == ["plugin-demo"]
+
+
+@pytest.mark.parametrize("gamma", [0, float("nan")])
+def test_a_sequence_with_a_gamma_that_is_0_or_nan_raises(plugin, gamma):
+    seq = pp.Sequence(pp.Opts(gamma=gamma))
 
     with pytest.raises(ValueError, match="gamma"):
-        build_cards(sodium, cards=["plugin-demo"])
+        build_cards(seq, cards=["plugin-demo"])
 
 
 def test_more_than_the_most_targets_raise(plugin, make_profile):
