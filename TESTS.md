@@ -2197,24 +2197,27 @@ renders the page, and checks that the literal registration call
 
 ### 2.12 PNS card (`test_pns_card.py`)
 
-`test_pns_card.py` tests `cards/pns.py`. `_pns_data` (private) is
-`pns.pns_prediction`'s summary as a JSON-ready dict only (`reason`, `hardware`,
-`asc_file`, `peak_percent`, `peak_time_ms`, `axis_peaks_percent`), from
-which the card's body is written; it no longer has `lanes`, `end_ms` or `peak_tr_ms`.
-`pns_card` has the table of peaks and the note about the model, gives no verdict, and has
-no chart: the stimulation over time is the PNS lane of the sequence diagram
-(`cards.diagram.diagram_card(..., pns_lane=True)`), which shares its `PnsLevels`
-computation with this card through `pns.pns_levels_for`. The card's own data is only
-what its script `assets/cards/pns.js` reads: `{"format": 1, "goto": ...}`, the message
-of the button that shows the peak in the diagram (the TR that holds the peak, or the
-block that holds it when the sequence has no `TR` definition). A card with no
-prediction has no button, no script and no data. The card needs the gradient `.asc` file
-of the scanner (`gradient_asc`): without it, the card has no prediction and runs no SAFE
-model. The browser checks the button.
+`test_pns_card.py` tests `cards/pns.py`. `pns_card(seq, *, targets, check_results, card_id)`
+shows the PNS of each target from its analysis result `pns.safe.levels` in the result matrix
+(principle 9 of `docs/plans/pulseq-checks.md`): the card runs no SAFE model. For each target,
+in order, it has a swatch of the target's color and its name, and then: with the state "done",
+a table of the hardware and the peak percent for all axes, Gx, Gy and Gz, and a button that
+shows the peak in the diagram; with another state, the reason of the result; without a result
+in the matrix, a sentence that says so. The percent of a value `v` is `100 * v /
+meta["threshold"]` of the series `pns_above_0` (decision P38). `_pns_data` (private) is the
+summary of the series `pns_total` in percent and ms, from which the body is written. Without
+targets, or without a matrix, the card has one muted note and no button, no script and no
+data. The card gives no verdict and has no chart: the stimulation over time is the PNS lane of
+the sequence diagram. The card's own data is what its script `assets/cards/pns.js` reads:
+`{"format": 2, "goto": [...]}`, with one entry for each target: the message of its button (the
+TR that holds the peak, or the block that holds it when the sequence has no `TR` definition),
+or `None` for a target with no button. The browser checks the buttons.
 
-The tests that need a prediction give the card a test gradient `.asc` file from the
-`write_gradient_asc` fixture of `tests/conftest.py` (the safe parameters of pypulseq's
-example hardware, with the hardware name "MP_GPA_TEST"; the real files are confidential).
+The tests make the matrix with `pulseq_checks.run_checks(..., select=[],
+analyses=["pns.safe.levels"])` for the example targets of `tests/profiles/` (A has the proton
+gamma, C a negative gamma, and both have the SAFE parameters of pypulseq's example hardware,
+which are invented), or, for a target without SAFE parameters, with the `make_profile` fixture.
+One target runs on the sequence object, and several run on a file in `tmp_path`.
 
 Most of the tests use the synthetic spin echo sequence
 (`tests/synthetic.py`'s `spin_echo_sequence`) or the three-TR sequence built
@@ -2224,102 +2227,211 @@ in this file (`_three_trs`: three
 **Assumptions for the whole file:**
 
 - The physics (the prediction itself and `peak_tr_window`) is
-  `pulseq_analysis.pns`'s, which has its own tests. These tests check only that the card wires that
-  physics into JSON data and HTML correctly.
+  `pulseq_analysis.pns`'s, and the matrix is `pulseq-checks`', which have their own tests.
+  These tests check only that the card wires the series into JSON data and HTML correctly.
+- The tests check names, reasons, numbers and which elements exist. They do not check the
+  text of a note.
 
-#### `test_pns_data_for_spin_echo`
+#### `test_pns_data_is_the_percent_of_the_threshold_of_the_result`
 
-**Checks:** For the synthetic spin echo sequence and a test `.asc` file, the PNS data has exactly the
-summary-only keys, uses the hardware and the file name of the `.asc` file, has a peak between 0 % and 100 % that is
-at least each axis peak, and has axis peaks keyed x, y and z.
+**Checks:** `_pns_data` gives the peak, each axis peak and the time of the peak of
+`pns_total` as `100 * v / meta["threshold"]` of `pns_above_0` (percent) and ms, with the
+hardware name of the result, and the threshold is the magnitude of the gamma of the target.
 
-**How:** The test makes the PNS data with `gradient_asc` set to the test file and checks its key set against the 6 summary
-keys. It checks that there is no reason, that the hardware is "MP_GPA_TEST" and `asc_file` is the file's name, that the peak is more than 0 % and less than 100 % and is at least each
-axis peak, and that the axis peaks are keyed x, y and z.
-
-**Assumptions:** None.
-
-#### `test_pns_data_matches_pns_prediction`
-
-**Checks:** `_pns_data`'s numbers are `pns.pns_prediction`'s own fields, converted to
-percent and ms.
-
-**How:** The test computes `pns.pns_prediction` and `_pns_data` with the test `.asc` file for the
-synthetic spin echo sequence and checks `peak_percent`, `peak_time_ms` and each axis of
-`axis_peaks_percent` against the prediction's `peak_hz_per_t`, `peak_time_s` and
-`axis_peaks_hz_per_t` (divided by |gamma| and converted), within the rounding the card applies.
+**How:** The test makes the matrix for target A and the spin echo sequence, reads the two
+series with `pns_series`, and compares each value of `_pns_data` with the formula, within a
+relative 1e-12. It checks that the threshold is `abs(gamma)` of the target, that the peak is
+between 0 % and 100 % and at least each axis peak, and that `asc_file` is None.
 
 **Assumptions:** None.
 
-#### `test_pns_data_for_each_tr_position`
+#### `test_the_percent_of_a_negative_gamma_target_uses_its_magnitude`
 
-**Checks:** For each position of the peak TR (first, second or third) in the
-three-TR sequence, the card still reports the right peak time.
+**Checks:** The PNS values of `pulseq-analysis` are in Hz/T of samples in Hz/m, so the same
+SAFE parameters give the same peak for a target with the proton gamma (A) and for one with a
+negative gamma (C), and the percent of C is the percent of A times the ratio of the
+magnitudes of the gammas (the threshold of C is a positive number).
 
-**How:** For peak TR k = 0, 1 and 2, the test makes `_three_trs(k)`, computes
-`pns.pns_prediction` and `_pns_data` with the test `.asc` file, and checks that `peak_time_ms` matches the
-prediction's own `peak_time_s` (converted) and falls inside the TR `[50k, 50(k + 1)]`
-ms.
+**How:** The test makes the matrix for A and C on a file, checks that the two gammas have
+opposite signs, that the threshold of C is `abs(gamma)`, that the two peaks (Hz/T) are equal
+within a relative 1e-12, and that the percent of C is above 0 and equals the percent of A times
+`abs(gamma_A / gamma_C)`.
 
-**Assumptions:**
+**Assumptions:** The SAFE parameters of examples A and C are the same (the files differ in the
+name and the gamma only).
 
-- TRs are counted from the start of the sequence, in steps of the TR definition.
+#### `test_the_card_shows_the_percent_of_each_target`
+
+**Checks:** The table of each target shows its own numbers: the peak and its time, the three
+axis peaks (each to one decimal), and the hardware name.
+
+**How:** The test builds the card for A and C, and for each target takes `_pns_data` from the
+same matrix and checks the body for the "peak at time" text, the three axis cells and the
+hardware cell, with the formats `.1f` and `.3f`. The two targets have different thresholds,
+so a card that used one threshold for both would fail.
+
+**Assumptions:** None.
 
 #### `test_report_has_pns_card`
 
-**Checks:** For the synthetic spin echo sequence and a test `.asc` file, the card has the id `"pns"`, the
-title "PNS prediction" and the script `"pns"`; its body has the hardware cell with the file's name, the peak rows,
-no chart, no SVG, no PNS view buttons and no verdict class; and `render_page` accepts it, with the title.
+**Checks:** For the synthetic spin echo sequence and target A, the card has the id `"pns"`,
+the title "PNS prediction" and the script `"pns"`; its body has the peak rows, the name of
+the target and the swatch of its color, no chart, no SVG and no verdict class; and
+`render_page` accepts it, with the title.
 
-**How:** The test builds the card and checks its `id`, `title` and `script`. It checks
-the body for a cell with the hardware name and the file's name, the rows for the peak of all axes, Gx, Gy and Gz, and that the
-body has no `<div class="chart">`, no `<svg`, no `data-pns-view`, no `status good` and no `status bad`. It renders the
-page and checks for the section element with the card's id and the
-`data-card-script="pns"` attribute, and the title.
-
-**Assumptions:** None.
-
-#### `test_report_without_gradients_has_no_pns_table`
-
-**Checks:** For a sequence without gradients, the card says that there is no PNS
-prediction and has no table, inside a rendered page.
-
-**How:** The test builds the card for the synthetic sequence with only a delay block
-(with the test `.asc` file) and renders the page. It checks for the note "No PNS prediction: no gradients." and
-that there is no `<table>` element.
+**How:** The test builds the card and checks its `id`, `title` and `script`. It checks the
+body for the rows for the peak of all axes, Gx, Gy and Gz, for the name of the target and
+`var(--target-1)`, and that the body has no `<div class="chart">`, no `<svg`, no `status good` and
+no `status bad`. It renders the page and checks for the section element with the card's id and
+the `data-card-script="pns"` attribute, and the title.
 
 **Assumptions:** None.
 
-#### `test_card_id_is_used_for_the_section_and_data_element`
+#### `test_two_targets_have_one_part_each_in_order`
 
-**Checks:** With a non-default `card_id`, the card's own id follows it, and its JSON
-data element key is that id too and holds the card's data, so two PNS cards can be on
+**Checks:** With two targets, the body has one part for each, in the order of the targets,
+each with its own color swatch, table and button.
+
+**How:** The test builds the card for the targets C and A (in that order) and checks that the
+name of C comes before the name of A, that the swatch `var(--target-1)` comes before the name
+of C and `var(--target-2)` before the name of A, that the body has two tables and two buttons,
+and that the buttons have the ids `pns-goto-0` and `pns-goto-1`, the first before the name of A.
+
+**Assumptions:** None.
+
+#### `test_the_goto_list_has_one_entry_for_each_target`
+
+**Checks:** The `goto` list of the card data has one entry for each target, in order: the
+payload of its button for a target with a result, and `None`, with no button, for a target
+without SAFE parameters.
+
+**How:** The test builds the card for A, a target without SAFE parameters, and C, in that
+order. It checks that the format is 2, that the list has 3 entries, that the first and the
+third are not None and are equal (the same sequence and the same Hz/T peak), that the second is
+None, and that the body has the buttons `pns-goto-0` and `pns-goto-2` and not `pns-goto-1`.
+
+**Assumptions:** None.
+
+#### `test_a_target_that_is_not_evaluated_has_its_reason_and_no_table`
+
+**Checks:** A target that gives no SAFE parameters has the reason of its result in the
+card, and no table, no button, no data and no script.
+
+**How:** The test makes the matrix for a target without SAFE parameters, checks that the
+result has a reason, builds the card and checks that the body has the name of the target and a
+part of the reason of `pulseq-checks` ("model pns.safe"), that it has no `<table` and no
+`<button`, that `data` and `script` are None and that `scripts` is empty.
+
+**Assumptions:** The reason of `pulseq-checks` names the missing model "pns.safe".
+
+#### `test_a_target_name_and_a_reason_are_escaped`
+
+**Checks:** The name of a target and the reason of its result are HTML-escaped.
+
+**How:** The test builds the card for a target named `a<b>&` without SAFE parameters, and
+checks that the body has the escaped name and not the raw `a<b>`.
+
+**Assumptions:** None.
+
+#### `test_a_target_without_a_result_in_the_matrix_says_so`
+
+**Checks:** A target for which the matrix has no `pns.safe.levels` result has its name and
+the analysis name in the card, and no table, no data and no script.
+
+**How:** The test gives the card a matrix with the target and no result (the `make_matrix`
+fixture) and checks the body for the target name and `pns.safe.levels`, for no `<table`, and
+that `data` and `script` are None.
+
+**Assumptions:** None.
+
+#### `test_without_targets_the_card_has_a_note_and_no_pns`
+
+**Checks:** With a matrix and no targets, the card has one muted note, no table, no button,
+no data, no script, no scripts and no `error`, the SAFE model does not run, and `render_page`
+accepts the card.
+
+**How:** The test makes the matrix, replaces the SAFE model with a function that raises (the
+chunk function of `pulseq_analysis.pns_levels`), builds the card with `targets=()` and checks
+`data`, `script`, `scripts`, that the body starts with `<p class="muted">` and has no `<table`
+and no `<button`, and that `error` is None. It renders the page.
+
+**Assumptions:** The chunk function is the one way into the SAFE model of `pulseq-analysis`
+(`pns_levels` calls it, and the other PNS functions call `pns_levels`).
+
+#### `test_without_a_matrix_the_card_has_a_note_and_no_pns`
+
+**Checks:** With a target and no matrix, the card has one muted note, no table, no button, no
+data and no script, and does not name the target, and the SAFE model does not run.
+
+**How:** The test replaces the SAFE model with a function that raises, builds the card with
+the target A and no matrix and checks `data`, `script`, `scripts`, the note, no `<table`, no
+`<button`, and that the name of the target is not in the body.
+
+**Assumptions:** The same as for the test without targets.
+
+#### `test_the_card_runs_no_safe_model`
+
+**Checks:** With a matrix that has the result, the card does not call the SAFE model.
+
+**How:** The test makes the matrix, replaces the SAFE model with a function that raises,
+builds the card and checks that it has data.
+
+**Assumptions:** The same as for the test without targets.
+
+#### `test_card_without_gradients_has_no_data_and_no_script`
+
+**Checks:** A sequence with no gradients gives a result that is "done" with no series, so the
+card names the target, and has no table, no button, no data and no script.
+
+**How:** The test builds the card for the empty synthetic sequence and target A, and checks
+that the body has the name of the target and no `<table` and no `<button`, and that `data` and
+`script` are None.
+
+**Assumptions:** None.
+
+#### `test_card_id_is_used_for_the_section_the_buttons_and_the_data_element`
+
+**Checks:** With a non-default `card_id`, the card's own id follows it, and so do the id of its
+button and its JSON data element key, which holds the card's data, so two PNS cards can be on
 one page without an id clash.
 
-**How:** The test builds the card with the test `.asc` file and `card_id="pns-b"` and checks that the card's own
-id and script (`"pns"`) are as given. It renders the page, checks the section
-`id="pns-b"`, reads the data element `id="pns-b-data"` and checks that its JSON is the
-card's `data`.
+**How:** The test builds the card with `card_id="pns-b"` and checks the id, the script
+(`"pns"`) and the button id `pns-b-goto-0`. It renders the page, checks the section
+`id="pns-b"`, reads the data element `id="pns-b-data"` and checks that its JSON is the card's
+`data`.
 
 **Assumptions:** None.
 
 #### `test_data_with_a_tr_definition_has_the_peak_tr_and_the_peak_time`
 
 **Checks:** For a sequence with a `TR` definition, the card's data is
-`{"format": 1, "goto": {"t0S", "t1S", "anchorS"}}`: the range is the TR that
-`pns.peak_tr_window` gives, and the anchor is the peak time.
+`{"format": 2, "goto": [{"t0S", "t1S", "anchorS"}]}`: the range is the TR that
+`pns.peak_tr_window` gives, and the anchor is the peak time of the result.
 
-**How:** The test builds the three-TR sequence with the peak in the second TR. It
-computes the prediction (with the test `.asc` file) and the window with `pns.pns_prediction` and
-`pns.peak_tr_window`, and checks that the card's data equals the format, the window
-and the peak time exactly, and that the window is 50 ms to 100 ms.
+**How:** The test builds the three-TR sequence with the peak in the second TR, makes the
+matrix and takes the peak time from `pns_total`. It computes the window with
+`pns.peak_tr_window`, and checks that the card's data equals the format, the window and the
+peak time exactly, and that the window is 50 ms to 100 ms.
 
 **Assumptions:** None.
+
+#### `test_the_peak_is_in_the_tr_with_the_fastest_slew`
+
+**Checks:** For each position of the peak TR (first, second or third) in the three-TR
+sequence, the card's `goto` is that TR, with the anchor inside it.
+
+**How:** For peak TR k = 0, 1 and 2, the test builds `_three_trs(k)` and the card for target A,
+and checks that `t0S` and `t1S` of the one `goto` entry are `0.05 k` and `0.05 (k + 1)` s and
+that the anchor is between them.
+
+**Assumptions:**
+
+- TRs are counted from the start of the sequence, in steps of the TR definition.
 
 #### `test_data_without_a_tr_definition_has_the_block_of_the_peak`
 
 **Checks:** For a sequence without a `TR` definition, the card's data is
-`{"format": 1, "goto": {"block": k}}`, with `k` the play index of a block that holds
+`{"format": 2, "goto": [{"block": k}]}`, with `k` the play index of a block that holds
 the peak time.
 
 **How:** The test takes the synthetic spin echo sequence, checks that
@@ -2328,34 +2440,6 @@ It reads the start and duration of block `k` from `seq_index.sequence_index` and
 that the block has a duration above zero and that the peak time is inside it.
 
 **Assumptions:** None.
-
-#### `test_card_without_gradients_has_no_data_and_no_script`
-
-**Checks:** A sequence with no gradients has no PNS prediction, so the card has no
-data, no script and no button.
-
-**How:** The test builds the card for the empty synthetic sequence (with the test `.asc` file) and checks that
-`data` and `script` are None and that the body has no `<button`.
-
-**Assumptions:** None.
-
-#### `test_card_without_gradient_asc_has_no_pns`
-
-**Checks:** Without `gradient_asc`, the card has no PNS: no data, no script, no scripts, no table and no
-button, no `error`, and the SAFE model does not run.
-
-**How:** The test builds the card for the synthetic spin echo sequence with no `gradient_asc`, with the
-`no_safe_model` fixture of `tests/conftest.py`, which replaces each way into the SAFE model
-(`pulseq_analysis.pns_levels.pns_levels`,
-`pulseq_analysis.pns.pns_levels_for`, `pulseq_analysis.pns.pns_prediction`,
-`cards.pns.pns_prediction` and `cards.diagram.pns_levels_for`) with a function that raises
-`AssertionError`. It checks `data` and `script` are None, `scripts` is empty, the body has no
-`<table` and no `<button`, and `error` is None, and that `render_page` accepts the card.
-
-**Assumptions:**
-
-- The five names of the fixture are each way that the library's cards reach the SAFE model. A
-  new way needs a new name in the fixture.
 
 ### 2.14 Gradient limits card (`test_gradient_limits_card.py`)
 
@@ -2799,17 +2883,18 @@ unlimited rows with the same `total`.
 sequence as `data["file"]` (its compressed block and event tables,
 `diagram_data`, plus `lane_meta`), and one entry in `data["windows"]` for each
 caller-given time window, with one button for each window in the given order
-(section 4.1 of `docs/plans/diagram-event-table.md`, and format 2 of
-`docs/plans/public-api.md`, section 4.1, item 6). There is no lane set and no point
+(section 4.1 of `docs/plans/diagram-event-table.md`; the data format is 3 since
+phase 7 of `docs/plans/pulseq-checks-implementation.md`, which made `file.pns` a list). There is no lane set and no point
 budget any more: every view is drawn in the browser from the tables (phase
 4's job is done there, not in Python). The last test is adapted from
 vb-pulseq's `test_report_has_zoom_controls_on_each_line_chart`.
 
-#### `test_data_has_format_2_with_file_and_window_keys`
+#### `test_data_has_format_3_with_file_and_window_keys`
 
 **Checks:** `diagram_card`'s data has the keys `format`, `file` and `windows`,
-with `format == 2`; the `file` entry has the keys `duration_s`, `num_blocks`,
-`lanes` and `tables` (no `name`), a `lanes` equal to `lane_meta(seq)`, a
+with `format == 3`; the `file` entry has the keys `duration_s`, `num_blocks`,
+`lanes` and `tables` (no `name`, and no `pns` without PNS data), a `lanes` equal to
+`lane_meta(seq)`, a
 `duration_s` and `num_blocks` equal to `waveforms.duration_s(seq)` and
 `len(seq.block_events)`, and each table entry has the keys `dtype`, `length`
 and `data`; there is one window entry for each given window, with the keys
@@ -2930,101 +3015,101 @@ characters.
 
 **Assumptions:** None.
 
-#### `test_pns_true_adds_the_pns_key_with_the_gradient_asc_hardware`
+#### `test_targets_and_a_matrix_without_pns_lane_add_no_pns_key`
 
-**Checks:** With `pns_lane=True` and a gradient `.asc` file, the `file` entry gets a `"pns"` key with the
-file's hardware, the SAFE parameters, the gradient raster, `gradScale`, `binSamples`, the
-summary and the stored level, all with the keys the plan's data section lists.
+**Checks:** With targets and a matrix that has the PNS result, but with `pns_lane=False`
+(the default), the data has no `pns` key.
 
-**How:** The test writes a test gradient `.asc` file with the `write_gradient_asc` fixture of
-`tests/conftest.py` (the real files are confidential), builds a diagram card with
-`pns_lane=True` and `gradient_asc` set to it for the synthetic spin echo
-sequence, and checks the `"pns"` entry's key set, that `hardware` is the file's hardware name
-("MP_GPA_TEST"), `example` is False and `asc_file` is the file's name, that `hw` has x, y, z
-each with the 8 SAFE fields, that `dtS` equals the sequence's own gradient raster time,
-that `gradScale` is exactly 1.0 (a proton sequence), that `binSamples` is positive,
-that the summary has `peak`, `peak_time_s` and `axis_peaks` with a peak between 0 and 1
-and a peak time, and that `levels` has `min` and `max` tables of dtype `float32`.
+**How:** The test makes the matrix for target A and the spin echo sequence, builds the card with
+the target and the matrix and no `pns_lane`, and checks that `file` has no `"pns"` key.
 
 **Assumptions:** None.
 
-#### `test_pns_true_without_gradient_asc_adds_no_pns_key_and_runs_no_safe_model`
+#### `test_one_target_gives_one_pns_entry_from_its_series`
 
-**Checks:** With `pns_lane=True` and no `gradient_asc`, the `file` entry has no `"pns"` key, the
-card has no `error`, and the SAFE model does not run.
+**Checks:** With `pns_lane=True`, one target and its matrix, `file.pns` is a list with one
+entry that has exactly the keys `target`, `color`, `hardware`, `asc_file`, `hw`, `dtS`,
+`binSamples`, `threshold`, `summary`, `levels` and `runs`. The values are those of the series
+of the result, with no division: the target name and the color `target-1`, the hardware name
+of `pns_total`, no `.asc` file, the SAFE parameters of the profile (the eight keys that
+`pns_lanes.js` reads, for each axis), the gradient raster, the bin size, the threshold
+(`abs(gamma)` of the target, Hz/T), the summary of `pns_total` (the peak, its time and the axis
+peaks, Hz/T, between 0 and the threshold), and `levels` and `runs` that decode to the arrays
+of the series exactly (float32 `min` and `max`, float64 `start` and `end`).
 
-**How:** The test builds a diagram card with `pns_lane=True` and no `gradient_asc` for the
-synthetic spin echo sequence, with the `no_safe_model` fixture of `tests/conftest.py`, which
-replaces each way into the SAFE model with a function that raises `AssertionError`. It checks
-that `"pns"` is not a key of the `file` entry and that `error` is None.
-
-**Assumptions:**
-
-- The names of the fixture are each way that the library's cards reach the SAFE model
-  (see `test_card_without_gradient_asc_has_no_pns` in `test_pns_card.py`).
-
-#### `test_gradient_asc_without_pns_lane_raises_value_error`
-
-**Checks:** `gradient_asc` without `pns_lane=True` raises `ValueError` (the file would
-be ignored).
-
-**How:** The test writes a test gradient `.asc` file (the `write_gradient_asc` fixture) and builds a
-diagram card with `gradient_asc` set to it and no `pns_lane`. It checks the
-`ValueError`, which names `gradient_asc`.
+**How:** The test makes the matrix, builds the card, and compares each field with the series
+and the profile. It decodes the tables with `pulseq_analysis.series.decode_array` and
+compares the arrays with `numpy.array_equal` and the dtypes.
 
 **Assumptions:** None.
+
+#### `test_two_targets_give_two_entries_in_order_with_their_own_thresholds`
+
+**Checks:** With two targets, `file.pns` has two entries in the order of the targets, with the
+colors `target-1` and `target-2` and their own thresholds, which are the magnitudes of their
+gammas also for a negative gamma. The levels and the summary, in Hz/T, are the same for two
+targets with the same SAFE parameters.
+
+**How:** The test makes the matrix for the targets C (a negative gamma) and A on a gradient
+echo sequence file, builds the card, and checks the order, the colors, the thresholds
+(`11.777e6` and `abs(gamma)` of A), that the gamma of C is negative, and that the
+encoded levels and the summaries of the two entries are equal.
+
+**Assumptions:** The SAFE parameters of examples A and C are the same.
+
+#### `test_a_target_that_is_not_evaluated_has_no_entry_and_is_named_with_its_reason`
+
+**Checks:** A target without SAFE parameters has no entry in `file.pns`, and the explanation
+under the chart names it, escaped, with the reason of its result; the other target has its
+entry, with the color of its place in the report (`target-2`), and is not named in the
+explanation.
+
+**How:** The test makes the matrix for a target named `no <safe>` and for A, builds the card
+and checks the entry, the escaped name and a part of the reason of `pulseq-checks`
+("model pns.safe") in the body, and that the name of A is not in the part of the body after the
+status line.
+
+**Assumptions:** The reason of `pulseq-checks` names the missing model "pns.safe".
+
+#### `test_without_a_pns_result_the_lane_has_no_entry`
+
+**Checks:** With `pns_lane=True`, no key `pns` is in `file` when there are no targets, when
+there is no matrix, when the matrix has no result for the target, and when the target is not
+evaluated. The card still builds, and in the last two cases its explanation names the target.
+
+**How:** The test builds the four cards for the spin echo sequence and checks `file`, `error`
+and, for the last two, that the body has the name of the target.
+
+**Assumptions:** None.
+
+#### `test_a_sequence_without_gradients_has_no_pns_entry`
+
+**Checks:** A sequence with no gradient event gives a result that is "done" with no series, so
+there is no `pns` key, and the card builds.
+
+**How:** The test builds the card for the empty sequence and target A and checks `file` and
+`error`.
+
+**Assumptions:** None.
+
+#### `test_the_lane_runs_no_safe_model`
+
+**Checks:** The card reads the matrix and does not call the SAFE model.
+
+**How:** The test makes the matrix, replaces the chunk function of the SAFE model of
+`pulseq_analysis.pns_levels` with a function that raises, builds the card, and checks that it
+has one entry.
+
+**Assumptions:** The chunk function is the one way into the SAFE model of `pulseq-analysis`.
 
 #### `test_pns_lane_that_is_not_a_bool_raises_type_error`
 
-**Checks:** A `pns_lane` that is not a `bool` raises `TypeError`, also for the values
-that are like a bool (`1`, `0`, and a NumPy bool).
+**Checks:** `diagram_card` raises `TypeError`, with `pns_lane` in the message, for a
+`pns_lane` that is not a `bool`: 1, 0, "yes", None and `numpy.True_`.
 
-**How:** For each of `1`, `0`, `"yes"`, `None` and `np.True_`, the test builds a
-diagram card for the synthetic spin echo sequence with that `pns_lane` and checks the
-`TypeError`, which names `pns_lane`.
+**How:** The test is parametrized over the five values and expects `TypeError`.
 
 **Assumptions:** None.
-
-#### `test_pns_grad_scale_for_a_sequence_with_another_gyromagnetic_ratio`
-
-**Checks:** `gradScale = GAMMA_1H / seq.system.gamma` (decision 14): not 1.0 for
-a sequence built with a non-proton gyromagnetic ratio.
-
-**How:** The test builds a one-block x-trapezoid sequence on a system with
-`gamma=11.262e6` (sodium, the same value the golden test of task 4.5 uses), builds a
-diagram card with `pns_lane=True` and a test gradient `.asc` file, and checks the `"pns"` entry's `gradScale` equals
-`GAMMA_1H / seq.system.gamma` (`GAMMA_1H = 42.576e6` of `tests/synthetic.py`) and is not 1.0.
-
-**Assumptions:** None.
-
-#### `test_pns_without_gradients_adds_no_pns_key`
-
-**Checks:** A file with no gradient event gets no `"pns"` key even when `pns_lane` is
-true.
-
-**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic sequence
-with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and checks that
-`"pns"` is not a key of the `file` entry.
-
-**Assumptions:** None.
-
-#### `test_pns_levels_decode_back_to_pns_levels_for_exactly`
-
-**Checks:** The `"levels"` key of the `"pns"` entry, decoded, equals
-`pns.pns_levels_for(seq, gradient_asc=...)`'s own `level_min_hz_per_t`/`level_max_hz_per_t`,
-divided by |gamma|, exactly.
-
-**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic spin echo
-sequence, decodes the `"pns"` entry's `"levels"` with `pulseq_analysis.series.decode_array` for each array, and
-compares the two arrays' dtype (`float32`) and values (`numpy.array_equal`) against
-`pns.pns_levels_for(seq, gradient_asc=...).level_min_hz_per_t`/`level_max_hz_per_t` of the same
-file, divided by |gamma|.
-
-**Assumptions:**
-
-- `diagram_card` and the direct `pns_levels_for` call read the same cached `PnsLevels`
-  for this sequence object (`pulseq_analysis.pns.pns_levels_for`'s own cache), so the
-  comparison is exact, not merely close.
 
 #### `test_group_controls_container_is_between_the_window_buttons_and_the_zoom_controls`
 
@@ -3087,40 +3172,6 @@ has no gradient), so its sentence is not keyed on the file's own data either.
 
 **How:** The test builds a diagram card for `tests/synthetic.py`'s `empty_sequence`
 (only a delay block) and checks that each of the two phrases appears in the body.
-
-**Assumptions:** None.
-
-#### `test_pns_explanation_sentence_present_when_the_card_has_pns_data`
-
-**Checks:** With `pns_lane=True` and a sequence with gradients, the card's body has
-the PNS lane's explanation sentence (naming the PNS lane, that it is a percent
-of the SAFE stimulation limit, and the "10 s or less" exact-view span).
-
-**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic spin
-echo sequence and checks that each of the three phrases ("PNS lane", "percent
-of the SAFE stimulation limit", "10 s or less") appears in the body.
-
-**Assumptions:** None.
-
-#### `test_pns_explanation_sentence_absent_by_default`
-
-**Checks:** Without `pns_lane` (the default, `False`), the explanation sentence is
-absent.
-
-**How:** The test builds a diagram card with no `pns_lane` argument and checks that
-none of the three explanation phrases appears in the body.
-
-**Assumptions:** None.
-
-#### `test_pns_explanation_sentence_absent_without_gradients_even_with_pns_true`
-
-**Checks:** A file with no gradient event gets no `"pns"` key even when `pns_lane` is
-true, so it gets no explanation sentence either: the sentence is keyed on
-the data (`has_pns`), not on the `pns_lane` argument alone.
-
-**How:** The test builds a diagram card with `pns_lane=True` and a test gradient `.asc` file for the synthetic
-sequence with only a delay block (`tests/synthetic.py`'s `empty_sequence`) and
-checks that none of the three explanation phrases appears in the body.
 
 **Assumptions:** None.
 
@@ -4223,16 +4274,22 @@ non-empty `rotation_library` and calls the card inside `pytest.raises`.
 
 `pns_lanes.js` computes the PNS lane of the sequence diagram in the browser, with
 no DOM and no network (`docs/plans/diagram-lanes.md`, phase 3): `PnsLanes.decode`
-builds a model from the diagram tables and a file's `pns` hardware/raster data;
+builds a model from the diagram tables, one entry of the `file.pns` list of the diagram data
+(the SAFE parameters, the raster, the stored level in Hz/T and the `threshold` of a target) and
+the factor `gradHzPerValue` from the gradient values of the tables to Hz/m;
 `exactView` gives the exact PNS of a short time range with the block maps of
 the prototype (`prototypes/pns_lanes/pns_lanes.js` in the tag
 `archive/pns-lanes-prototype`) (a scan with a checkpoint every `GROUP_BLOCKS`
 blocks), not a per-sample recursion over the whole file; `levels` builds the coarser
 pyramid levels of a stored level; `lanesFor` picks between the exact view and the
 pyramid for one render, as `SeqLanes.lanesFor` picks between the exact and the
-minimum/maximum view; `laneMeta` and `statusText` are the two pure helpers the
-diagram card script (`assets/cards/diagram.js`) uses to build the PNS lane's
-metadata and its status-line text (task 4.3).
+minimum/maximum view; `percent`, `laneMeta`, `runMarks`, `overlay`, `peaksText` and
+`statusText` are the pure helpers the diagram card script (`assets/cards/diagram.js`) uses to
+build the PNS lane of all the targets (one line for each, the runs as marks) and its
+status-line text (task 4.3 of the diagram lanes plan, and phase 7 of
+`docs/plans/pulseq-checks-implementation.md`). The model runs on gradient samples in Hz/m
+(`grad_value * gradHzPerValue`), so its totals are in Hz/T, and the lane values are
+`percent(v, threshold)`.
 
 The tests load `pns_lanes.js` directly, with Node's `require`, from
 `src/pulseq_reports/assets/pns_lanes.js`, the same way `test_seq_lanes.js` loads
@@ -4245,7 +4302,9 @@ explicit small table (`buildBorderTables`, `buildOffRasterTables`, and the two
 empty/no-gradient tables of the last two tests). The hardware numbers
 (`hwSet`/`HW`) are pypulseq's own `safe_example_hw()` values, copied from the
 table of the README in the tag `archive/pns-lanes-prototype`
-(`prototypes/pns_lanes/README.md`), not read from pypulseq.
+(`prototypes/pns_lanes/README.md`), not read from pypulseq. The test file has its own
+`HZ_PER_VALUE` (42576, the value of `SeqLanes.GRAD_HZ_PER_VALUE`) and a `THRESHOLD` of
+42576000 Hz/T for its models.
 
 Two independent references stand in for a Python or pypulseq comparison:
 `bruteForceTotals` re-derives the whole model (the gradient of each axis, the
@@ -4412,7 +4471,7 @@ identical objects (`assert.strictEqual`) passed in as the stored level.
 
 **Checks:** `lanesFor`'s item 1 (the exact view): a short, sample-poor view gives
 one segment of `[t_ms, percent]` points equal to the exact per-sample recursion
-(scaled to percent and milliseconds), with `exact: true`, `binMs: null`,
+(in percent of the model's threshold, and milliseconds), with `exact: true`, `binMs: null`,
 `gap: false`; a short but sample-rich view gives the same zigzag shape as
 `exactView`'s own "bins" kind, with `minmax: true`.
 
@@ -4428,8 +4487,8 @@ time against `(k + 0.5) * dt * 1000`. For a 500-sample view with 10 bins (forcin
 the "bins" kind), it calls `exactView` directly for the same range and bins, and
 checks that `lanesFor`'s zigzag segments (read back into a `{edge_ms: [min,
 max]}` map by `zigzagBins`, as `test_seq_lanes.js`'s `gotLineBins` reads
-`minMaxLanes`'s segments) hold exactly `[view.min[k] * 100, view.max[k] * 100]`
-at each non-empty bin's edge, and that an empty bin is absent from the map.
+`minMaxLanes`'s segments) hold exactly `[100 * view.min[k] / THRESHOLD, 100 *
+view.max[k] / THRESHOLD]` at each non-empty bin's edge, and that an empty bin is absent from the map.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -4492,28 +4551,68 @@ span already longer than `EXACT_MAX_S` is checked only for not throwing and
 
 **Assumptions:** None beyond the file's assumptions.
 
-#### `test_grad_scale_multiplies_every_gradient_sample`
+#### `test_grad_hz_per_value_multiplies_every_gradient_sample`
 
-**Checks:** `PnsLanes.decode` reads `pns.gradScale` and multiplies every
-gradient sample by it before the SAFE model (`grad_value / 1000 * gradScale`
-in T/m): a model decoded with `gradScale: 2` agrees, within 1e-12 of the
-peak, with a model of the same tables with every `grad_value` doubled and no
-`gradScale` key. A missing `gradScale` defaults to exactly `1.0`: a model
-decoded with no `gradScale` key gives bit-identical totals to one decoded
-with an explicit `gradScale: 1.0`.
+**Checks:** `PnsLanes.decode` multiplies every gradient sample by `gradHzPerValue`
+(`grad_value * gradHzPerValue`, in Hz/m) before the SAFE model: a model decoded with the factor
+`2 * F` agrees, within 1e-12 of the peak, with a model of the same tables with every
+`grad_value` doubled and the factor `F`.
 
 **How:** Builds a 60-block pseudo-random model (`buildPnsTables(60, 29,
-{durationOptionsDt: [15, 25], noEventProb: 0.3})`), decodes it once with
-`gradScale: 2` and once, from a copy of the tables with every `grad_value`
-doubled, with no `gradScale` key, and compares the two whole-file totals
-(`collectPlainRecursion`) with `assertWithinPeakTol` at `1e-12` (the two take
-different code paths to the same number: one scale multiply per sample
-against a pre-doubled input table, so the comparison uses the 1e-12 tolerance
-of `assertWithinPeakTol`, not bit-exactness). It then decodes the original
-tables twice more, once with no `gradScale` key and once with `gradScale: 1.0`,
-and checks the two totals arrays with `assert.deepEqual` (exact equality:
-multiplying a T/m value by `1.0` rounds to itself in IEEE 754 arithmetic, so
-this is the same code path both times).
+{durationOptionsDt: [15, 25], noEventProb: 0.3})`), decodes it once with the factor `2 * F`
+and once, from a copy of the tables with every `grad_value` doubled, with `F`, and compares
+the two whole-file totals (`collectPlainRecursion`) with `assertWithinPeakTol` at `1e-12` (the
+two take different code paths to the same number: one scale multiply per sample against a
+pre-doubled input table, so the comparison uses the 1e-12 tolerance, not bit-exactness). It
+also checks that the peak is above 0.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_totals_are_in_hz_per_t_of_the_samples_in_hz_per_m`
+
+**Checks:** The totals of the model are in Hz/T: they equal the brute force of the test file,
+which reads the tables with the factor `HZ_PER_VALUE` to Hz/m and divides by no gamma, and they
+are far above 1 (the size of a fraction of the limit) for these gradients.
+
+**How:** Builds a 40-block model, collects the plain recursion and the brute force, compares
+them with `assertWithinPeakTol` at `1e-12`, and checks that the peak of the brute force is
+above 1000.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_decode_refuses_a_threshold_and_a_factor_that_are_not_numbers_above_zero`
+
+**Checks:** `PnsLanes.decode` throws, with the name of the argument in the message, for a
+`threshold` of 0, -1, NaN, Infinity or undefined, and for a `gradHzPerValue` of NaN, Infinity or
+undefined.
+
+**How:** Decodes a 5-block model with each bad value and expects the error with
+`assert.throws` and a pattern.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_lanes_for_percent_is_100_times_the_total_over_the_threshold_of_the_model`
+
+**Checks:** The lane values of `lanesFor` are percent of the threshold of the model: a model
+with twice the threshold (same tables, same stored level) gives half the values, for the exact
+samples, the exact bins and the stored level of the pyramid.
+
+**How:** Takes the `buildPyramidModel(8)` model and a shallow copy with `threshold` doubled,
+calls `lanesFor` on both for a 1 ms view with 812 bins, a 5 ms view with 10 bins and a 20 s
+view with 100 bins, flattens the values of the segments and compares the second with the
+half of the first with `assertWithinPeakTol` at `1e-14`. It checks that each view has values.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_percent_is_100_times_the_value_over_the_threshold`
+
+**Checks:** `PnsLanes.percent(v, threshold)` is `100 * v / threshold` (0, 100, 25 and 200 for
+exact inputs), and it keeps the order of two values, so a stored float32 bound of the totals is
+still a bound of the percents.
+
+**How:** Calls `percent` with exact inputs and checks the results, and with two different
+float32 values and one threshold and checks that the percent of the smaller is not above the
+percent of the larger.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -4552,14 +4651,52 @@ finite coefficient, which stays exactly `0` in IEEE 754 arithmetic).
 **Checks:** `PnsLanes.laneMeta` gives the PNS lane's fixed fields (`id: "pns"`,
 `title: "PNS"`, `unit: "%"`, `color: "ink-2"`, `kind: "line"`, `ticks: [0, 100]`,
 `tick_labels: ["0", "100"]`, `empty: false`, `fill: 0.0`), and a `domain` whose low
-end is always 0 and whose high end is `1.1 * max(100, 100 * peak)` (plan section
-4.5, item 4): the same `[0, 110]` the old PNS card's chart used for a peak at or
-below the limit, widened to show a peak above it.
+end is always 0 and whose high end is `1.1 * max(100, the largest peak percent)`: the
+same `[0, 110]` the old PNS card's chart used for a peak at or below the limit, widened
+to show a peak above it. With several entries (targets) there is one domain: the peak of
+each entry is a percent of its own threshold, and the largest wins.
 
-**How:** Calls `PnsLanes.laneMeta` with a summary object and checks each fixed
-field. For `domain`, it calls `laneMeta` with peak 0.5, 0.86, 1.0 and 1.5 and
-checks the low end is exactly 0 and the high end is within 1e-9 of 110, 110, 110
-and 165 (a tolerance, since `1.1 * 100` is not exact in float64).
+**How:** Calls `PnsLanes.laneMeta` with a list of entries (`target`, `color`, `threshold`
+and `summary.peak`) and checks each fixed field. For `domain`, it calls `laneMeta` with one
+entry of peak 0.5, 1.0 and 1.5 times the threshold and checks the low end is exactly 0 and the
+high end is within 1e-9 of 110, 110 and 165 (a tolerance, since `1.1 * 100` is not exact in
+float64). It calls it with two entries, 3 MHz/T of a 12 MHz/T threshold (25 %) and 3 MHz/T of
+a 1 MHz/T threshold (300 %), in both orders, and checks the domain is 330.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_run_marks_are_the_runs_in_ms_in_the_color_of_the_target`
+
+**Checks:** `PnsLanes.runMarks(runs, color)` gives one `{lo, hi, color}` for each run, with
+`lo` and `hi` the start and end of the run in ms and the color token of the target, and an
+empty list for no run (a run of one sample has `lo == hi`).
+
+**How:** Calls it with two runs in seconds (one of one sample) and with empty arrays, and
+compares with `assert.deepEqual`.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_overlay_has_one_series_for_each_entry_and_the_marks`
+
+**Checks:** `PnsLanes.overlay(meta, entries, results, marks)` gives the lane of `meta` with a
+`series` of `{label, color, segments}` for each entry in order (the target name and its color
+token, and the segments of its `lanesFor` result), the given `marks` (the same array), no
+`segments` of its own and `minmax` only when a result has `minmax`; one entry still gives
+`series`, so the tooltip names the target.
+
+**How:** Builds two entries and two hand-made results, calls `overlay` and compares the lane
+with `assert.deepEqual` and `assert.strictEqual` (for the marks). It repeats it with results
+that have `minmax: true`, and with one entry.
+
+**Assumptions:** None beyond the file's assumptions.
+
+#### `test_peaks_text_gives_the_peak_percent_of_each_target`
+
+**Checks:** `PnsLanes.peaksText(entries)` gives the peak of each target, in percent of its
+own threshold to one decimal, with its name, in the order of the entries.
+
+**How:** Calls it with two entries (86.6 % of 42.576 MHz/T, and 3 MHz/T of 12 MHz/T) and
+compares the text.
 
 **Assumptions:** None beyond the file's assumptions.
 
@@ -4619,66 +4756,68 @@ false, onRaster: false})` and checks both give the bins sentence followed by
 
 ### 2.26 PNS lane against Python (`test_pns_lanes_golden.py`)
 
-The golden test of task 4.5 of `docs/plans/diagram-lanes.md`: the browser module
+The golden test of task 4.5 of `docs/plans/diagram-lanes.md`, for the PNS entries of the
+targets (phase 7 of `docs/plans/pulseq-checks-implementation.md`): the browser module
 `PnsLanes` (`src/pulseq_reports/assets/pns_lanes.js`) against the Python
 `pns_levels.pns_levels` pipeline, as `test_seq_lanes_golden.py` checks `SeqLanes`
-against a Python reference. `_run_golden` writes one sequence's diagram tables and its
-`pns` object (plan section 4.4, including `gradScale`, decision 14), from
-`cards.diagram._pns_entry`, the function that makes it for the page, to a JSON file,
-runs `tests/js/golden_pns_lanes.js` with Node on it, and reads back the JSON result:
-`PnsLanes.decode`, one `exactView` call for the whole file (forced to the "samples"
-kind by a bin count far larger than the sample count, so every sample comes back,
-never a minimum/maximum reduction), and the decoded pyramid (`model.levels`).
+against a Python reference. `_run_golden` runs the checks of one target on one sequence
+(`run_checks`, the analysis `pns.safe.levels`), builds the real diagram card with the target
+and the matrix, writes its tables and the first entry of `file.pns` to a JSON file, runs
+`tests/js/golden_pns_lanes.js` with Node on it, and reads back the JSON result:
+`PnsLanes.decode` (with `SeqLanes.GRAD_HZ_PER_VALUE`), one `exactView` call for the whole file
+(forced to the "samples" kind by a bin count far larger than the sample count, so every
+sample comes back, never a minimum/maximum reduction), its totals as percent
+(`PnsLanes.percent` with the threshold of the entry), and the decoded pyramid
+(`model.levels`).
 
 The Python reference (`_python_reference_totals`) is the same pipeline `pns_levels`
 itself runs (its own docstring, items 1 to 3), built again independently in this
 file, in a single call instead of `pns_levels`'s chunks: `GradientSampler.block_samples`
-of gx, gy and gz for the whole file, divided by `seq.system.gamma`, through pypulseq's
-`_safe_gwf_to_pns_chunk` (one chunk, `state=None`, example hardware), scaled by 0.01
-and combined as `sqrt(x^2 + y^2 + z^2)`. The pinned fork's chunk function does not depend
-on the chunk size (lean on pypulseq, decision 6: not tested here). `pulseq_analysis` divides
-by gamma after the SAFE model, and the reference before it, so the test is not exact: it
-also asserts `pns_levels(seq).peak_hz_per_t / abs(gamma) == totals.max()` to a relative
-1e-14, as a check that this file's one-call
-reference really is `pns_levels`'s own computation, not a second implementation of
-PNS.
+of gx, gy and gz for the whole file, in Hz/m (no gamma), through pypulseq's
+`_safe_gwf_to_pns_chunk` (one chunk, `state=None`, the SAFE parameters of the target via
+`pulseq_checks.safe_model.hw_from_dict`), scaled by 0.01 and combined as `sqrt(x^2 + y^2 +
+z^2)`: totals in Hz/T. The pinned fork's chunk function does not depend on the chunk size (lean
+on pypulseq, decision 6: not tested here). Both pipelines divide by no gamma, so the test
+also asserts that `pns_levels(seq).peak_hz_per_t` equals `totals.max()` exactly, as a check
+that this file's one-call reference really is `pns_levels`'s own computation, not a second
+implementation of PNS. The reference in percent is `100 * totals / threshold`, where the
+threshold is `abs(gamma)` of the profile, written in the test and not read from the entry.
 
 #### `test_pns_lanes_exact_view_and_levels_match_the_python_pipeline`
 
 **Checks:** `PnsLanes.decode` and `exactView`, run through Node on one sequence's real
-diagram tables and `pns` object, give the same whole-file PNS total, at the same
-sample times, as the Python `pns_levels` pipeline, within a relative 1e-12 of the peak
-(plan section 3.5, item 1); the stored level (`pns_levels`'s `level_min`/`level_max`)
-bounds every one of those JS exact samples in its own bin (plan section 4.2), within
-the same relative 1e-12 slack (the stored level comes from Python's chunked SAFE
-filter, the JS samples from the block maps -- different code paths over the same
-model); and each level of the decoded pyramid (`PnsLanes.levels`) is exactly the
-minimum/maximum of the 4 bins of the level below it (no rounding: a min/max reduction
-of already-float32 values).
+diagram tables and `pns` entry, give the same whole-file PNS in percent of the threshold of
+the target, at the same sample times, as the Python `pns_levels` pipeline, within a relative
+1e-12 of the peak (plan section 3.5, item 1); the stored level (`pns_levels`'s float32
+`level_min_hz_per_t`/`level_max_hz_per_t`, as it reaches the browser, in percent) bounds every
+one of those JS exact samples in its own bin (plan section 4.2), within the same relative
+1e-12 slack (the stored level comes from Python's chunked SAFE filter, the JS samples from the
+block maps -- different code paths over the same model), with no float32 spacing, because the
+level is not divided in Python; and each level of the decoded pyramid (`PnsLanes.levels`) is
+exactly the minimum/maximum of the 4 bins of the level below it (no rounding: a min/max
+reduction of already-float32 values).
 
-**How:** Parametrized over six sequences: the three synthetic builders of
-`tests/synthetic.py` that have a gradient event (`spin_echo_sequence`, `gre_sequence`,
-`arbitrary_gradient_sequence`; the empty sequence has no PNS bins to compare); a
+**How:** Parametrized over seven cases. Five are for target A (the proton gamma): the three
+synthetic builders of `tests/synthetic.py` that have a gradient event (`spin_echo_sequence`,
+`gre_sequence`, `arbitrary_gradient_sequence`; the empty sequence has no PNS bins to compare); a
 "border" sequence of two extended trapezoids whose gradient is not zero at the block
-junction (`synthetic.border_sequence()`, in `tests/synthetic.py`); a repeating sequence of 225 blocks (45 TRs of `gre_sequence`'s
-5 blocks each), more than `3 * PnsLanes.GROUP_BLOCKS` (192), so the test crosses more
-than 3 of the JavaScript block map's checkpoint groups; and a sequence built with
-`pp.Opts(gamma=11.262e6)` (sodium), with a small trapezoid on every axis (areas scaled
-down from the proton sequences', since sodium's smaller gamma gives a smaller
-max-gradient area in 1/m for the same mT/m hardware limit), so a wrong `gradScale`
-would show on all three axes.
+junction (`synthetic.border_sequence()`, in `tests/synthetic.py`); and a repeating sequence of
+225 blocks (45 TRs of `gre_sequence`'s 5 blocks each), more than `3 * PnsLanes.GROUP_BLOCKS`
+(192), so the test crosses more than 3 of the JavaScript block map's checkpoint groups. Two are
+for target C, whose gamma is negative (`spin_echo_sequence` and `gre_sequence`), so the
+threshold is the magnitude of its gamma. The sodium case of the earlier version is gone: the
+model runs on samples in Hz/m, so the gamma of the sequence does not enter, and the case would be
+the proton case.
 
-For each sequence: `_run_golden` builds the diagram tables and `pns_levels(seq)`,
-takes the `pns` object of plan section 4.4 from `cards.diagram._pns_entry(seq, levels)`
-(with `gradScale = GAMMA_1H / seq.system.gamma`, and `levels` encoded with
-`pulseq_analysis.series.encode_array` for each array, as float32), writes them, and runs
-`golden_pns_lanes.js`. The JS sample times are checked against `(k + 0.5) * dt` with
-exact array equality; the JS totals against the Python reference with
-`max(|diff|) <= 1e-12 * peak`; each stored bin's `level_min_hz_per_t`/`level_max_hz_per_t`,
-divided by |gamma|, against the min/max of the JS samples in that bin, with the same
-tolerance plus one float32 spacing of the stored value (the division rounds the float32
-level); and the pyramid level by
-level, with exact equality, against the level below it.
+For each case: `_run_golden` makes the matrix and the card data and runs
+`golden_pns_lanes.js`. The test checks that the threshold of the entry is `abs(gamma)` of the
+profile; that the chunked peak of `pns_levels` equals the maximum of the reference exactly and
+the peak of the entry; that the JS sample times equal `(k + 0.5) * dt` with exact array
+equality; the JS percent against the reference percent with `max(|diff|) <= 1e-12 * peak`; the
+stored level that reached JS against the one of `pns_levels` with exact equality; each
+stored bin's level, as percent, against the min/max of the JS samples in that bin, with the
+same tolerance; and the pyramid level by level, with exact equality, against the level below
+it.
 
 **Assumptions:**
 
@@ -4687,13 +4826,13 @@ level, with exact equality, against the level below it.
   range covers every sample regardless of the file's own duration (`sampleRangeFor`
   clamps to `[0, numSamples - 1]`), and the bin count is always more than half the
   sample count.
-- All six sequences are on the gradient raster (`PnsLanes.exactView` refuses a file
+- All the sequences are on the gradient raster (`PnsLanes.exactView` refuses a file
   that is not, and `GradientSampler.block_samples` raises for it); the test asserts
   `onRaster` is `true` as a guard, not as its own coverage goal (off-raster PNS is
   `pulseq-analysis`'s concern, per `docs/plans/diagram-lanes.md` section 4.1, item
   3).
-- The `sodium_gamma` case needs `PnsLanes.decode` to read `pns.gradScale`
-  (decision 14 of `docs/plans/diagram-lanes.md`).
+- The diagram tables have the gradient values in mT/m of the proton gamma, and
+  `SeqLanes.GRAD_HZ_PER_VALUE` changes them back to Hz/m (phase 7b removes both).
 
 ### 2.27 |G| lane (`test_g_lanes.js`)
 
@@ -7131,7 +7270,7 @@ this order, and no other card; their `order` values do not decrease.
 **Checks:** A card that builds has `error` None.
 
 **How:** `build_cards` for the synthetic spin echo sequence with all the library cards
-(the PNS card has no `gradient_asc`, and no card raises for this sequence). The test checks
+(the PNS card has no targets, and no card raises for this sequence). The test checks
 that the list is not empty and that each card's `error` is None.
 
 **Assumptions:** No library card raises for the synthetic spin echo sequence.
@@ -7204,7 +7343,8 @@ builder, with the same default as the option (decision 17 of the plan); and the 
 
 **Checks:** `build_cards` with targets makes the same cards (equal `Card` objects, not only
 the same ids) as `build_cards` without targets, but for the cards that use the targets
-(`_USE_TARGETS`: `gradient-limits` and `gradient-spectrum`), which are built in both cases.
+(`_USE_TARGETS`: `gradient-limits`, `gradient-spectrum` and `pns`), which are built in both
+cases.
 
 **How:** `build_cards` for the spin echo sequence with all the cards, twice without targets
 and once with two target profiles. The test checks that the second build without targets
@@ -7305,6 +7445,49 @@ builds any card.
 
 **How:** The recording spec, a profile `a` and a matrix with the target `b`. After the
 `ValueError`, the list of contexts that the build recorded is empty.
+
+**Assumptions:** None.
+
+#### `test_check_result_units_accepts_a_matrix_with_hz_per_t_and_a_matrix_without_pns`
+
+**Checks:** `registry.check_result_units` returns without an error for a matrix whose PNS
+series have the unit `"Hz/T"`, and for a matrix with no analysis result.
+
+**How:** The test makes the matrix of the analysis `pns.safe.levels` for the example target A
+with `run_checks`, and a matrix with no results (the `make_matrix` fixture), and calls the function
+for each.
+
+**Assumptions:** None.
+
+#### `test_check_result_units_raises_for_a_pns_series_in_the_unit_1`
+
+**Checks:** `registry.check_result_units` raises `ValueError`, with "Hz/T" in the message, for
+a matrix whose `pns.safe.levels` series have the unit `"1"`: the form of pulseq-checks
+`v0.1.0rc4` (decision P39 of the design).
+
+**How:** The test makes the matrix with `run_checks`, writes it as JSON, changes the unit of each series
+of each analysis result to `"1"`, reads it with `ResultMatrix.from_json` (the older form
+reads), checks that the result has series, and expects the error.
+
+**Assumptions:** None.
+
+#### `test_build_cards_raises_for_a_pns_series_in_the_unit_1_and_builds_no_card`
+
+**Checks:** `build_cards` raises `ValueError` with "Hz/T" in the message for the matrix of the
+previous test, before it builds any card.
+
+**How:** The recording spec, the target A and the matrix with the unit `"1"`. After the
+`ValueError`, the list of contexts that the build recorded is empty.
+
+**Assumptions:** None.
+
+#### `test_build_cards_accepts_a_matrix_with_hz_per_t`
+
+**Checks:** `build_cards` builds the cards for a matrix whose PNS series have the unit
+`"Hz/T"`.
+
+**How:** The recording spec, the target A and the matrix of `run_checks`. The recorder has seen
+one context.
 
 **Assumptions:** None.
 
@@ -7456,14 +7639,6 @@ These tests call `cli.main(argv)` in the test process, with a `.seq` file that `
 
 **Assumptions:** None.
 
-#### `test_a_relative_gradient_asc_is_read_from_the_config_file_directory`
-
-**Checks:** A relative `gradient_asc` in a config file is read from the config file's directory, not the current directory: the pns page equals the page of `--gradient-asc` with the absolute path.
-
-**How:** The current directory is another, empty directory.
-
-**Assumptions:** The PNS card's page does not depend on the .asc file's directory beyond its resolved path.
-
 #### Helpers for the target tests
 
 The tests of the targets use the profiles `tests/profiles/example_a.toml` (limits above the
@@ -7569,6 +7744,18 @@ the file name.
 the message has the file name.
 
 **How:** The file holds `{"a": 1}`.
+
+**Assumptions:** None.
+
+#### `test_a_result_file_with_a_pns_series_in_the_unit_1_exits_1_and_writes_no_page`
+
+**Checks:** A result file of the form of pulseq-checks `v0.1.0rc4` (a `pns.safe.levels` series
+with the unit `"1"`), which `ResultMatrix.from_json` reads, exits 1, runs no check, writes no
+page, and the message has the file name and "Hz/T" (decision P39 of the design).
+
+**How:** The test makes the matrix for target A with `run_checks`, changes the unit of each
+series in its JSON to `"1"`, writes the file and runs the command with `--target` and
+`--check-results`. The `no_checks` fixture makes the test fail if `run_checks` is called.
 
 **Assumptions:** None.
 

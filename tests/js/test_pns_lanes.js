@@ -17,6 +17,11 @@ const PnsLanes = require(
 // table of that README, not read from pypulseq.
 
 const DT = 1e-5; // the gradient raster, s (10 microseconds)
+// The factor from the mT/m of the tables to Hz/m (`SeqLanes.GRAD_HZ_PER_VALUE`), written here
+// again: the model's samples are in Hz/m and its totals in Hz/T.
+const HZ_PER_VALUE = 42576;
+// The stimulation limit of the test models, Hz/T (the magnitude of the proton gamma).
+const THRESHOLD = 42576000;
 
 function hwSet() {
   return {
@@ -27,14 +32,15 @@ function hwSet() {
 }
 const HW = hwSet();
 
-// The `pns` object of `PnsLanes.decode`, with a placeholder stored level
-// (`binSamples`/`levels` are not exercised unless a test overrides them:
+// The `pns` object of `PnsLanes.decode` (one entry of `file.pns`), with a placeholder stored
+// level (`binSamples`/`levels` are not exercised unless a test overrides them:
 // only `lanesFor`'s pyramid branch reads them).
 function trivialPns(overrides = {}) {
   return Object.assign(
     {
       dtS: DT,
       binSamples: 4,
+      threshold: THRESHOLD,
       hw: HW,
       levels: { min: Float32Array.from([0]), max: Float32Array.from([0]) },
     },
@@ -154,11 +160,11 @@ function bruteForceTotals(tables, dt, hw) {
           if (t < t0) {
             value = 0;
           } else if (p + 1 >= nPts) {
-            value = t <= t0 ? tables.grad_value[valAt + p] / 1000 : 0;
+            value = t <= t0 ? tables.grad_value[valAt + p] * HZ_PER_VALUE : 0;
           } else {
             const t1 = delay + tables.grad_offset[offAt + p + 1];
-            const v0 = tables.grad_value[valAt + p] / 1000;
-            const v1 = tables.grad_value[valAt + p + 1] / 1000;
+            const v0 = tables.grad_value[valAt + p] * HZ_PER_VALUE;
+            const v1 = tables.grad_value[valAt + p + 1] * HZ_PER_VALUE;
             value = t1 === t0 ? v1 : v0 + ((v1 - v0) / (t1 - t0)) * (t - t0);
           }
         }
@@ -321,8 +327,7 @@ function maxAbsDiff(a, b) {
   return m;
 }
 
-// Asserts `got` and `want` (same-length arrays of the PNS total, a fraction
-// of the limit) agree within `tol` of their peak (plan section 3.5, item 1:
+// Asserts `got` and `want` (same-length arrays of the PNS total, Hz/T) agree within `tol` of their peak (plan section 3.5, item 1:
 // the block maps and the plain recursion are the same model, so the
 // difference is float rounding only; the prototype measured 3.5e-15).
 function assertWithinPeakTol(got, want, tol, msg) {
@@ -332,8 +337,8 @@ function assertWithinPeakTol(got, want, tol, msg) {
   assert.ok(diff <= tol * Math.max(peak, 1e-300), `${msg}: diff=${diff} peak=${peak} tol=${tol}`);
 }
 
-function decodeModel(tables, overrides) {
-  return PnsLanes.decode(tables, trivialPns(overrides));
+function decodeModel(tables, overrides, gradHzPerValue = HZ_PER_VALUE) {
+  return PnsLanes.decode(tables, trivialPns(overrides), gradHzPerValue);
 }
 
 const LANE_META = {
@@ -681,7 +686,8 @@ test("test_lanes_for_exact_branch_is_percent_and_matches_the_plain_recursion", (
     const want = totals.subarray(k0, k1 + 1);
     const got = result.lane.segments[0];
     assert.equal(got.length, want.length);
-    const gotTotals = Float64Array.from(got, (p) => p[1] / 100);
+    // The lane is percent of the threshold: back to Hz/T for the comparison.
+    const gotTotals = Float64Array.from(got, (p) => p[1] * THRESHOLD / 100);
     assertWithinPeakTol(gotTotals, want, 1e-12, "exact samples branch");
     for (let idx = 0; idx < got.length; idx++) {
       assert.equal(got[idx][0], (k0 + idx + 0.5) * DT * 1000, `point ${idx} time`);
@@ -690,8 +696,8 @@ test("test_lanes_for_exact_branch_is_percent_and_matches_the_plain_recursion", (
 
   // Item 1, "bins": a short view with enough samples to switch to the
   // zigzag. Compared directly against `exactView`'s own "bins" kind: same
-  // numbers, only reformatted (percent, ms, zigzag), so this is exact
-  // equality, not a tolerance.
+  // numbers, only reformatted (percent of the threshold, ms, zigzag), so this is
+  // exact equality, not a tolerance.
   {
     const t0 = 0, t1 = 0.005; // 500 samples
     const bins = 10; // 500 > 2 * 10: kind "bins"
@@ -708,7 +714,11 @@ test("test_lanes_for_exact_branch_is_percent_and_matches_the_plain_recursion", (
         assert.ok(!gotMap.has(edgeMs), `bin ${k} should be absent (empty)`);
         continue;
       }
-      assert.deepEqual(gotMap.get(edgeMs), [view.min[k] * 100, view.max[k] * 100], `bin ${k}`);
+      assert.deepEqual(
+        gotMap.get(edgeMs),
+        [100 * view.min[k] / THRESHOLD, 100 * view.max[k] / THRESHOLD],
+        `bin ${k}`
+      );
     }
   }
 });
@@ -755,7 +765,7 @@ test("test_lanes_for_pyramid_branch_matches_brute_force_of_overlapping_level_bin
       assert.ok(!gotMap.has(edgeMs), `bin ${k} should be absent (empty)`);
       continue;
     }
-    assert.deepEqual(gotMap.get(edgeMs), [mn * 100, mx * 100], `bin ${k}`);
+    assert.deepEqual(gotMap.get(edgeMs), [100 * mn / THRESHOLD, 100 * mx / THRESHOLD], `bin ${k}`);
   }
 });
 
@@ -816,31 +826,73 @@ test("test_on_raster_false_never_uses_the_exact_view", () => {
   assert.equal(long.exact, false);
 });
 
-// ---- 9. gradScale (decision 14) ---------------------------------------------
+// ---- 9. gradHzPerValue and threshold ------------------------------------------
 
-test("test_grad_scale_multiplies_every_gradient_sample", () => {
-  // A model decoded with gradScale 2 must equal, within the peak tolerance,
-  // a model of the same tables with every grad_value doubled and no
-  // gradScale (decision 14: `grad_value / 1000 * gradScale` in T/m). This
-  // is not required to be bit-exact: the two models take different code
-  // paths to the same number (one scale multiply per sample against a
-  // pre-doubled input table), so 1e-12 of the peak is the bound, as in
-  // section 1 above.
+test("test_grad_hz_per_value_multiplies_every_gradient_sample", () => {
+  // A model decoded with the factor 2 * F must equal, within the peak tolerance, a model of the
+  // same tables with every grad_value doubled and the factor F (`grad_value * gradHzPerValue`
+  // in Hz/m). This is not required to be bit-exact: the two models take different code paths
+  // to the same number (one scale multiply per sample against a pre-doubled input table), so
+  // 1e-12 of the peak is the bound, as in section 1 above.
   const tables = buildPnsTables(60, 29, { durationOptionsDt: [15, 25], noEventProb: 0.3 });
   const doubledTables = { ...tables, grad_value: Float64Array.from(tables.grad_value, (v) => v * 2) };
-  const scaledModel = decodeModel(tables, { gradScale: 2 });
-  const doubledModel = decodeModel(doubledTables); // gradScale missing: defaults to 1.0
+  const scaledModel = decodeModel(tables, {}, 2 * HZ_PER_VALUE);
+  const doubledModel = decodeModel(doubledTables);
   const scaledTotals = collectPlainRecursion(scaledModel);
   const doubledTotals = collectPlainRecursion(doubledModel);
-  assertWithinPeakTol(scaledTotals, doubledTotals, 1e-12, "gradScale 2 vs doubled grad_value");
+  assert.ok(peakOf(scaledTotals) > 0);
+  assertWithinPeakTol(scaledTotals, doubledTotals, 1e-12, "factor 2 * F vs doubled grad_value");
+});
 
-  // A missing gradScale equals an explicit gradScale: 1.0 exactly: the same
-  // code path, and multiplying a T/m value by 1.0 rounds to itself.
-  const defaultModel = decodeModel(tables); // no gradScale key
-  const explicitModel = decodeModel(tables, { gradScale: 1.0 });
-  const defaultTotals = collectPlainRecursion(defaultModel);
-  const explicitTotals = collectPlainRecursion(explicitModel);
-  assert.deepEqual(Array.from(defaultTotals), Array.from(explicitTotals));
+test("test_totals_are_in_hz_per_t_of_the_samples_in_hz_per_m", () => {
+  // The SAFE model is linear: samples in Hz/m instead of T/m give the total times |gamma|.
+  // The brute force of this file reads the tables with the factor, so the model's totals equal
+  // it (and are far above 1, the size of a fraction of the limit, for these gradients).
+  const tables = buildPnsTables(40, 31, { durationOptionsDt: [20, 35], noEventProb: 0.3 });
+  const model = decodeModel(tables);
+  const brute = bruteForceTotals(tables, DT, HW);
+  assertWithinPeakTol(collectPlainRecursion(model), brute.total, 1e-12, "Hz/T totals");
+  assert.ok(peakOf(brute.total) > 1e3);
+});
+
+test("test_decode_refuses_a_threshold_and_a_factor_that_are_not_numbers_above_zero", () => {
+  const tables = buildPnsTables(5, 3);
+  for (const threshold of [0, -1, NaN, Infinity, undefined]) {
+    assert.throws(() => decodeModel(tables, { threshold }), /threshold/, `threshold ${threshold}`);
+  }
+  for (const factor of [NaN, Infinity, undefined]) {
+    assert.throws(
+      () => PnsLanes.decode(tables, trivialPns(), factor), /gradHzPerValue/, `factor ${factor}`
+    );
+  }
+});
+
+test("test_lanes_for_percent_is_100_times_the_total_over_the_threshold_of_the_model", () => {
+  // The same tables with the threshold doubled give half the percent, for the exact samples,
+  // for exact bins and for the stored level of the pyramid.
+  const { model, totals } = buildPyramidModel(8);
+  const doubled = { ...model, threshold: 2 * model.threshold };
+  for (const [viewMs, bins] of [[[0, 1], 812], [[0, 5], 10], [[0, 20000], 100]]) {
+    const one = PnsLanes.lanesFor(model, LANE_META, viewMs, bins);
+    const two = PnsLanes.lanesFor(doubled, LANE_META, viewMs, bins);
+    const flat = (r) => r.lane.segments.flat().map((p) => p[1]);
+    assert.ok(flat(one).length > 0);
+    assert.equal(flat(two).length, flat(one).length);
+    const half = Float64Array.from(flat(one), (v) => v / 2);
+    assertWithinPeakTol(Float64Array.from(flat(two)), half, 1e-14, `view ${viewMs}`);
+  }
+  assert.ok(peakOf(totals) > 0);
+});
+
+test("test_percent_is_100_times_the_value_over_the_threshold", () => {
+  assert.equal(PnsLanes.percent(0, THRESHOLD), 0);
+  assert.equal(PnsLanes.percent(THRESHOLD, THRESHOLD), 100);
+  assert.equal(PnsLanes.percent(0.25 * THRESHOLD, THRESHOLD), 25);
+  assert.equal(PnsLanes.percent(3e6, 1.5e6), 200);
+  // A division by the same threshold keeps the order, so a stored bound stays a bound.
+  const lo = Math.fround(1234567), hi = Math.fround(1234567.125);
+  assert.ok(lo < hi);
+  assert.ok(PnsLanes.percent(lo, 11.777e6) <= PnsLanes.percent(hi, 11.777e6));
 });
 
 // ---- 10. An empty file, and a file with no gradient event ---------------------
@@ -903,9 +955,14 @@ test("test_file_with_no_gradient_event_is_all_zero", () => {
 // ---- 11. laneMeta and statusText (task 4.3, the two pure helpers the diagram
 // card script uses) -----------------------------------------------------------
 
+// An entry of `file.pns` with only the keys that `laneMeta` and `peaksText` read.
+const entryOf = (target, color, peak, threshold) => (
+  { target, color, threshold, summary: { peak, peak_time_s: 0.01 } }
+);
+
 test("test_lane_meta_has_the_fixed_lane_fields_and_the_peak_dependent_domain", () => {
-  // Fixed fields: unchanged by the summary.
-  const meta = PnsLanes.laneMeta({ peak: 0.5, peak_time_s: 0.01, axis_peaks: { x: 0.1, y: 0.2, z: 0.3 } });
+  // Fixed fields: unchanged by the entries.
+  const meta = PnsLanes.laneMeta([entryOf("A", "target-1", 0.5 * THRESHOLD, THRESHOLD)]);
   assert.equal(meta.id, "pns");
   assert.equal(meta.title, "PNS");
   assert.equal(meta.unit, "%");
@@ -919,21 +976,76 @@ test("test_lane_meta_has_the_fixed_lane_fields_and_the_peak_dependent_domain", (
   assert.equal(meta.empty, false);
   assert.equal(meta.fill, 0.0);
 
-  // domain[0] is always 0; domain[1] is 1.1 * max(100, 100 * peak) (plan
-  // section 4.5, item 4): a peak below the limit still gives the [0, 110]
-  // domain the old PNS card's chart used, and a peak above the limit widens
-  // the domain to show it. 1.1 * 100 is not exact in float64, so these
+  // domain[0] is always 0; domain[1] is 1.1 * max(100, the largest peak percent): a peak
+  // below the limit still gives the [0, 110] domain the old PNS card's chart used, and a peak
+  // above the limit widens the domain to show it. 1.1 * 100 is not exact in float64, so these
   // compare within a tiny tolerance, not with deepEqual.
-  const domainOf = peak => PnsLanes.laneMeta({ peak }).domain;
-  const assertDomain = (peak, hi) => {
-    const [lo, got] = domainOf(peak);
-    assert.equal(lo, 0, `peak=${peak}`);
-    assert.ok(Math.abs(got - hi) < 1e-9, `peak=${peak}: expected ~${hi}, got ${got}`);
+  const assertDomain = (entries, hi) => {
+    const [lo, got] = PnsLanes.laneMeta(entries).domain;
+    assert.equal(lo, 0);
+    assert.ok(Math.abs(got - hi) < 1e-9, `expected ~${hi}, got ${got}`);
   };
-  assertDomain(0.5, 110);
-  assertDomain(0.86, 110);
-  assertDomain(1.0, 110);
-  assertDomain(1.5, 165);
+  assertDomain([entryOf("A", "target-1", 0.5 * THRESHOLD, THRESHOLD)], 110);
+  assertDomain([entryOf("A", "target-1", 1.0 * THRESHOLD, THRESHOLD)], 110);
+  assertDomain([entryOf("A", "target-1", 1.5 * THRESHOLD, THRESHOLD)], 165);
+  // One domain for all the targets: the largest peak percent, each in percent of its own
+  // threshold. 3 MHz/T is 25 % of 12 MHz/T and 300 % of 1 MHz/T.
+  assertDomain(
+    [entryOf("A", "target-1", 3e6, 12e6), entryOf("B", "target-2", 3e6, 1e6)], 330
+  );
+  assertDomain(
+    [entryOf("B", "target-2", 3e6, 1e6), entryOf("A", "target-1", 3e6, 12e6)], 330
+  );
+});
+
+test("test_run_marks_are_the_runs_in_ms_in_the_color_of_the_target", () => {
+  const runs = { start: Float64Array.from([0.001, 0.0125]), end: Float64Array.from([0.002, 0.0125]) };
+  assert.deepEqual(PnsLanes.runMarks(runs, "target-2"), [
+    { lo: 1, hi: 2, color: "target-2" },
+    { lo: 12.5, hi: 12.5, color: "target-2" },
+  ]);
+  const none = { start: new Float64Array(0), end: new Float64Array(0) };
+  assert.deepEqual(PnsLanes.runMarks(none, "target-1"), []);
+});
+
+test("test_overlay_has_one_series_for_each_entry_and_the_marks", () => {
+  const entries = [entryOf("A", "target-1", 1, 2), entryOf("B (x)", "target-2", 1, 2)];
+  const meta = PnsLanes.laneMeta(entries);
+  const seg = (v) => [[[0, v], [1, v]]];
+  const results = [
+    { lane: { ...meta, segments: seg(10) } },
+    { lane: { ...meta, segments: seg(20) } },
+  ];
+  const marks = [{ lo: 1, hi: 2, color: "target-1" }];
+  const lane = PnsLanes.overlay(meta, entries, results, marks);
+
+  assert.deepEqual(lane.series, [
+    { label: "A", color: "target-1", segments: seg(10) },
+    { label: "B (x)", color: "target-2", segments: seg(20) },
+  ]);
+  assert.strictEqual(lane.marks, marks);
+  assert.equal(lane.id, "pns");
+  assert.deepEqual(lane.domain, meta.domain);
+  assert.equal(lane.minmax, undefined);
+  assert.equal(lane.segments, undefined);
+
+  // `minmax` follows the results.
+  const minmax = results.map((r) => ({ lane: { ...r.lane, minmax: true } }));
+  assert.equal(PnsLanes.overlay(meta, entries, minmax, []).minmax, true);
+  // One entry still has `series`, so the tooltip names the target.
+  const one = PnsLanes.overlay(meta, entries.slice(0, 1), results.slice(0, 1), []);
+  assert.equal(one.series.length, 1);
+  assert.equal(one.series[0].label, "A");
+});
+
+test("test_peaks_text_gives_the_peak_percent_of_each_target", () => {
+  assert.equal(
+    PnsLanes.peaksText([
+      entryOf("A", "target-1", 0.866 * THRESHOLD, THRESHOLD),
+      entryOf("B (x)", "target-2", 3e6, 12e6),
+    ]),
+    "PNS peak: A 86.6 %; B (x) 25.0 %."
+  );
 });
 
 test("test_status_text_exact", () => {

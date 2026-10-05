@@ -7,38 +7,8 @@ options imports its object. An uppercase name in another module is a default val
 example `rf_exposure.B1RMS_WINDOW_S`.
 """
 
-from pathlib import Path
-
-from .registry import Flag, Option, OptionCli
+from .registry import Option
 from .rf_exposure import B1RMS_WINDOW_S
-
-
-def _gradient_asc_from_config(value: object, base_dir: Path) -> Path:
-    if not isinstance(value, str):
-        raise TypeError(f"gradient_asc must be a path: {value!r}")
-    return base_dir / value  # an absolute path replaces base_dir
-
-
-gradient_asc = Option(
-    "gradient_asc",
-    Path,
-    None,
-    "The gradient .asc file of the scanner, for the PNS prediction (without it, there is no "
-    "PNS prediction and no PNS lane).",
-    cli=OptionCli(
-        flags=(
-            Flag(
-                "--gradient-asc",
-                Path,
-                "The gradient .asc file of the scanner, for the PNS prediction (without it, "
-                "there is no PNS prediction and no PNS lane).",
-                metavar="PATH",
-            ),
-        ),
-        from_flags=lambda values: values["gradient_asc"],
-        from_config=_gradient_asc_from_config,
-    ),
-)
 
 periodic = Option(
     "periodic",
@@ -59,7 +29,8 @@ pns_lane = Option(
     "pns_lane",
     bool,
     False,
-    "Add the PNS lane to the sequence diagram (it runs the SAFE model, and needs gradient_asc).",
+    "Add the PNS lane to the sequence diagram (it needs targets that give SAFE parameters, "
+    "and their analysis results).",
 )
 
 views = Option(

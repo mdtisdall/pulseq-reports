@@ -1,43 +1,53 @@
+from pathlib import Path
+
 import numpy as np
-import pypulseq as pp
 import pytest
-from pulseq_analysis.pns import pns_levels_for
 from pulseq_analysis.series import decode_array
-from synthetic import GAMMA_1H, empty_sequence, gre_sequence, spin_echo_sequence
+from pulseq_checks import read_profile, run_checks
+from synthetic import empty_sequence, gre_sequence, spin_echo_sequence
 
 from pulseq_reports import page
 from pulseq_reports.cards.diagram import diagram_card
 from pulseq_reports.diagram_data import diagram_tables, lane_meta
 from pulseq_reports.markup import zoom_controls
+from pulseq_reports.targets import report_targets
 from pulseq_reports.waveforms import TimeWindow, duration_s, first_adc_window, full_window
 
+PROFILES = Path(__file__).parent / "profiles"
+A = read_profile(PROFILES / "example_a.toml")
+B = read_profile(PROFILES / "example_b.toml")
+C = read_profile(PROFILES / "example_c.toml")  # a negative gamma
 
-def _sodium_gradient_sequence() -> pp.Sequence:
-    """A one-block x trapezoid on a system with the gyromagnetic ratio of sodium
-    (11.262e6 Hz/T), so `gradScale = the proton gamma (42.576e6) / seq.system.gamma` (decision 14
-    of `docs/plans/diagram-lanes.md`) is not 1.0."""
-    system = pp.Opts(
-        max_grad=28,
-        grad_unit="mT/m",
-        max_slew=150,
-        slew_unit="T/m/s",
-        rf_ringdown_time=20e-6,
-        rf_dead_time=100e-6,
-        adc_dead_time=10e-6,
-        gamma=11.262e6,
+
+def _matrix(seq, profiles, tmp_path):
+    """The result matrix of the analysis `pns.safe.levels` for `profiles`. One target runs on
+    the sequence object, several on a file in `tmp_path`."""
+    if len(profiles) == 1:
+        sequence = seq
+    else:
+        sequence = str(tmp_path / "seq.seq")
+        seq.write(sequence)
+    return run_checks(sequence, list(profiles), select=[], analyses=["pns.safe.levels"])
+
+
+def _pns_card(seq, profiles, tmp_path, **kwargs):
+    return diagram_card(
+        seq,
+        [full_window(seq)],
+        pns_lane=True,
+        targets=report_targets(profiles),
+        check_results=_matrix(seq, profiles, tmp_path),
+        **kwargs,
     )
-    seq = pp.Sequence(system)
-    seq.add_block(pp.make_trapezoid(channel="x", area=1000, system=system))
-    return seq
 
 
-def test_data_has_format_2_with_file_and_window_keys():
+def test_data_has_format_3_with_file_and_window_keys():
     seq = spin_echo_sequence()
     card = diagram_card(seq, [first_adc_window(seq), full_window(seq)])
     data = card.data
 
     assert set(data) == {"format", "file", "windows"}
-    assert data["format"] == 2
+    assert data["format"] == 3
     file_entry = data["file"]
     assert set(file_entry) == {"duration_s", "num_blocks", "lanes", "tables"}
     assert file_entry["lanes"] == lane_meta(seq)
@@ -128,7 +138,8 @@ def test_diagram_card_has_zoom_controls_directly_before_its_chart():
     assert 'id="diagram-diagram"' in after[:400]
 
 
-# ---- `pns_lane` and `gradient_asc` (docs/plans/diagram-lanes.md, section 4.7) ----
+# ---- `pns_lane`, the targets and the result matrix (docs/plans/pulseq-checks-implementation.md,
+# section 4.7) ----
 
 
 def test_pns_false_by_default_adds_no_pns_key():
@@ -138,70 +149,168 @@ def test_pns_false_by_default_adds_no_pns_key():
     assert "pns" not in file_entry
 
 
-def test_pns_true_adds_the_pns_key_with_the_gradient_asc_hardware(write_gradient_asc):
+def test_targets_and_a_matrix_without_pns_lane_add_no_pns_key(tmp_path):
     seq = spin_echo_sequence()
-    path = write_gradient_asc()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
+    card = diagram_card(
+        seq,
+        [full_window(seq)],
+        targets=report_targets([A]),
+        check_results=_matrix(seq, [A], tmp_path),
+    )
+    assert "pns" not in card.data["file"]
+
+
+def test_one_target_gives_one_pns_entry_from_its_series(tmp_path):
+    seq = spin_echo_sequence()
+    matrix = _matrix(seq, [A], tmp_path)
+    card = diagram_card(
+        seq,
+        [full_window(seq)],
+        pns_lane=True,
+        targets=report_targets([A]),
+        check_results=matrix,
+    )
     file_entry = card.data["file"]
 
-    assert "pns" in file_entry
-    pns_entry = file_entry["pns"]
-    assert set(pns_entry) == {
+    assert isinstance(file_entry["pns"], list)
+    (entry,) = file_entry["pns"]
+    assert set(entry) == {
+        "target",
+        "color",
         "hardware",
-        "example",
         "asc_file",
         "hw",
         "dtS",
-        "gradScale",
         "binSamples",
+        "threshold",
         "summary",
         "levels",
+        "runs",
     }
-    assert pns_entry["hardware"] == "MP_GPA_TEST"
-    assert pns_entry["example"] is False
-    assert pns_entry["asc_file"] == path.name
-    assert set(pns_entry["hw"]) == {"x", "y", "z"}
-    for axis_hw in pns_entry["hw"].values():
-        assert set(axis_hw) == {
-            "tau1",
-            "tau2",
-            "tau3",
-            "a1",
-            "a2",
-            "a3",
-            "stim_limit",
-            "g_scale",
-        }
-    assert pns_entry["dtS"] == spin_echo_sequence().grad_raster_time
-    assert pns_entry["gradScale"] == 1.0  # a proton sequence (decision 14)
-    assert pns_entry["binSamples"] > 0
+    total, above = matrix.analysis(A.name, "pns.safe.levels").series
+    assert entry["target"] == A.name
+    assert entry["color"] == "target-1"
+    assert entry["hardware"] == total.meta["hardware"]
+    assert entry["asc_file"] is None
+    assert set(entry["hw"]) == {"x", "y", "z"}
+    for axis, axis_hw in entry["hw"].items():
+        assert set(axis_hw) == {"tau1", "tau2", "tau3", "a1", "a2", "a3", "stim_limit", "g_scale"}
+        for key, value in axis_hw.items():
+            assert value == A.models["pns.safe"][axis][key]
+    assert entry["dtS"] == seq.grad_raster_time == total.meta["dt_s"]
+    assert entry["binSamples"] == total.meta["bin_samples"] > 0
+    assert entry["threshold"] == above.meta["threshold"] == abs(A.make_opts().gamma)
 
-    summary = pns_entry["summary"]
-    assert set(summary) == {"peak", "peak_time_s", "axis_peaks"}
-    assert 0 < summary["peak"] < 1
-    assert summary["peak_time_s"] is not None
-    assert set(summary["axis_peaks"]) == {"x", "y", "z"}
-
-    assert set(pns_entry["levels"]) == {"min", "max"}
-    for table in pns_entry["levels"].values():
+    # The values are Hz/T as the series gives them: nothing is divided.
+    assert entry["summary"] == {
+        "peak": total.meta["peak"],
+        "peak_time_s": total.meta["peak_time_s"],
+        "axis_peaks": {axis: total.meta[f"axis_peaks_{axis}"] for axis in "xyz"},
+    }
+    assert 0 < entry["summary"]["peak"] < entry["threshold"]
+    assert set(entry["levels"]) == {"min", "max"}
+    for key, table in entry["levels"].items():
         assert set(table) == {"dtype", "length", "data"}
         assert table["dtype"] == "float32"
+        decoded = decode_array(table)
+        assert decoded.dtype == np.float32
+        assert np.array_equal(decoded, total.arrays[key])
+    assert set(entry["runs"]) == {"start", "end"}
+    for key, table in entry["runs"].items():
+        assert table["dtype"] == "float64"
+        assert np.array_equal(decode_array(table), above.arrays[key])
 
 
-def test_pns_true_without_gradient_asc_adds_no_pns_key_and_runs_no_safe_model(no_safe_model):
+def test_two_targets_give_two_entries_in_order_with_their_own_thresholds(tmp_path):
+    """The levels are in Hz/T of samples in Hz/m, so two targets with the same SAFE
+    parameters have the same levels, and the thresholds are the magnitudes of their gammas,
+    also for a negative gamma."""
+    seq = gre_sequence(num_trs=3)
+    card = _pns_card(seq, [C, A], tmp_path)
+    first, second = card.data["file"]["pns"]
+
+    assert [first["target"], second["target"]] == [C.name, A.name]
+    assert [first["color"], second["color"]] == ["target-1", "target-2"]
+    assert first["threshold"] == abs(C.make_opts().gamma) == 11.777e6
+    assert second["threshold"] == abs(A.make_opts().gamma)
+    assert C.make_opts().gamma < 0
+    for key in ("min", "max"):
+        assert first["levels"][key] == second["levels"][key]
+    assert first["summary"] == second["summary"]
+
+
+def test_a_target_that_is_not_evaluated_has_no_entry_and_is_named_with_its_reason(
+    make_profile, tmp_path
+):
     seq = spin_echo_sequence()
+    no_safe = make_profile("no <safe>")
+    card = _pns_card(seq, [no_safe, A], tmp_path)
 
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True)
+    (entry,) = card.data["file"]["pns"]
+    assert entry["target"] == A.name
+    assert entry["color"] == "target-2"  # the color of its place in the report
+    assert "no &lt;safe&gt;" in card.body_html
+    assert "model pns.safe" in card.body_html  # a part of the reason of pulseq-checks
+    assert A.name not in card.body_html.split('<p class="muted" id="diagram-mode"')[1]
 
+
+def test_without_a_pns_result_the_lane_has_no_entry(make_profile, make_matrix, tmp_path):
+    """No targets, no matrix, no analysis result for the target and a target that is not
+    evaluated each give no `"pns"` key, and the card still builds."""
+    seq = spin_echo_sequence()
+    window = [full_window(seq)]
+    no_safe = make_profile("no safe")
+
+    without_targets = diagram_card(
+        seq, window, pns_lane=True, check_results=_matrix(seq, [A], tmp_path)
+    )
+    without_matrix = diagram_card(seq, window, pns_lane=True, targets=report_targets([A]))
+    without_result = diagram_card(
+        seq,
+        window,
+        pns_lane=True,
+        targets=report_targets([no_safe]),
+        check_results=make_matrix(["no safe"]),
+    )
+    not_evaluated = diagram_card(
+        seq,
+        window,
+        pns_lane=True,
+        targets=report_targets([no_safe]),
+        check_results=_matrix(seq, [no_safe], tmp_path),
+    )
+
+    for card in (without_targets, without_matrix, without_result, not_evaluated):
+        assert "pns" not in card.data["file"]
+        assert card.error is None
+    assert "no safe" in without_result.body_html
+    assert "no safe" in not_evaluated.body_html
+
+
+def test_a_sequence_without_gradients_has_no_pns_entry(tmp_path):
+    seq = empty_sequence()
+    card = _pns_card(seq, [A], tmp_path)
     assert "pns" not in card.data["file"]
     assert card.error is None
 
 
-def test_gradient_asc_without_pns_lane_raises_value_error(write_gradient_asc):
+def test_the_lane_runs_no_safe_model(tmp_path, monkeypatch):
+    """The card reads the matrix. It does not call the SAFE model."""
     seq = spin_echo_sequence()
-    path = write_gradient_asc()
-    with pytest.raises(ValueError, match="gradient_asc"):
-        diagram_card(seq, [full_window(seq)], gradient_asc=path)
+    matrix = _matrix(seq, [A], tmp_path)
+
+    def raise_error(*args, **kwargs):
+        raise AssertionError("the SAFE model ran")
+
+    monkeypatch.setattr("pulseq_analysis.pns_levels._safe_gwf_to_pns_chunk", raise_error)
+    card = diagram_card(
+        seq,
+        [full_window(seq)],
+        pns_lane=True,
+        targets=report_targets([A]),
+        check_results=matrix,
+    )
+    assert len(card.data["file"]["pns"]) == 1
 
 
 @pytest.mark.parametrize("pns_lane", [1, 0, "yes", None, np.True_])
@@ -209,43 +318,6 @@ def test_pns_lane_that_is_not_a_bool_raises_type_error(pns_lane):
     seq = spin_echo_sequence()
     with pytest.raises(TypeError, match="pns_lane"):
         diagram_card(seq, [full_window(seq)], pns_lane=pns_lane)
-
-
-def test_pns_grad_scale_for_a_sequence_with_another_gyromagnetic_ratio(write_gradient_asc):
-    """`gradScale = the proton gamma (42.576e6) / seq.system.gamma` (decision 14): not 1.0 for a
-    sequence built with a non-proton gyromagnetic ratio (here sodium, 11.262e6 Hz/T, as
-    in the golden test of task 4.5)."""
-    seq = _sodium_gradient_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
-    file_entry = card.data["file"]
-    assert file_entry["pns"]["gradScale"] == pytest.approx(GAMMA_1H / seq.system.gamma)
-    assert file_entry["pns"]["gradScale"] != 1.0
-
-
-def test_pns_without_gradients_adds_no_pns_key(write_gradient_asc):
-    seq = empty_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
-    file_entry = card.data["file"]
-    assert "pns" not in file_entry
-
-
-def test_pns_levels_decode_back_to_pns_levels_for_exactly(write_gradient_asc):
-    """The `"levels"` key of the `"pns"` entry, decoded, equals the `level_min_hz_per_t`/
-    `level_max_hz_per_t` of `pns.pns_levels_for(seq, gradient_asc=...)`, divided by |gamma|,
-    exactly (the same values, encoded and decoded with
-    `pulseq_analysis.series.encode_array`/`decode_array`)."""
-    seq = spin_echo_sequence()
-    path = write_gradient_asc()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=path)
-    file_entry = card.data["file"]
-
-    decoded = {name: decode_array(d) for name, d in file_entry["pns"]["levels"].items()}
-    levels = pns_levels_for(seq, gradient_asc=path)
-    assert decoded["min"].dtype == np.float32
-    assert decoded["max"].dtype == np.float32
-    g = abs(seq.system.gamma)
-    assert np.array_equal(decoded["min"], levels.level_min_hz_per_t / g)
-    assert np.array_equal(decoded["max"], levels.level_max_hz_per_t / g)
 
 
 # ---- lane groups (docs/plans/diagram-lanes.md, section 4.5, item 3): the
@@ -292,27 +364,6 @@ def test_group_controls_container_present_even_without_pns_data():
     assert _GROUP_CONTROLS in card.body_html
 
 
-_PNS_EXPLANATION_PHRASES = (
-    "PNS lane",
-    "percent of the SAFE stimulation limit",
-    "10 s or less",
-)
-
-
-def test_pns_explanation_sentence_present_when_the_card_has_pns_data(write_gradient_asc):
-    seq = spin_echo_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
-    for phrase in _PNS_EXPLANATION_PHRASES:
-        assert phrase in card.body_html, phrase
-
-
-def test_pns_explanation_sentence_absent_by_default():
-    seq = spin_echo_sequence()
-    card = diagram_card(seq, [full_window(seq)])  # pns_lane=False
-    for phrase in _PNS_EXPLANATION_PHRASES:
-        assert phrase not in card.body_html, phrase
-
-
 _G_EXPLANATION_PHRASES = ("|G| lane", "magnitude of the gradient vector")
 
 
@@ -331,15 +382,3 @@ def test_g_lane_explanation_sentence_present_even_without_gradients():
     card = diagram_card(seq, [full_window(seq)])
     for phrase in _G_EXPLANATION_PHRASES:
         assert phrase in card.body_html, phrase
-
-
-def test_pns_explanation_sentence_absent_without_gradients_even_with_pns_true(
-    write_gradient_asc,
-):
-    """A file with no gradient event gets no `"pns"` key (`_diagram_data`) even when
-    `pns` is not False, so it gets no PNS sentence either: the explanation is keyed
-    on the data (`has_pns` in `diagram_card`), not on the `pns` argument alone."""
-    seq = empty_sequence()
-    card = diagram_card(seq, [full_window(seq)], pns_lane=True, gradient_asc=write_gradient_asc())
-    for phrase in _PNS_EXPLANATION_PHRASES:
-        assert phrase not in card.body_html, phrase

@@ -331,6 +331,24 @@ def _names(name: str, value: Iterable[str] | None, known: set[str]) -> list[str]
     return names
 
 
+def check_result_units(matrix: ResultMatrix) -> None:
+    """Raises `ValueError` when an analysis result `pns.safe.levels` of `matrix` has a series
+    whose unit is not `"Hz/T"`: a result of pulseq-checks `v0.1.0rc4`, whose PNS values are
+    fractions of the limit (unit `"1"`). No code reads that older form (decision P39 of
+    `docs/plans/pulseq-checks.md`)."""
+    for target in matrix.targets:
+        result = matrix.analysis(target.name, "pns.safe.levels")
+        if result is None:
+            continue
+        for series in result.series:
+            if series.unit != "Hz/T":
+                raise ValueError(
+                    f"the series {series.name!r} of the analysis result pns.safe.levels of the "
+                    f"target {target.name!r} has the unit {series.unit!r}, not 'Hz/T': it is a "
+                    "result of pulseq-checks v0.1.0rc4 or earlier, so run the checks again"
+                )
+
+
 def _check_inputs(
     seq: pp.Sequence, profiles: Sequence[TargetProfile], check_results: ResultMatrix | None
 ) -> tuple[ReportTarget, ...]:
@@ -349,6 +367,7 @@ def _check_inputs(
                 f"the targets of check_results are {matrix}, and the targets of the report are "
                 f"{given}: they must be the same names, in the same order"
             )
+        check_result_units(check_results)
     return targets
 
 
@@ -374,8 +393,9 @@ def build_cards(
 
     Raises `ValueError` when `seq.system.gamma` or the gamma of a target is 0 or not finite, for
     more than `targets.MAX_TARGETS` targets or two targets with one name, when the target
-    names of `check_results` are not the names of `targets` in the same order, for a name
-    in `cards` or `skip` that no spec has, and for the errors of `discover`. Raises
+    names of `check_results` are not the names of `targets` in the same order, when
+    `check_results` has a PNS series with a unit other than "Hz/T" (`check_result_units`),
+    for a name in `cards` or `skip` that no spec has, and for the errors of `discover`. Raises
     `TypeError` for a target that is not a `TargetProfile`, for `check_results` that is
     not a `ResultMatrix`, and for an option that no selected card declares.
     When the `when` or the `build` of a card raises an exception (for example

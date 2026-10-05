@@ -1,10 +1,13 @@
 import dataclasses
 import inspect
+import json
 import logging
+from pathlib import Path
 
 import pypulseq as pp
 import pytest
 from plugin_card import CSS, SCRIPT, SPEC, make_spec
+from pulseq_checks import ResultMatrix, read_profile, run_checks
 from synthetic import spin_echo_sequence
 
 from pulseq_reports import options, page, registry
@@ -281,7 +284,8 @@ _BUILDERS = {
     "definitions": definitions_card,
     "blocks": blocks_card,
 }
-# The keywords that the command line does not set (section 4.4, item 3 of the plan).
+# The keywords that the command line does not set (section 4.4, item 3 of the plan): the id of
+# the card, the windows, and the targets and the result matrix that the caller gives.
 _NOT_OPTIONS = {"card_id", "windows", "targets", "check_results"}
 
 
@@ -331,7 +335,7 @@ def test_a_report_without_targets_has_no_targets_and_no_check_results(seen):
 
 # The library cards that use the targets: their cards change with targets. A phase that makes
 # a card use the targets adds its name.
-_USE_TARGETS = {"gradient-limits", "gradient-spectrum"}
+_USE_TARGETS = {"gradient-limits", "gradient-spectrum", "pns"}
 
 
 def test_targets_do_not_change_the_cards_that_are_built(plugin, make_profile):
@@ -459,3 +463,58 @@ def test_no_card_is_built_when_the_inputs_raise(seen, make_profile, make_matrix)
         )
 
     assert seen == []
+
+
+A_PATH = Path(__file__).parent / "profiles" / "example_a.toml"
+
+
+def _pns_matrix(unit: str | None = None) -> ResultMatrix:
+    """The result matrix of the analysis `pns.safe.levels` of a spin echo for example A. With
+    `unit`, the unit of each series is that text: `"1"` is the form of pulseq-checks
+    `v0.1.0rc4`, with PNS values that are fractions of the limit."""
+    matrix = run_checks(
+        spin_echo_sequence(), [read_profile(A_PATH)], select=[], analyses=["pns.safe.levels"]
+    )
+    if unit is None:
+        return matrix
+    data = json.loads(matrix.to_json())
+    for analysis in data["analyses"]:
+        for series in analysis["series"]:
+            series["unit"] = unit
+    return ResultMatrix.from_json(json.dumps(data))
+
+
+def test_check_result_units_accepts_a_matrix_with_hz_per_t_and_a_matrix_without_pns(make_matrix):
+    registry.check_result_units(_pns_matrix())
+    registry.check_result_units(make_matrix(["a"]))
+
+
+def test_check_result_units_raises_for_a_pns_series_in_the_unit_1():
+    matrix = _pns_matrix(unit="1")
+    assert matrix.analysis(read_profile(A_PATH).name, "pns.safe.levels").series
+
+    with pytest.raises(ValueError, match="Hz/T"):
+        registry.check_result_units(matrix)
+
+
+def test_build_cards_raises_for_a_pns_series_in_the_unit_1_and_builds_no_card(seen):
+    with pytest.raises(ValueError, match="Hz/T"):
+        build_cards(
+            spin_echo_sequence(),
+            cards=["recorder"],
+            targets=[read_profile(A_PATH)],
+            check_results=_pns_matrix(unit="1"),
+        )
+
+    assert seen == []
+
+
+def test_build_cards_accepts_a_matrix_with_hz_per_t(seen):
+    build_cards(
+        spin_echo_sequence(),
+        cards=["recorder"],
+        targets=[read_profile(A_PATH)],
+        check_results=_pns_matrix(),
+    )
+
+    assert len(seen) == 1

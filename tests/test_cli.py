@@ -314,28 +314,6 @@ def test_a_flag_of_a_skipped_card_exits_1_and_names_the_flag_and_the_card(
     assert not out.exists()
 
 
-def test_a_relative_gradient_asc_is_read_from_the_config_file_directory(
-    seq_file, tmp_path, write_gradient_asc, monkeypatch
-):
-    asc = write_gradient_asc()
-    site = tmp_path / "site"
-    site.mkdir()
-    (site / "scanner.asc").write_bytes(asc.read_bytes())
-    config = _config(site, ".toml", 'gradient_asc = "scanner.asc"\n')
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    monkeypatch.chdir(elsewhere)
-    out = tmp_path / "out.html"
-    flags_out = tmp_path / "flags.html"
-
-    args = ["--cards", "pns"]
-    assert cli.main([str(seq_file), "-o", str(out), "--config", str(config), *args]) == 0
-    assert cli.main([str(seq_file), "-o", str(flags_out), "--gradient-asc",
-                     str(site / "scanner.asc"), *args]) == 0  # fmt: skip
-
-    assert out.read_text(encoding="utf-8") == flags_out.read_text(encoding="utf-8")
-
-
 class Spy:
     """What the command passed to `build_cards` (`built`, the keyword arguments of each call)
     and to `run_checks` (`runs`, a pair of the arguments and the keywords of each call)."""
@@ -588,6 +566,28 @@ def test_a_result_file_that_is_not_a_matrix_exits_1(seq_file, tmp_path, capsys, 
     argv = [str(seq_file), *_target_flags(A_PATH), "--check-results", str(results)]
 
     assert "results.json" in _fails(argv, tmp_path / "out.html", capsys)
+
+
+def test_a_result_file_with_a_pns_series_in_the_unit_1_exits_1_and_writes_no_page(
+    seq_file, tmp_path, capsys, no_checks
+):
+    """A result of pulseq-checks `v0.1.0rc4` reads, but its PNS values are fractions of the
+    limit (decision P39 of `docs/plans/pulseq-checks.md`)."""
+    matrix = run_checks(
+        str(seq_file), [read_profile(A_PATH)], select=[], analyses=["pns.safe.levels"]
+    )
+    data = json.loads(matrix.to_json())
+    for analysis in data["analyses"]:
+        for series in analysis["series"]:
+            series["unit"] = "1"
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(data), encoding="utf-8")
+    argv = [str(seq_file), *_target_flags(A_PATH), "--check-results", str(results)]
+
+    err = _fails(argv, tmp_path / "out.html", capsys)
+
+    assert "results.json" in err
+    assert "Hz/T" in err
 
 
 def test_a_missing_profile_exits_1(seq_file, tmp_path, capsys, no_checks):

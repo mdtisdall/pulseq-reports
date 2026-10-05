@@ -9,34 +9,34 @@ each lane in each of the plot's time bins otherwise, so the card works for a fil
 to 10^7 blocks (`docs/plans/diagram-event-table.md`).
 
 With `pns_lane`, a sequence that has a gradient event also gets a `"pns"` key in
-the card's `"file"` entry (`docs/plans/diagram-lanes.md`, section 4.4): the SAFE
-hardware, the gradient raster, the gyromagnetic-ratio scale and the stored minimum/maximum
-level of `pns.pns_levels_for` (the same `PnsLevels` that the PNS summary card uses for the same
-`gradient_asc`, so a page with both computes the SAFE model once for one sequence). The
-browser (`assets/pns_lanes.js`) decodes it into the PNS lane. `pns_lane` is False by
-default: computing it costs the SAFE model's own time (section 4.1 of that plan), which
-a caller opts into. The lane needs `gradient_asc`, the gradient .asc file of the scanner:
-with `pns_lane` and no `gradient_asc`, the card has no `"pns"` key and a note says that
-the lane needs `gradient_asc`.
+the card's `"file"` entry (`docs/plans/pulseq-checks-implementation.md`, section 4.7): a
+list with one entry for each target whose analysis result `pns.safe.levels` in the result
+matrix is "done" and has the series `pns_total` and `pns_above_0`. An entry has the target
+name and color, the SAFE parameters of the target, the gradient raster, the stimulation
+limit `threshold`, the summary, the stored minimum/maximum levels of `pns_total` (Hz/T,
+unchanged) and the runs of `pns_above_0`. The PNS of a target comes only from the matrix
+(principle 9 of `docs/plans/pulseq-checks.md`): the card does not run the SAFE model. The
+browser (`assets/pns_lanes.js`) decodes the list into the PNS lane. `pns_lane` is False by
+default. For a target without an entry (no matrix, no result, another state) the
+explanation paragraph says why.
 """
 
 import html
 from collections.abc import Sequence
-from pathlib import Path
 
 import pypulseq as pp
 from pulseq_analysis.extensions import refuse_rotations
-from pulseq_analysis.pns import pns_levels_for
-from pulseq_analysis.pns_levels import PnsLevels
-from pulseq_analysis.series import encode_array
+from pulseq_analysis.series import Series, encode_array
+from pulseq_checks import ResultMatrix
 
 from .. import options
 from ..diagram_data import diagram_tables, lane_meta
 from ..markup import zoom_controls
 from ..page import Card, card_asset
 from ..registry import CardSpec, ReportContext
-from ..units import PROTON_GAMMA, gamma_magnitude
+from ..targets import ReportTarget
 from ..waveforms import TimeWindow, _check_windows, duration_s
+from .pns import pns_series
 
 PUBLISHES = ("sequence", "cursor", "anchor", "view")
 SUBSCRIBES = ("goto",)
@@ -46,33 +46,67 @@ def _ms(t_s: float) -> float:
     return round(t_s * 1e3, 4)
 
 
-def _pns_entry(seq: pp.Sequence, levels: PnsLevels) -> dict:
-    """The `"pns"` key of the `"file"` entry (`docs/plans/diagram-lanes.md`, section 4.4),
-    from `levels` (`pns.pns_levels_for(seq, gradient_asc=...)`): the hardware, the SAFE
-    parameters, the gradient raster and the gyromagnetic-ratio scale (`PROTON_GAMMA /
-    seq.system.gamma`, decision 14 of that plan), the summary, and the stored level,
-    encoded with `encode_array`. `levels` gives its values in Hz/T (the fraction of the
-    stimulation limit times |gamma|), so the summary and the levels are divided by
-    |`seq.system.gamma`|: they stay fractions of the limit."""
-    g = gamma_magnitude(seq.system.gamma)
+_HW_KEYS = ("tau1", "tau2", "tau3", "a1", "a2", "a3", "stim_limit", "g_scale")
+
+
+def _pns_entry(target: ReportTarget, total: Series, above: Series) -> dict:
+    """The entry of `target` in the `"pns"` list of the `"file"` entry
+    (`docs/plans/pulseq-checks-implementation.md`, section 4.7), from the series `pns_total`
+    and `pns_above_0` of its analysis result `pns.safe.levels`: the target name and color
+    token, the hardware name and `.asc` file name, the SAFE parameters `hw` of the target
+    (the keys that `assets/pns_lanes.js` reads), the gradient raster `dtS`, the samples in
+    each bin of the levels `binSamples`, the stimulation limit `threshold` (Hz/T), the
+    summary (the peak, its time and the axis peaks, Hz/T), the stored `levels` (`min` and
+    `max` of `pns_total`, Hz/T, float32) and the `runs` (`start` and `end` of `pns_above_0`,
+    s), the arrays encoded with `encode_array`. No value is divided here: the browser makes
+    a percent as `100 * v / threshold`."""
+    meta = total.meta
+    safe = target.profile.models["pns.safe"]
     return {
-        "hardware": levels.hardware,
-        "example": levels.asc_file is None,
-        "asc_file": levels.asc_file,
-        "hw": levels.hw,
-        "dtS": levels.dt_s,
-        "gradScale": PROTON_GAMMA / seq.system.gamma,
-        "binSamples": levels.bin_samples,
+        "target": target.profile.name,
+        "color": target.color,
+        "hardware": meta["hardware"],
+        "asc_file": meta["asc_file"],
+        "hw": {axis: {key: safe[axis][key] for key in _HW_KEYS} for axis in "xyz"},
+        "dtS": meta["dt_s"],
+        "binSamples": int(meta["bin_samples"]),
+        "threshold": above.meta["threshold"],
         "summary": {
-            "peak": levels.peak_hz_per_t / g,
-            "peak_time_s": levels.peak_time_s,
-            "axis_peaks": {axis: v / g for axis, v in levels.axis_peaks_hz_per_t.items()},
+            "peak": meta["peak"],
+            "peak_time_s": meta["peak_time_s"],
+            "axis_peaks": {axis: meta[f"axis_peaks_{axis}"] for axis in "xyz"},
         },
         "levels": {
-            "min": encode_array(levels.level_min_hz_per_t / g),
-            "max": encode_array(levels.level_max_hz_per_t / g),
+            "min": encode_array(total.arrays["min"]),
+            "max": encode_array(total.arrays["max"]),
+        },
+        "runs": {
+            "start": encode_array(above.arrays["start"]),
+            "end": encode_array(above.arrays["end"]),
         },
     }
+
+
+def _pns_entries(
+    targets: Sequence[ReportTarget], check_results: ResultMatrix | None
+) -> tuple[list[dict], str | None]:
+    """The `"pns"` list of the `"file"` entry for `targets` (`_pns_entry`, one for each target
+    that has the series, in the order of `targets`), and the explanation of the targets that
+    have no entry: the HTML (escaped) that names each with its reason, or why there is no
+    matrix or no target; `None` when every target has an entry."""
+    if not targets:
+        return [], "the report has no target"
+    if check_results is None:
+        return [], "no analysis results were given"
+    entries = []
+    missing = []
+    for target in targets:
+        found, reason = pns_series(check_results, target.profile.name)
+        if found is None:
+            missing.append(f"{html.escape(target.profile.name)} ({html.escape(reason)})")
+        else:
+            entries.append(_pns_entry(target, *found))
+    return entries, "; ".join(missing) if missing else None
 
 
 def _validate(seq: pp.Sequence, windows: Sequence[TimeWindow]) -> None:
@@ -81,23 +115,16 @@ def _validate(seq: pp.Sequence, windows: Sequence[TimeWindow]) -> None:
     _check_windows(seq, windows)
 
 
-def _diagram_data(
-    seq: pp.Sequence,
-    windows: Sequence[TimeWindow],
-    pns_lane: bool,
-    gradient_asc: str | Path | None,
-) -> dict:
+def _diagram_data(seq: pp.Sequence, windows: Sequence[TimeWindow], pns: list[dict]) -> dict:
     """The card data (section 4.1 of `docs/plans/diagram-event-table.md`, plus the
-    `"pns"` key of section 4.4 of `docs/plans/diagram-lanes.md`):
-    `{"format": 2, "file": {...}, "windows": [...]}`.
+    `"pns"` key of section 4.7 of `docs/plans/pulseq-checks-implementation.md`):
+    `{"format": 3, "file": {...}, "windows": [...]}`.
 
     `file` has `duration_s`, `num_blocks`, `lanes` (`lane_meta`) and `tables`
     (`encode_array` of each table of `diagram_tables(seq)`). `diagram_tables(seq)` is built once and
-    passed to `lane_meta` so it is not built twice. When `pns_lane` is true and the
-    sequence has a gradient event and `gradient_asc` is given, `file` also gets a `"pns"`
-    key (`_pns_entry`); a sequence without gradients, or a call without `gradient_asc`,
-    gets no `"pns"` key. `windows` has one entry for each of `windows`: `label` and
-    `view_ms`.
+    passed to `lane_meta` so it is not built twice. When `pns` (the list of `_pns_entry`) is
+    not empty, `file` also gets it as the `"pns"` key. `windows` has one entry for each of
+    `windows`: `label` and `view_ms`.
     """
     tables = diagram_tables(seq)
     file = {
@@ -106,12 +133,10 @@ def _diagram_data(
         "lanes": lane_meta(seq, tables=tables),
         "tables": {name: encode_array(array) for name, array in tables.items()},
     }
-    if pns_lane and gradient_asc is not None:
-        levels = pns_levels_for(seq, gradient_asc=gradient_asc)
-        if levels.reason is None:
-            file["pns"] = _pns_entry(seq, levels)
+    if pns:
+        file["pns"] = pns
     out_windows = [{"label": w.label, "view_ms": [_ms(w.start_s), _ms(w.end_s)]} for w in windows]
-    return {"format": 2, "file": file, "windows": out_windows}
+    return {"format": 3, "file": file, "windows": out_windows}
 
 
 def diagram_card(
@@ -119,7 +144,8 @@ def diagram_card(
     windows: Sequence[TimeWindow],
     *,
     pns_lane: bool = False,
-    gradient_asc: str | Path | None = None,
+    targets: Sequence[ReportTarget] = (),
+    check_results: ResultMatrix | None = None,
     card_id: str = "diagram",
 ) -> Card:
     """The "Sequence diagram" card: one button for each of `windows`, in the given
@@ -131,14 +157,14 @@ def diagram_card(
     minimum/maximum of time bins.
 
     `pns_lane` (`docs/plans/diagram-lanes.md`, section 4.7) adds a PNS lane: `False` (the
-    default) computes no PNS and adds no `"pns"` key. `gradient_asc` is the gradient
-    `.asc` file of the scanner for the lane; it needs `pns_lane=True`, and the lane needs
-    it: with `pns_lane=True` and `gradient_asc=None`, the card computes no PNS, has no
-    `"pns"` key, and the explanation paragraph says that the PNS lane needs
-    `gradient_asc`. A sequence with no gradient event gets no `"pns"` key even when
-    `pns_lane` and `gradient_asc` are given. The PNS prediction is `pns.pns_levels_for`,
-    which a PNS summary card for the same sequence and the same `gradient_asc`
-    (`cards.pns.pns_card`) shares, so the SAFE model runs once.
+    default) adds no `"pns"` key. With `pns_lane`, the `"pns"` key is the list of
+    `_pns_entry`, one for each of `targets` (`targets.ReportTarget`, in order) whose analysis
+    result `pns.safe.levels` in `check_results` (the `ResultMatrix` of a run, or `None`) is
+    "done" and has the series `pns_total` and `pns_above_0`. The card runs no SAFE model:
+    the PNS of a target comes only from the matrix. Without targets, without a matrix, or
+    when no target has the series (for example a sequence with no gradient event), the card
+    has no `"pns"` key, and the explanation paragraph says why; for a target that has no
+    entry while another has one, it names the target and the reason (escaped).
 
     A group-controls container (`{card_id}-groups`) sits above the chart, after the
     window buttons: the card script (`assets/cards/diagram.js`) fills it with one
@@ -149,27 +175,25 @@ def diagram_card(
     (`assets/g_lanes.js`) from the same tables as Gx, Gy and Gz, no extra data from this
     function. The explanation paragraph under the chart always gets one sentence about
     the |G| lane, and one more about the PNS lane when the card has PNS data, or, when
-    `pns_lane` is true without `gradient_asc`, one that says the lane needs `gradient_asc`.
+    `pns_lane` is true without PNS data, one that says why there is no PNS lane.
 
     The card's `scripts` has `assets/cards/diagram.js`. It publishes `PUBLISHES` (the
     topics `sequence`, `cursor`, `anchor` and `view`) and subscribes to `SUBSCRIBES`
     (`goto`).
 
-    Raises `TypeError` when `pns_lane` is not a `bool`. Raises `ValueError` when
-    `gradient_asc` is given and `pns_lane` is False, when `windows` is empty, or when a
-    window is not inside the sequence or does not end after its start (the message names
-    the window's label). Raises
+    Raises `TypeError` when `pns_lane` is not a `bool`. Raises `ValueError` when `windows` is
+    empty, or when a window is not inside the sequence or does not end after its start (the
+    message names the window's label). Raises
     `NotImplementedError` (`extensions.refuse_rotations`) for a sequence that uses the
     Pulseq rotation extension: this card shows unrotated gradient events, which would
     be wrong for such a sequence.
     """
     if not isinstance(pns_lane, bool):
         raise TypeError(f"pns_lane must be a bool, not {type(pns_lane).__name__}")
-    if gradient_asc is not None and not pns_lane:
-        raise ValueError("gradient_asc needs pns_lane=True")
     _validate(seq, windows)
     refuse_rotations(seq)
-    data = _diagram_data(seq, windows, pns_lane, gradient_asc)
+    pns, pns_missing = _pns_entries(targets, check_results) if pns_lane else ([], None)
+    data = _diagram_data(seq, windows, pns)
     has_pns = "pns" in data["file"]
     buttons = "".join(
         f'<button type="button" data-window="{i}" aria-pressed="{str(i == 0).lower()}">'
@@ -182,19 +206,19 @@ def diagram_card(
         " The |G| lane shows the magnitude of the gradient vector (the root-sum-of-squares "
         "of Gx, Gy and Gz), as the exact minimum and maximum in each time bin."
     )
-    pns_note = (
-        " The PNS lane shows the total predicted stimulation (the root-sum-of-squares "
-        "of the three axes) as a percent of the SAFE stimulation limit. It is exact "
-        "for a view of 10 s or less; a longer view shows the minimum and the maximum "
-        "in time bins."
-        if has_pns
-        else ""
-    )
-    if pns_lane and gradient_asc is None:
+    pns_note = ""
+    if has_pns:
         pns_note = (
-            " There is no PNS lane: it needs the gradient .asc file of the scanner "
-            "(<code>gradient_asc</code>)."
+            " The PNS lane shows the total predicted stimulation (the root-sum-of-squares "
+            "of the three axes) as a percent of the SAFE stimulation limit, one line for "
+            "each target in its color, and marks the runs at or above the limit. It is exact "
+            "for a view of 10 s or less; a longer view shows the minimum and the maximum "
+            "in time bins."
         )
+        if pns_missing is not None:
+            pns_note += f" No PNS for: {pns_missing}."
+    elif pns_missing is not None:
+        pns_note = f" There is no PNS lane: {pns_missing}."
     body = (
         f'<div class="controls" role="group" aria-label="Time window">{buttons}</div>\n'
         f'<div class="controls" role="group" aria-label="Lanes" id="{card_id}-groups">'
@@ -224,14 +248,12 @@ def diagram_card(
 
 
 def _build(ctx: ReportContext) -> Card:
-    pns_lane = ctx.option(options.pns_lane)
-    # A `gradient_asc` for the PNS card alone must not reach the diagram: it needs pns_lane.
-    gradient_asc = ctx.option(options.gradient_asc) if pns_lane else None
     return diagram_card(
         ctx.seq,
         ctx.windows(),
-        pns_lane=pns_lane,
-        gradient_asc=gradient_asc,
+        pns_lane=ctx.option(options.pns_lane),
+        targets=ctx.targets,
+        check_results=ctx.check_results,
         card_id=SPEC.name,
     )
 
@@ -240,7 +262,7 @@ SPEC = CardSpec(
     "diagram",
     30,
     _build,
-    (options.pns_lane, options.gradient_asc),
+    (options.pns_lane,),
     publishes=PUBLISHES,
     subscribes=SUBSCRIBES,
 )
